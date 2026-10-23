@@ -135,6 +135,7 @@ describe("encrypted full workspace backups", () => {
     db.close();
     try {
       json(join(source, "team-computers.json"), { version: 1, environmentId: "source-environment", computers: [{ id: "source-computer", name: "Source desktop", section: "Design" }] });
+      json(join(source, "maintenance-lease.json"), { v: 1, lease: null, ended: [{ tokenHash: "a".repeat(64), leaseId: "source-lease", reason: "released", at: 1 }] });
       const originalDb = readFileSync(join(source, "messages.db"));
       const originalRuntimeDb = readFileSync(join(source, "runtime.db"));
       const exported = await createWorkspaceBackup(source, {
@@ -158,6 +159,7 @@ describe("encrypted full workspace backups", () => {
       json(join(target, "team-computers.json"), targetComputers);
       writeFileSync(join(target, "environment-id"), "target-environment");
       writeFileSync(join(target, "openmausbot-server.lease"), "live-lease");
+      writeFileSync(join(target, "maintenance-lease.json"), "destination lease");
       writeFileSync(join(target, "messages.db-wal"), "old database WAL must not enter the new DB");
       writeFileSync(join(target, "messages.db-shm"), "old database shared memory");
       const staged = await stageWorkspaceBackup(target, exported.path, { password: PASSWORD });
@@ -166,6 +168,7 @@ describe("encrypted full workspace backups", () => {
       expect(readStagedWorkspaceBackup(target, staged.id)).not.toHaveProperty("credentials");
       const data = join(target, ".backups", staged.id, "staged", "data");
       expect(existsSync(join(data, "team-computers.json"))).toBe(false);
+      expect(existsSync(join(data, "maintenance-lease.json"))).toBe(false);
       expect(existsSync(join(data, "bots.json"))).toBe(true);
       expect(existsSync(join(data, "runtime.db"))).toBe(true);
       expect(existsSync(join(data, "cloud-owner.json"))).toBe(false);
@@ -188,6 +191,7 @@ describe("encrypted full workspace backups", () => {
       expect(readJson(join(target, "team-computers.json"))).toEqual(targetComputers);
       expect(readFileSync(join(target, "environment-id"), "utf8")).toBe("target-environment");
       expect(readFileSync(join(target, "openmausbot-server.lease"), "utf8")).toBe("live-lease");
+      expect(readFileSync(join(target, "maintenance-lease.json"), "utf8")).toBe("destination lease");
       expect(existsSync(join(target, "messages.db-wal"))).toBe(false);
       expect(readFileSync(join(result.safetyCopyPath!, "data", "messages.db-wal"), "utf8")).toBe("old database WAL must not enter the new DB");
       expect(existsSync(join(target, "tools"))).toBe(false);

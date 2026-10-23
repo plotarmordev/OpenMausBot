@@ -458,7 +458,7 @@ import { ProfileRequestService } from "./profile-requests.ts";
 import { ModelRequestService } from "./model-requests.ts";
 import { TeamSetupError, TeamSetupRequestService } from "./team-setup-requests.ts";
 import type { TeamSetupRequest } from "../shared/team-setup.ts";
-import { profileRevision, profileSnapshot } from "./profile-revision.ts";
+import { profileRevision, profileSnapshot, soulRevision } from "./profile-revision.ts";
 import { flushAllProfileHistory, flushProfileHistory, readHistory, recordProfileChange } from "./profile-versions.ts";
 import { TeamMemory, TEAM_MEMORY_KINDS, type TeamMemoryKind } from "./team-memory.ts";
 import { describeTool } from "./activity.ts";
@@ -513,6 +513,9 @@ import { acquireDataDirLeaseForProcess } from "./data-dir-lease.ts";
 import { createWorkspaceAccess, describeEdition, editionForSettings, editionStatus, entitled, hostedWorkspaceConfiguration, hostedWorkspaceConfigured, licenseWarning, sharedWorkspaceFullAccessConfigured, loadEnterpriseLayer, workspaceMembership, type WorkspaceAccess } from "./enterprise.ts";
 import { environmentDescriptor, loadEnvironmentId, serverVersion } from "./environment.ts";
 import { WorkspaceBackupMaintenance } from "./workspace-backup-maintenance.ts";
+import { createMaintenanceLease } from "./maintenance-lease.ts";
+import { createMaintenanceLeaseRoutes } from "./routes/maintenance-lease.ts";
+import { createBotSoulWriteRoutes } from "./routes/bot-soul-writes.ts";
 import { createWorkspaceBackupRoutes, isWorkspaceBackupSessionControl } from "./workspace-backup-http.ts";
 import { applyPendingWorkspaceRestore, readLastWorkspaceRestore, type WorkspaceRestoreResult } from "./workspace-backup.ts";
 import { repairMovedWorkspacePaths } from "./moved-paths-repair.ts";
@@ -662,6 +665,7 @@ if (existsSync(join(DATA_DIR, ".backups"))) {
   if (!workspaceRestore.restored && !workspaceRestore.rolledBack) workspaceRestore = readLastWorkspaceRestore(DATA_DIR) ?? workspaceRestore;
 }
 const workspaceMaintenance = new WorkspaceBackupMaintenance(), moveFreeze = createMoveFreeze({ dataDir: DATA_DIR, exportOnly: (process.env.OMB_CLOUD_ROLE === "home" || process.env.OMB_CLOUD_ROLE === "team") && process.env.OMB_CLOUD_EXPORT_ONLY === "1" });
+const maintenanceLease = createMaintenanceLease({ dataDir: DATA_DIR });
 // Only after ensureDirs(), whose one-time legacy data-dir rename must not find ~/.openmausbot already there.
 const ENVIRONMENT_ID = loadEnvironmentId(DATA_DIR);
 const signInAllowList = cacheUntilConfigChanges((config) => ({
@@ -3039,7 +3043,7 @@ const wireTask = (task: TaskRecord, botModel: ModelSelection, awaiting = threads
 
 /** Strips provider session ids (resumeCursors) here, not at call sites, so no broadcast or paired phone ever gets them. */
 const wireBot = (bot: BotRecord): WireBot => {
-  const { resumeCursors: _resumeCursors, tasks, approvalGrant, lastProfileRequestId: _lastProfileRequestId, lastTeamSetupReceipt: _lastTeamSetupReceipt, packageBase: _packageBase, assignedSkills: _assignedSkills, ...rest } = bot;
+  const { resumeCursors: _resumeCursors, tasks, approvalGrant, lastProfileRequestId: _lastProfileRequestId, lastTeamSetupReceipt: _lastTeamSetupReceipt, packageBase: _packageBase, assignedSkills: _assignedSkills, soulWriteId: _soulWriteId, soulWrites: _soulWrites, soulWritesTrimmedAt: _soulWritesTrimmedAt, ...rest } = bot;
   // Clients see Ask while an elevated grant awaits the desktop's confirmation, never a grant that may still roll back.
   const visible = approvalGrant && !approvalGrant.threadOnly
     ? { ...rest, approvalMode: "ask" as const, autoApprove: false }
@@ -3059,7 +3063,7 @@ function toolScopeForTurn(botId: string) {
 }
 
 const wireTrustedApprovalBot = (bot: NonNullable<ReturnType<typeof store.bot>>) => {
-  const { resumeCursors: _resumeCursors, tasks, approvalGrant: _approvalGrant, lastProfileRequestId: _lastProfileRequestId, lastTeamSetupReceipt: _lastTeamSetupReceipt, packageBase: _packageBase, assignedSkills: _assignedSkills, ...rest } = bot;
+  const { resumeCursors: _resumeCursors, tasks, approvalGrant: _approvalGrant, lastProfileRequestId: _lastProfileRequestId, lastTeamSetupReceipt: _lastTeamSetupReceipt, packageBase: _packageBase, assignedSkills: _assignedSkills, soulWriteId: _soulWriteId, soulWrites: _soulWrites, soulWritesTrimmedAt: _soulWritesTrimmedAt, ...rest } = bot;
   const awaiting = threadsAwaitingTeammates();
   return { ...rest, approvalMode: approvalModeFor(rest), mainThreadId: botMainThread(bot.id), avatarUrl: rest.avatarUrl ?? null, ...(tasks ? { tasks: tasks.map((task) => wireTask(task, bot.modelSelection, awaiting)) } : {}) };
 };
@@ -6334,6 +6338,14 @@ function managedBoatOwners(): boat.ManagedBoatOwner[] {
   }))];
 }
 
+/** Who is still answering, queued, or in a card or sign-in: a bot's or room's name, "" when it has none; null when nothing is. */
+function whoIsWorking(): string | null {
+  return store.bots.find((bot) => botHasActiveTurn(bot.id) || store.tasks(bot.id).some((task) => threadBusy(bot.id, task.threadId)) ||
+    routines?.activeRunForBot(bot.id))?.name ??
+    store.groups.find(groupIsWorking)?.name ??
+    (coordinator.active().some((node) => !ENDED.has(node.status)) || providerAuthSessions.active ? "" : null);
+}
+
 function botHasActiveTurn(botId: string): boolean {
   const bot = store.bot(botId);
   return bot?.busy === true ||
@@ -7996,7 +8008,7 @@ async function startTurn(
     coordination?: { id: string; resumed: boolean; settle: (outcome: HostTurnResult) => void };
   },
 ) {
-  workspaceMaintenance.assertAvailable(); moveFreeze.assertTurns();
+  workspaceMaintenance.assertAvailable(); moveFreeze.assertTurns(); maintenanceLease.assertTurns();
   const profile = store.bot(botId); assertBotHere(profile);
   if (!profile) throw Object.assign(new Error("no such bot"), { status: 404 });
   const threadId = opts?.threadId ?? profile.threadId;
@@ -9917,7 +9929,9 @@ const appTriggers = createAppTriggerHost({ store, webhooks, webhookBase: () => w
   access: composio.brokerAccess, connectedApps: () => composio.connectedServices(cfg), visibleBot: (auth, botId) => visibleTo(viewerFor(auth)).bot(botId),
   audit: (row) => appendDecision(DATA_DIR, { ...row, decision: "auto-approved", source: "routine" }) });
 tieAutomationsToBots(store, { routines: routines!, webhooks, apps: appTriggers.manager });
-ROUTES.push(appTriggers.routes); ROUTES.unshift(createMoveFreezeRoutes({ freeze: moveFreeze, automationsOff: () => switchAutomationsOff({ routines: () => routines, calls: () => calendarCalls, webhooks: () => webhooks, appEvents: () => appTriggers.manager }), restart: () => { restartRequested = true; gracefulShutdown(); }, busy: () => store.bots.find((bot) => botHasActiveTurn(bot.id) || routines?.activeRunForBot(bot.id))?.name ?? store.groups.find(groupIsWorking)?.name ?? (coordinator.active().some((node) => !ENDED.has(node.status)) || providerAuthSessions.active ? "" : null) }));
+ROUTES.push(appTriggers.routes); ROUTES.unshift(createMoveFreezeRoutes({ freeze: moveFreeze, automationsOff: () => switchAutomationsOff({ routines: () => routines, calls: () => calendarCalls, webhooks: () => webhooks, appEvents: () => appTriggers.manager }), restart: () => { restartRequested = true; gracefulShutdown(); }, busy: whoIsWorking }));
+ROUTES.push(createMaintenanceLeaseRoutes({ lease: maintenanceLease, busy: whoIsWorking, released: () => queueMicrotask(drainQueuedSends) }));
+ROUTES.push(createBotSoulWriteRoutes({ store, lease: maintenanceLease, wireBot, broadcast }));
 ROUTES.push(createLimitResetRoutes({ clock: limitClock, routines: routines!, requests: routineRequests, engineName, threadEngine: (botId, threadId) => turnSelection(botId, threadId)?.instanceId,
   threadTitle: (botId, threadId) => store.bot(botId) && !store.bot(botId)!.hidden ? store.taskByThread(botId, threadId)?.title ?? null : null,
   created: (id, auth) => cloudRoutineAuthors?.wrote(id, auth.kind === "session" ? actorKey(auth) : CLOUD_NOBODY_KEY) }));
@@ -9927,7 +9941,7 @@ let webhookIngressError: string | null = null;
 try {
   webhookIngress = await listenWebhookIngress(webhooks, {
     port: WEBHOOK_PORT, publicBaseUrl: WEBHOOK_PUBLIC_URL,
-    claimRequest: () => { moveFreeze.assertTurns(); return workspaceMaintenance.request(); },
+    claimRequest: () => { moveFreeze.assertTurns(); maintenanceLease.assertTurns(); return workspaceMaintenance.request(); },
   });
   const advertised = WEBHOOK_PUBLIC_URL ? ` (advertised as ${webhookIngress.baseUrl})` : "";
   console.log(`openmausbot webhook receiver on http://${webhookIngress.host}:${webhookIngress.port}${advertised}`);
@@ -10094,8 +10108,9 @@ async function runClaimedGroupMemberTurn(
   // Rebuild the turn once from the fresh bot rather than mix a stale adapter with fresh permissions.
   setupRetry = 0,
 ): Promise<boolean> {
-  if (workspaceMaintenance.active || moveFreeze.frozen()) {
-    onDispatchError?.(moveFreeze.refusal() ?? "A workspace backup or restore is in progress.");
+  const dispatchRefusal = moveFreeze.refusal() ?? maintenanceLease.refusal() ?? (workspaceMaintenance.active ? "A workspace backup or restore is in progress." : null);
+  if (dispatchRefusal) {
+    onDispatchError?.(dispatchRefusal);
     return false;
   }
   if (isCancelled?.()) return false;
@@ -11396,6 +11411,7 @@ function startGroupTurn(
   queueId?: string,
   options: StartGroupTurnOptions = {},
 ) {
+  maintenanceLease.assertTurns();
   const group = store.group(groupId);
   if (!group) throw Object.assign(new Error("no such group"), { status: 404 });
   if (roomSetupPending(group)) {
@@ -15921,6 +15937,8 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
       return json(res, 200, {
         soul,
         revision: profileRevision(bot),
+        soulRevision: soulRevision(bot),
+        readAt: Date.now(),
         bytes: Buffer.byteLength(soul, "utf8"),
         limit: BOT_PROFILE_LIMITS.soul,
         file: soulFile(bot.id),
@@ -16631,7 +16649,7 @@ restoreChannelMessages();
 if (CLOUD_HOME) registerCloudPower(cloudPower = createCloudPower({ dataDir: DATA_DIR, team: CLOUD_TEAM !== null, broadcast: (payload) => broadcast(payload), log: (line) => console.warn(line), probes: {
   turn: () => store.bots.some((bot) => botHasActiveTurn(bot.id)) || store.groups.some(groupIsWorking), run: () => Boolean(routines?.hasActiveRuns()),
   liveCall: () => liveCalls.current() !== null, computer: () => cloudComputerPower.awake() || boatLifecycleBusyBots.size > 0, nextDueAt: () => routines?.nextDueAt() ?? null,
-  maintenance: () => workspaceMaintenance.active || providerFleetReloading || providerAuthSessions.active || browserEngineInstall !== null } }));
+  maintenance: () => workspaceMaintenance.active || maintenanceLease.current() !== null || providerFleetReloading || providerAuthSessions.active || browserEngineInstall !== null } }));
 
 server.listen(PORT, "127.0.0.1", async () => {
   companyRuntimeReady();
