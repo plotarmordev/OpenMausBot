@@ -253,14 +253,17 @@ export function createTaskRoutes(deps: TaskRouteDeps): RouteHandler & { deleteTa
         const bot = store.bot(m[1]);
         const task = store.taskByThread(m[1], m[2]);
         if (!bot || !task) return json(res, 404, { error: "no such task" });
+        const answerClosed = (alreadyClosed: boolean) => {
+          const closed = store.taskByThread(bot.id, task.threadId)!;
+          return json(res, 200, { closed: true, ...(alreadyClosed ? { alreadyClosed: true } : {}), task: wireTask(closed, store.bot(bot.id)!.modelSelection), bot: publicBot(store.bot(bot.id)!) });
+        };
+        if (task.closedBy) return answerClosed(true);
         const opener = task.openedBy ? store.bot(task.openedBy.botId) : undefined;
         if (!opener) return json(res, 403, { error: "only a thread a bot opened can be closed here" });
         const refusal = closeRefusal(deps, bot.id, task) ?? (deps.routines()?.isActiveThread(task.threadId) ? `#${task.title} is running a routine — wait for it to finish` : null);
         if (refusal) return json(res, 409, { error: refusal });
-        const alreadyClosed = Boolean(task.closedBy);
-        if (!alreadyClosed) closeThread(store, bot.id, task, opener);
-        const closed = store.taskByThread(bot.id, task.threadId)!;
-        return json(res, 200, { closed: true, ...(alreadyClosed ? { alreadyClosed: true } : {}), task: wireTask(closed, store.bot(bot.id)!.modelSelection), bot: publicBot(store.bot(bot.id)!) });
+        closeThread(store, bot.id, task, opener);
+        return answerClosed(false);
       }
       // On a Cloud home only the owner decides whether a bot may act without asking, even in someone else's conversation.
       if (CLOUD_HOME && !cloudOwnerSession(auth) &&

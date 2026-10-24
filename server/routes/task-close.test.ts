@@ -71,7 +71,11 @@ function fixture() {
   const openedByCapri = (title = "@Lead · work") =>
     store.createTask(lead.id, title, false, undefined, { botId: capri.id, name: "Capri before rename", kind: "work", at: 1 })!;
   const closeChips = (threadId: string) => store.messagesFor(threadId).filter((message) => message.tool?.name.startsWith("Closed by"));
-  return { store, capri, lead, busy, queued, awaiting, direct, routineThreads, patch, openedByCapri, closeChips };
+  const threadsAndMessages = (botId: string) => structuredClone((store.bot(botId)?.tasks ?? []).map((task) => ({
+    task: store.taskByThread(botId, task.threadId),
+    messages: store.messagesFor(task.threadId),
+  })));
+  return { store, capri, lead, busy, queued, awaiting, direct, routineThreads, patch, openedByCapri, closeChips, threadsAndMessages };
 }
 
 describe("PATCH /api/bots/:bot/tasks/:thread { close: true }", () => {
@@ -117,6 +121,23 @@ describe("PATCH /api/bots/:bot/tasks/:thread { close: true }", () => {
     expect(again.status).toBe(200);
     expect(again.body).toMatchObject({ closed: true, alreadyClosed: true });
     expect(again.body.task?.closedBy).toEqual(first.body.task?.closedBy);
+    expect(f.closeChips(task.threadId)).toHaveLength(1);
+  });
+
+  it("still answers alreadyClosed after the bot that opened and closed it is deleted", async () => {
+    const f = fixture();
+    const task = f.openedByCapri();
+    const first = await f.patch(f.lead.id, task.threadId, { close: true });
+    expect(first.status).toBe(200);
+    const closedHistory = f.threadsAndMessages(f.lead.id);
+    expect(f.store.deleteBot(f.capri.id)).toBe(true);
+    expect(f.store.bot(f.capri.id)).toBeNull();
+    const retry = await f.patch(f.lead.id, task.threadId, { close: true });
+    expect(retry.status).toBe(200);
+    expect(retry.body).toMatchObject({ closed: true, alreadyClosed: true });
+    expect(retry.body.task?.closedBy).toEqual(first.body.task?.closedBy);
+    expect(retry.body.bot?.id).toBe(f.lead.id);
+    expect(f.threadsAndMessages(f.lead.id)).toEqual(closedHistory);
     expect(f.closeChips(task.threadId)).toHaveLength(1);
   });
 
@@ -179,5 +200,31 @@ describe("PATCH /api/bots/:bot/tasks/:thread { close: true }", () => {
     const theirs = f.store.createTask(f.capri.id, "Capri's", false, undefined, { botId: f.capri.id, name: "Capri", at: 1 })!;
     expect((await f.patch(f.lead.id, theirs.threadId, { close: true })).status).toBe(404);
     expect(f.store.taskByThread(f.capri.id, theirs.threadId)).not.toHaveProperty("closedBy");
+  });
+
+  it.each(["thread", "bot"] as const)("answers 404 when the %s does not exist and changes nothing", async (missing) => {
+    const f = fixture();
+    const task = f.openedByCapri();
+    const before = [f.threadsAndMessages(f.capri.id), f.threadsAndMessages(f.lead.id)];
+    const answer = missing === "thread"
+      ? await f.patch(f.lead.id, "no-such-thread", { close: true })
+      : await f.patch("no-such-bot", task.threadId, { close: true });
+    expect(answer.status).toBe(404);
+    expect([f.threadsAndMessages(f.capri.id), f.threadsAndMessages(f.lead.id)]).toEqual(before);
+  });
+
+  it.each([
+    ["null", null],
+    ["an empty array", []],
+    ["an array holding a close", [{ close: true }]],
+    ["a string", "close"],
+    ["a number", 1],
+    ["true", true],
+  ])("rejects a body that is %s and changes nothing", async (_label, body) => {
+    const f = fixture();
+    const task = f.openedByCapri();
+    const before = [f.threadsAndMessages(f.capri.id), f.threadsAndMessages(f.lead.id)];
+    expect((await f.patch(f.lead.id, task.threadId, body)).status).toBe(400);
+    expect([f.threadsAndMessages(f.capri.id), f.threadsAndMessages(f.lead.id)]).toEqual(before);
   });
 });
