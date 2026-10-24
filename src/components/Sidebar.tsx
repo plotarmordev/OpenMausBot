@@ -112,13 +112,10 @@ import {
 } from "@/lib/sidebar-layout";
 import { sidebarSectionAttention } from "@/lib/sidebar-attention";
 import { botListItemPointerIntent } from "@/lib/sidebar-selection";
-import { phoneSettingsAction, SidebarPhoneButton } from "./SidebarPhoneButton";
-import { SidebarBottomButtons, SidebarFooterNav } from "./SidebarFooterNav";
+import { SidebarFooter } from "./SidebarFooter";
 import { GlassBar, GlassScrollFrame, GlassScroller } from "./GlassScrollFrame";
 import { DesktopWorkspaceSwitcher } from "./DesktopWorkspaceSwitcher";
 import { useCloudOwner } from "./CloudOwner";
-import { SidebarProfileMenu } from "./SidebarProfileMenu";
-import { UpdateIndicator } from "./UpdateIndicator";
 import { SidebarSectionHeader } from "./SidebarSectionHeader";
 import { NeedsYouButton, OwnerFace, OwnerPickerHost, departmentOwner, ownerMenuLabel, pickOwnerOf } from "./TeamOwner";
 import { showWhoReportsToWhom, TeamMenuItems } from "./SidebarTeamMenu";
@@ -1934,32 +1931,7 @@ export function Sidebar({ open, onClose, collapseToIcons = false }: {
         }}
         plus={plusControl}
         server={<DesktopWorkspaceSwitcher rail cloudHome={state.config?.cloudHome === true} owner={cloudOwner} howTo={state.cloudHowTo} onMenuClosed={endHowTo} />}
-      /> : <div className={cn("pb-3 pt-2", density === "icons" ? "flex flex-col items-center gap-1 px-2" : "px-3")}>
-        <SidebarFooterNav
-          density={density}
-          collapsed={sectionCollapsed(TOOLS_SECTION_ID)}
-          onToggleCollapsed={layoutInteractive ? () => toggleSection(TOOLS_SECTION_ID) : undefined}
-        />
-        {density === "icons" && (
-          <SidebarPhoneButton
-            density={density}
-            onOpen={() => dispatch(phoneSettingsAction())}
-          />
-        )}
-        {density === "icons" ? (
-          <div className="flex flex-col items-center justify-center gap-1">
-            <UpdateIndicator />
-            <SidebarProfileMenu iconOnly />
-          </div>
-        ) : (
-          <div className="flex items-center gap-1 not-first:mt-3">
-            <div className="min-w-0 flex-1">
-              <SidebarProfileMenu />
-            </div>
-            <SidebarBottomButtons />
-          </div>
-        )}
-      </div>}
+      /> : <SidebarFooter density={density} toolsCollapsed={sectionCollapsed(TOOLS_SECTION_ID)} onToggleTools={layoutInteractive ? () => toggleSection(TOOLS_SECTION_ID) : undefined} />}
       </GlassBar>
       </GlassScrollFrame>
 
