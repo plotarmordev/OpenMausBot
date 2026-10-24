@@ -1,0 +1,183 @@
+import { rmSync } from "node:fs";
+import type { IncomingMessage, ServerResponse } from "node:http";
+import { beforeEach, describe, expect, it } from "vitest";
+
+import type { WireBot, WireTask } from "../../shared/wire.ts";
+import { DATA_DIR } from "../config.ts";
+import type { ModelSelection } from "../contracts.ts";
+import type { RequestAuth } from "../request-auth.ts";
+import type { SessionRecord } from "../sessions.ts";
+import { Store, type BotRecord, type TaskRecord } from "../store.ts";
+import { PASS, type RouteContext } from "./table.ts";
+import { createTaskRoutes, type TaskRouteDeps } from "./tasks.ts";
+
+const sonnet: ModelSelection = { instanceId: "claude", model: "claude-sonnet-5" };
+const owner: RequestAuth = { kind: "loopback", scopes: ["admin", "client"] };
+// Authority comes from scopes alone here; the session's identity matters only to the stubbed Cloud refusal.
+const signedIn = {} as SessionRecord;
+
+interface PatchAnswer {
+  closed?: true;
+  alreadyClosed?: true;
+  task?: TaskRecord;
+  bot?: BotRecord;
+  error?: string;
+}
+
+beforeEach(() => {
+  rmSync(DATA_DIR, { recursive: true, force: true });
+});
+
+function fixture() {
+  const store = new Store(() => sonnet);
+  const capri = store.createBot({ name: "Capri" });
+  const lead = store.createBot({ name: "Lead" });
+  const busy = new Set<string>();
+  const queued = new Set<string>();
+  const awaiting = new Set<string>();
+  const direct = new Set<string>();
+  const routineThreads = new Set<string>();
+  // Only what a close touches; any other dependency is absent, and a route that reached for one would throw.
+  const deps = {
+    store,
+    coordinator: { awaitingAnswer: (id: string) => awaiting.has(id), activeDirect: (id: string) => direct.has(id) },
+    routines: () => ({ isActiveThread: (id: string) => routineThreads.has(id) }),
+    threadBusy: (_bot: string, id: string) => busy.has(id),
+    queuedThreadPosition: (_bot: string, id: string) => queued.has(id) ? 1 : null,
+    cloudThreadRefusal: () => null,
+    wireTask: (task: TaskRecord) => task as unknown as WireTask,
+    publicBot: (bot: BotRecord) => bot as unknown as WireBot,
+  } as unknown as TaskRouteDeps;
+  const handler = createTaskRoutes(deps);
+  const patch = async (botId: string, threadId: string, body: unknown, auth: RequestAuth = owner) => {
+    const sent: Array<{ status: number; body: PatchAnswer }> = [];
+    const path = `/api/bots/${botId}/tasks/${threadId}`;
+    const out = await handler({
+      req: { headers: {} } as unknown as IncomingMessage,
+      res: {} as ServerResponse,
+      url: new URL(`http://localhost${path}`),
+      path,
+      method: "PATCH",
+      auth,
+      json: ((_res: ServerResponse, status: number, response: PatchAnswer) => {
+        sent.push({ status, body: response });
+      }) as RouteContext["json"],
+      readBody: (async () => body) as RouteContext["readBody"],
+    });
+    expect(out).not.toBe(PASS);
+    expect(sent).toHaveLength(1);
+    return sent[0]!;
+  };
+  const openedByCapri = (title = "@Lead · work") =>
+    store.createTask(lead.id, title, false, undefined, { botId: capri.id, name: "Capri before rename", kind: "work", at: 1 })!;
+  const closeChips = (threadId: string) => store.messagesFor(threadId).filter((message) => message.tool?.name.startsWith("Closed by"));
+  return { store, capri, lead, busy, queued, awaiting, direct, routineThreads, patch, openedByCapri, closeChips };
+}
+
+describe("PATCH /api/bots/:bot/tasks/:thread { close: true }", () => {
+  it("closes a teammate thread as the bot that opened it, under that bot's current name", async () => {
+    const f = fixture();
+    const task = f.openedByCapri();
+    f.store.patchTask(f.lead.id, task.threadId, { unread: true, pinned: true });
+    const before = Date.now();
+    const closed = await f.patch(f.lead.id, task.threadId, { close: true });
+    expect(closed.status).toBe(200);
+    expect(closed.body.closed).toBe(true);
+    expect(closed.body).not.toHaveProperty("alreadyClosed");
+    const closedBy = closed.body.task?.closedBy;
+    expect(closedBy).toEqual({ botId: f.capri.id, name: "Capri", at: expect.any(Number) });
+    expect(closedBy?.at).toBeGreaterThanOrEqual(before);
+    expect(closed.body.bot?.id).toBe(f.lead.id);
+    const persisted = new Store(() => sonnet).taskByThread(f.lead.id, task.threadId)!;
+    expect(persisted.closedBy).toEqual(closedBy);
+    expect(persisted.unread).not.toBe(true);
+    expect(persisted.pinned).toBe(true);
+    expect(persisted).not.toHaveProperty("archivedAt");
+    expect(persisted.openedBy).toMatchObject({ botId: f.capri.id, kind: "work" });
+    expect(f.closeChips(task.threadId)).toEqual([expect.objectContaining({
+      kind: "activity",
+      from: { botId: f.capri.id, name: "Capri", color: f.capri.color },
+      tool: { name: "Closed by @Capri", ok: true },
+    })]);
+  });
+
+  it("closes a bot's own self-opened thread as that bot", async () => {
+    const f = fixture();
+    const self = f.store.createTask(f.capri.id, "Follow-up", false, undefined, { botId: f.capri.id, name: "Capri", at: 1 })!;
+    const closed = await f.patch(f.capri.id, self.threadId, { close: true });
+    expect(closed.status).toBe(200);
+    expect(closed.body.task?.closedBy).toMatchObject({ botId: f.capri.id, name: "Capri" });
+  });
+
+  it("is idempotent: a second close changes nothing and says alreadyClosed", async () => {
+    const f = fixture();
+    const task = f.openedByCapri();
+    const first = await f.patch(f.lead.id, task.threadId, { close: true });
+    const again = await f.patch(f.lead.id, task.threadId, { close: true });
+    expect(again.status).toBe(200);
+    expect(again.body).toMatchObject({ closed: true, alreadyClosed: true });
+    expect(again.body.task?.closedBy).toEqual(first.body.task?.closedBy);
+    expect(f.closeChips(task.threadId)).toHaveLength(1);
+  });
+
+  it("refuses a thread no bot opened, or whose opener is gone", async () => {
+    const f = fixture();
+    const persons = f.store.createTask(f.lead.id, "Started by the person", false)!;
+    const refused = await f.patch(f.lead.id, persons.threadId, { close: true });
+    expect(refused.status).toBe(403);
+    const orphan = f.store.createTask(f.lead.id, "Opener deleted", false, undefined, { botId: "deleted-bot", name: "Gone", at: 1 })!;
+    expect((await f.patch(f.lead.id, orphan.threadId, { close: true })).status).toBe(403);
+    expect((await f.patch(f.lead.id, f.lead.threadId, { close: true })).status).toBe(403);
+    for (const threadId of [persons.threadId, orphan.threadId, f.lead.threadId]) {
+      expect(f.store.taskByThread(f.lead.id, threadId)).not.toHaveProperty("closedBy");
+      expect(f.closeChips(threadId)).toHaveLength(0);
+    }
+  });
+
+  it.each([
+    ["false", { close: false }, 400],
+    ["a string", { close: "true" }, 400],
+    ["null", { close: null }, 400],
+    ["combined with archivedAt", { close: true, archivedAt: 5 }, 400],
+    ["combined with a title", { close: true, title: "Renamed" }, 400],
+    ["combined with pinned", { close: true, pinned: true }, 400],
+    ["with a caller-chosen closer", { close: true, closedBy: { botId: "x", name: "Mallory", at: 1 } }, 400],
+  ])("rejects close %s and changes nothing", async (_label, body, status) => {
+    const f = fixture();
+    const task = f.openedByCapri("Unchanged");
+    expect((await f.patch(f.lead.id, task.threadId, body)).status).toBe(status);
+    const after = f.store.taskByThread(f.lead.id, task.threadId)!;
+    expect(after).not.toHaveProperty("closedBy");
+    expect(after).not.toHaveProperty("archivedAt");
+    expect(after).not.toHaveProperty("pinned");
+    expect(after.title).toBe("Unchanged");
+  });
+
+  it.each([
+    ["service-trust loopback (a shared server's bot shell)", { kind: "loopback", scopes: ["admin", "client"], trust: "service" } as RequestAuth, 403],
+    ["a client-scoped session", { kind: "session", session: signedIn, via: "bearer", scopes: ["client"] } as RequestAuth, 403],
+    ["an admin session", { kind: "session", session: signedIn, via: "bearer", scopes: ["admin", "client"] } as RequestAuth, 200],
+  ])("authority: %s", async (_label, auth, status) => {
+    const f = fixture();
+    const task = f.openedByCapri();
+    expect((await f.patch(f.lead.id, task.threadId, { close: true }, auth)).status).toBe(status);
+    expect(Boolean(f.store.taskByThread(f.lead.id, task.threadId)!.closedBy)).toBe(status === 200);
+  });
+
+  it.each(["busy", "queued", "awaiting", "direct", "routineThreads"] as const)("refuses while the thread is %s", async (state) => {
+    const f = fixture();
+    const task = f.openedByCapri();
+    f[state].add(task.threadId);
+    const refused = await f.patch(f.lead.id, task.threadId, { close: true });
+    expect(refused.status).toBe(409);
+    expect(f.store.taskByThread(f.lead.id, task.threadId)).not.toHaveProperty("closedBy");
+    expect(f.closeChips(task.threadId)).toHaveLength(0);
+  });
+
+  it("answers 404 for a thread the bot does not have", async () => {
+    const f = fixture();
+    const theirs = f.store.createTask(f.capri.id, "Capri's", false, undefined, { botId: f.capri.id, name: "Capri", at: 1 })!;
+    expect((await f.patch(f.lead.id, theirs.threadId, { close: true })).status).toBe(404);
+    expect(f.store.taskByThread(f.capri.id, theirs.threadId)).not.toHaveProperty("closedBy");
+  });
+});
