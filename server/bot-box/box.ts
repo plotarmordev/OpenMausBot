@@ -92,7 +92,7 @@ export class BoxRunner {
     const mutate = this.options.setup.mutate;
     const env = mutate?.has("env-all")
       ? Object.fromEntries(Object.entries(request.env).filter((entry): entry is [string, string] => entry[1] !== undefined))
-      : boxEnvironment(request.env, this.options.denyEnv);
+      : boxEnvironment(request.env, this.options.denyEnv, new Set(request.allowEnv ?? []));
     if (plan.net === "isolated") {
       const proxy = `http://127.0.0.1:${this.options.egressPort ?? BOX_EGRESS_PORT}`;
       for (const name of ["HTTPS_PROXY", "HTTP_PROXY", "https_proxy", "http_proxy"]) env[name] = proxy;
@@ -102,7 +102,9 @@ export class BoxRunner {
     const bridges = plan.net === "isolated" ? this.options.setup.bridges : [];
     const inner = bridgedCommand(this.options.bridge, bridges, request.command, request.args);
     const brokered = this.broker(env, plan, request);
-    return { command: this.options.bwrap, args: [...bwrapArgs(plan), "--", inner.command, ...inner.args], env: brokered.env, plan, token: brokered.token, release: brokered.release, unbrokered: brokered.unbrokered, extraFds };
+    const vouched = (request.allowEnv ?? []).filter((name) => /(?:KEY|TOKEN|SECRET)$/.test(name) && brokered.env[name] !== undefined && brokered.env[name] === request.env[name]);
+    const unbrokered = [...new Set([...brokered.unbrokered, ...vouched])];
+    return { command: this.options.bwrap, args: [...bwrapArgs(plan), "--", inner.command, ...inner.args], env: brokered.env, plan, token: brokered.token, release: brokered.release, unbrokered, extraFds };
   }
 
   /** Keys become a per-process token when the broker is on and the box has its own network (the bridge to the broker). */

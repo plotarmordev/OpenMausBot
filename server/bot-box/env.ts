@@ -28,18 +28,33 @@ export const BOX_ENV_NEVER: ReadonlySet<string> = new Set([
 ]);
 export const BOX_ENV_NEVER_PREFIXES: readonly string[] = ["OMB_CLOUD_"];
 
-export function boxEnvironmentAllows(name: string, deny: ReadonlySet<string> = new Set()): boolean {
-  if (deny.has(name) || BOX_ENV_NEVER.has(name) || BOX_ENV_NEVER_PREFIXES.some((prefix) => name.startsWith(prefix))) return false;
+/** `allow` is what one spawn vouches for: the keys the person saved for its engine, under whatever name that engine reads
+ * (NANO_GPT_API_KEY, OPENCODE_API_KEY). Security: it lifts the allow-list and `deny` for that process only, and never for
+ * a name of OpenMausBot's own (`OMB_`) or one on the never-list. */
+export function boxEnvironmentAllows(name: string, deny: ReadonlySet<string> = new Set(), allow: ReadonlySet<string> = new Set()): boolean {
+  if (BOX_ENV_NEVER.has(name) || BOX_ENV_NEVER_PREFIXES.some((prefix) => name.startsWith(prefix))) return false;
+  if (allow.has(name) && !name.startsWith("OMB_")) return true;
+  if (deny.has(name)) return false;
   return BOX_ENV_NAMES.has(name) || BOX_ENV_PREFIXES.some((prefix) => name.startsWith(prefix));
 }
 
 /** The box's environment: the allowed names of `env` with a value, in a fresh object. `deny` adds names (the workspace
  * credentials) that are refused even when a prefix would allow them. */
-export function boxEnvironment(env: Record<string, string | undefined>, deny: ReadonlySet<string> = new Set()): Record<string, string> {
+export function boxEnvironment(
+  env: Record<string, string | undefined>,
+  deny: ReadonlySet<string> = new Set(),
+  allow: ReadonlySet<string> = new Set(),
+): Record<string, string> {
   const kept: Record<string, string> = {};
   for (const [name, value] of Object.entries(env)) {
-    if (value === undefined || !boxEnvironmentAllows(name, deny)) continue;
+    if (value === undefined || !boxEnvironmentAllows(name, deny, allow)) continue;
     kept[name] = value;
   }
   return kept;
+}
+
+/** The names of `env` that hold the value `instance` gave them: what the environment configured for one engine instance
+ * (its saved keys) put in a spawn, for that spawn's `allowEnv`. */
+export function instanceEnvNames(instance: Readonly<Record<string, string>>, env: Record<string, string | undefined>): string[] {
+  return Object.keys(instance).filter((name) => env[name] !== undefined && env[name] === instance[name]);
 }

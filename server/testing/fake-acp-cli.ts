@@ -47,6 +47,8 @@
 //   FAKE_ACP_HANG_ON  a prompt whose text holds this hangs as in mode hang; others answer
 //   FAKE_ACP_CURSOR_FAST=1  a `fast` select ("true") once initialize declares _meta.parameterizedModelPicker, as Cursor CLI 2026.10.19; =stuck acknowledges set_config_option but keeps "true"
 //   FAKE_ACP_SESSION_CLOSE=1  initialize advertises sessionCapabilities.close (OpenCode 1.19); session/close answers {}
+//   FAKE_ACP_TOOL_LIMIT  session/prompt lists the session's MCP tools and refuses, as OpenCode Zen does, past this many;
+//     under it the reply is "tools: <server>=<count>,…"
 import { AsyncLocalStorage } from "node:async_hooks";
 import { spawn } from "node:child_process";
 import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
@@ -817,6 +819,22 @@ function handle(msg: any) {
         writeFileSync(`${process.env.FAKE_ACP_DUMP}.prompt.json`, JSON.stringify(msg.params?.prompt ?? null, null, 2));
       }
       if (failRpc(msg)) return;
+      if (process.env.FAKE_ACP_TOOL_LIMIT) {
+        const limit = Number(process.env.FAKE_ACP_TOOL_LIMIT);
+        const handshake = process.env.FAKE_ACP_MCP_HANDSHAKE ? JSON.parse(process.env.FAKE_ACP_MCP_HANDSHAKE) : GROK_MCP_HANDSHAKE;
+        void Promise.all(sessionMcp.map((entry) => listMcpTools(entry, handshake).then((tools) => `${entry.name}=${tools.length}`))).then((counts) => {
+          const total = counts.reduce((sum, entry) => sum + Number(entry.split("=")[1]), 0);
+          if (total > limit) {
+            recordMethod("session/prompt.tool-limit");
+            out({ jsonrpc: "2.0", id: msg.id, error: { code: -32603, message: `Internal error: Invalid value for 'tools': maximum number of items is ${limit}.`,
+              data: { service: "session", errorName: "APIError" } } });
+            return;
+          }
+          out({ jsonrpc: "2.0", method: "session/update", params: { update: { sessionUpdate: "agent_message_chunk", content: { text: `tools: ${counts.join(",")}` } } } });
+          result(msg.id, { stopReason: "end_turn", _meta: { inputTokens: 10, outputTokens: 5 } });
+        });
+        return;
+      }
       if (process.env.FAKE_ACP_TEXT_REPLY !== undefined) {
         out({ jsonrpc: "2.0", method: "session/update", params: { sessionId: msg.params?.sessionId, update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: process.env.FAKE_ACP_TEXT_REPLY } } } });
         result(msg.id, { stopReason: "end_turn", _meta: { inputTokens: 12, outputTokens: 4 } });

@@ -20,7 +20,7 @@ import { runAcpOneShot } from "./background-text.ts";
 import { sanitizeAcpToolMessage } from "./tool-log.ts";
 import { stripLeakedSystemHarnessMessages } from "../../../shared/system-message-guard.ts";
 import {
-  classifyQuiet, describeQuiet, lastSeenPhrase, LogTail, quietKey, sampleProcessTree,
+  classifyQuiet, describeQuiet, formatQuietLimit, lastSeenPhrase, LogTail, promptIdleTimeoutMs, quietKey, sampleProcessTree,
   type LogSignal, type ProcessSample, type QuietState,
 } from "./quiet-status.ts";
 import { readSessionReport } from "./session-reports.ts";
@@ -64,6 +64,7 @@ import { classifyError } from "../retry.ts";
 import { engineFailureKind, engineFailureMessage } from "../engine-errors.ts";
 import { narrowsNativeTools, parseToolScope } from "../../../shared/tool-scope.ts";
 import { acpMcpServers, type AcpMcpServer } from "../turn-mcp.ts"; import { acpToolProgress } from "../tool-progress.ts";
+import { learnedToolCountLimit, mcpToolBudget, retryUnderToolLimit } from "../../tool-count-limit.ts"; import { instanceEnvNames } from "../../bot-box/env.ts";
 
 /** Failures fixed on the provider account, not by retrying; the reporting process stays pooled. */
 export type AccountErrorCode = Extract<ProviderErrorCode,
@@ -233,6 +234,8 @@ export interface AcpSupport {
   clientCapabilitiesMeta?: Record<string, unknown>;
   /** The agent reaches MCP servers by URL: OpenMausBot's own servers are this server's endpoints, no process each. */
   ownMcpOverHttp?: boolean;
+  /** How many tools the agent lists of its own beside the MCP servers', counted against a provider's tool limit. */
+  engineTools?: number;
   /** Do not retain stderr from providers that may place OAuth material there. */
   redactStderr?: boolean;
   /** The agent's own debug log, read while a prompt is quiet: a new line proves it alive and `parse`
@@ -306,18 +309,6 @@ const SHARED_SESSIONS_MAX = 6, SHARED_SESSIONS_LIFETIME = 12;
 const HEALTHY_CLOSE = new Set(["idle", "reset", "contract", "stop", "stopAll", "dispose", "approval-unconfirmed"]);
 /** ACP agents may compact their history silently; re-send the full prompt after this many bare turns. */
 const ACP_PROMPT_RE_ANCHOR_TURNS = 8;
-// Prompt silence guard (0 disables). Healthy agents go quiet for minutes: Qwen Code 0.24 sends
-// nothing while it compresses history, backs off a rate limit (60 s up to 5 min per wait) or runs
-// one model request (its SDK waits up to 600 s); a wedged OpenCode turn goes silent forever.
-export const DEFAULT_ACP_PROMPT_IDLE_MS = 15 * 60_000;
-const promptIdleTimeoutMs = (): number => {
-  const raw = process.env.OPENMAUS_ACP_PROMPT_IDLE_TIMEOUT_MS;
-  if (raw === undefined) return DEFAULT_ACP_PROMPT_IDLE_MS;
-  const ms = Number(raw);
-  return Number.isFinite(ms) && ms > 0 ? ms : 0;
-};
-const formatQuietLimit = (ms: number): string =>
-  ms >= 120_000 && ms % 60_000 === 0 ? `${ms / 60_000} min` : `${Math.round(ms / 1000)} s`;
 /** A `tool_call` without a status is pending (ACP's default); a `tool_call_update` without one leaves the call as it was. */
 function trackRunningTool(current: AcpTurn, update: { toolCallId?: unknown; status?: unknown }, defaultStatus?: "pending"): void {
   if (typeof update.toolCallId !== "string" || !update.toolCallId) return;
@@ -691,7 +682,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         hostKey: string | null): AcpHost => {
         const running = sharedHost(hostKey);
         if (running) return running;
-        const child = spawnCli(launch.command, argv, { cwd, env, stdio: ["pipe", "pipe", "pipe"] }, "bot");
+        const child = spawnCli(launch.command, argv, { cwd, env, stdio: ["pipe", "pipe", "pipe"], box: { allowEnv: instanceEnvNames(input.environment, env) } }, "bot");
         const host = new AcpHost(child, hostKey, { source: SOURCE, logMessage: nativeLogMessage, keepStderr: !support.redactStderr, unrouted: refuse });
         hosts.add(host);
         child.once("close", () => hosts.delete(host));
@@ -1072,7 +1063,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         return session;
       };
 
-      const sendTurn = async (turn: SendTurnInput) => {
+      const sendTurn = async (turn: SendTurnInput, retryOf?: string) => {
         requireRunning();
         if (startupModelRefresh) await startupModelRefresh;
         requireRunning();
@@ -1091,7 +1082,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         if (controlsHost && turnConfig.fullAuto && turn.approvalMode !== "full") {
           throw new Error("local computer control requires interactive provider approvals");
         }
-        const turnId = newId();
+        const turnId = retryOf ?? newId();
         const cwd = turn.cwd ?? turnConfig.workspace ?? homedir();
         const env = childEnv(turnConfig);
         if (
@@ -1108,7 +1099,9 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
           }
         }
         const resolvedModel = support.resolveTurnModel?.(turn.model, env);
-        const mcpServers = acpMcpServers(turn, { http: support.ownMcpOverHttp === true, engine: support.driverKind });
+        const toolLimitKey = JSON.stringify([instanceId, resolvedModel ?? null]);
+        const mcpServers = acpMcpServers(turn, { http: support.ownMcpOverHttp === true, engine: support.driverKind,
+          toolBudget: mcpToolBudget(learnedToolCountLimit(toolLimitKey), support.engineTools ?? 32) });
         support.applyTurnEnv?.(env, {
           model: resolvedModel, requestedModel: turn.model, fullAuto: turnConfig.fullAuto === true, botId: turn.botId, cwd, toolScope: turn.toolScope,
           threadId, mcpServers,
@@ -1279,7 +1272,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
           }
         };
         active.set(threadId, { stop: () => { state.stopped = true; closeSession(threadId, "stop"); }, interrupt, turnId, asks });
-        emit({ ...base(threadId, turnId), type: "turn.started" });
+        if (retryOf === undefined) emit({ ...base(threadId, turnId), type: "turn.started" });
         session.current = current;
 
         (async () => {
@@ -1636,6 +1629,12 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
               deletePromptSplitReceipt(DRIVER_KIND, pendingSplitReceipt.key);
             }
             if (!state.settled) {
+              const untouched = retryOf === undefined && !state.producedItem && !state.text && !current.runningTools.size && !asks.size && !state.stopped && !session.closing;
+              if (untouched && retryUnderToolLimit(e, { key: toolLimitKey, model: resolvedModel, engine: DRIVER_KIND, retry: () => {
+                state.settled = true; session.current = null; active.delete(threadId); current.stopQuietWatch?.();
+                return sendTurn({ ...turn, startupRecovery: undefined, sessionReset: undefined, resumeCursor: session.sessionId ?? turn.resumeCursor }, turnId);
+              }, failed: (error) => { emit({ ...base(threadId, turnId), type: "runtime.error", message: error instanceof Error ? error.message : String(error) });
+                emit({ ...base(threadId, turnId), type: "turn.completed", ok: false, stopReason: "rpc_error", cost: null }); } })) return;
               const message = e instanceof Error ? e.message : String(e);
               const code = support.classifyError?.(e) ?? (engineFailureKind(message) === "credits" ? "insufficient_funds" : undefined);
               const needsAuth = code === "invalid_credentials" || code === "inactive_subscription"

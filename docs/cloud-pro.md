@@ -1532,8 +1532,9 @@ resume, someone's use, or 120 s (a sleep the Admin never carried out):
 **The edge on a cold wake.** `OMB_CLOUD_EDGE_HOLD` (whole seconds, at most
 120, such as `30s`; unset: `0s`, today's edge) makes Caddy hold a request while
 the server starts instead of answering 502, so a webhook or the app's first
-request after a stop is answered late rather than refused. The Admin sets it
-only for a plan that sleeps.
+request after a stop is answered late rather than refused; Caddy dials the
+server again every 50 ms, so a held request reaches it within 50 ms of its
+listening. The Admin sets it only for a plan that sleeps.
 
 ## What the desktop reads from the Admin
 
