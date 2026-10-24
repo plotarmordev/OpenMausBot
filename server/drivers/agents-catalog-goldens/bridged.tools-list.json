@@ -307,7 +307,7 @@
     },
     {
       "name": "send_voice_note",
-      "description": "Send the user a voice note: a short spoken message synthesized with your configured voice, stored as audio, and attached to your reply when the turn ends. Write the note as speakable words, exactly as it should be said — no lists, links or markdown meant for screens. The same text becomes the note's visible caption and transcript, so the person can read or listen. Use it for warmth, tone or emphasis a written line cannot carry; use ordinary text otherwise.",
+      "description": "Send the user a voice note: a short spoken message synthesized with your configured voice, stored as audio, and attached to your reply when the turn ends. Write the note as speakable words, exactly as it should be said — no lists, links or markdown meant for screens. The words are kept as the note's transcript, which the person can open to read instead of listening; they are not repeated in your reply, so do not write them out again. Use it for warmth, tone or emphasis a written line cannot carry; use ordinary text otherwise.",
       "inputSchema": {
         "type": "object",
         "additionalProperties": false,
@@ -364,7 +364,7 @@
     },
     {
       "name": "find_tool",
-      "description": "Find an OpenMausBot tool that is not in your tool list. Say what you want to do in a few words, or give the tool's name. Each match comes back with its description and exact input schema; run one with use_tool. Tools reached this way: list_shared_computers, shared_computer, assignment_status, raise_escalation, list_threads, close_thread, start_thread, vm_exec, show_widget, update_widget, show_html, update_html, unpublish_page, create_bot, list_team_setup, list_team_library, propose_team_setup, propose_bot_deletion, create_room, manage_room, x_search, x_user_posts, x_post, x_profile, research_search, research_endpoint, research_call, retry_thread, memory_log, session_search, session_read, list_triggers, list_trigger_events, create_trigger, manage_trigger, propose_profile, propose_model, propose_team_memory, skills_list, skill_manage, add_mcp_server.",
+      "description": "Find an OpenMausBot tool that is not in your tool list. Say what you want to do in a few words, or give the tool's name. Each match comes back with its description and exact input schema; run one with use_tool. Tools reached this way: list_shared_computers, shared_computer, assignment_status, raise_escalation, list_threads, close_thread, start_thread, vm_exec, show_widget, update_widget, show_html, update_html, unpublish_page, create_bot, list_team_setup, list_team_library, propose_team_setup, propose_bot_deletion, create_room, manage_room, x_search, x_user_posts, x_post, x_profile, research_search, research_endpoint, research_call, decide, extract, retry_thread, memory_log, session_search, session_read, list_triggers, list_trigger_events, create_trigger, manage_trigger, propose_profile, propose_model, propose_team_memory, skills_list, skill_manage, add_mcp_server.",
       "inputSchema": {
         "type": "object",
         "additionalProperties": false,

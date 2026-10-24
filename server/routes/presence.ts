@@ -6,6 +6,8 @@ import { PASS, type RouteHandler } from "./table.ts";
 export interface PresenceRouteDeps {
   isOwner(auth: RequestAuth): boolean;
   active(source: "desktop" | "phone", timeZone?: string): Promise<PresenceAnswer>;
+  /** A Team Cloud: every member's arrival counts, for their own brief. */
+  member?(auth: RequestAuth): PresenceAnswer;
 }
 
 const IANA_ZONE = /^(?:UTC|[A-Za-z][A-Za-z0-9_+-]*(?:\/[A-Za-z0-9_+-]+)+)$/;
@@ -18,6 +20,7 @@ export function createPresenceRoutes(deps: PresenceRouteDeps): RouteHandler {
     const given = body && typeof body === "object" && !Array.isArray(body) ? body as Record<string, unknown> : {};
     const source = given.source === "phone" ? "phone" : "desktop";
     const timeZone = typeof given.timeZone === "string" && given.timeZone.length <= 128 && IANA_ZONE.test(given.timeZone) ? validZone(given.timeZone) : undefined;
+    if (deps.member) return json(res, 200, { ok: true, ...deps.member(auth) });
     // A guest's activation is not the person's: answered, never recorded.
     if (!deps.isOwner(auth)) return json(res, 200, { ok: true, returned: false });
     return json(res, 200, { ok: true, ...(await deps.active(source, timeZone)) });

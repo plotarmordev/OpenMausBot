@@ -3,6 +3,7 @@
 import { DATA_INSTRUCTIONS } from "./data/instructions.ts";
 import { HIGHLEVEL_INSTRUCTIONS } from "./highlevel/instructions.ts";
 import { HARNESS_PROXY_TIMEOUT_MS } from "./harness-budget.ts";
+import { capToolListResult } from "./tool-count-limit.ts";
 
 export const MAX_INPUT_BYTES = 1_048_576;
 export const MAX_OUTPUT_BYTES = 16_777_216;
@@ -60,7 +61,7 @@ async function boundedJson(response: Response, name: string): Promise<unknown> {
 
 export async function harnessMcpRequest(
   frame: unknown,
-  connection: { url: string; token: string; kind: HarnessMcpKind },
+  connection: { url: string; token: string; kind: HarnessMcpKind; toolLimit?: number },
 ): Promise<unknown | undefined> {
   if (!frame || typeof frame !== "object" || Array.isArray(frame)) return failure(null, null, "Invalid request.", -32600);
   const message = frame as { id?: RpcId; jsonrpc?: unknown; method?: unknown; params?: unknown };
@@ -93,7 +94,9 @@ export async function harnessMcpRequest(
     if (!response.ok || !payload || typeof payload !== "object" || !Object.hasOwn(payload, "result")) {
       throw new Error(typeof payload?.error === "string" ? payload.error.slice(0, 2_000) : `${name} server is unavailable. Start a new bot turn or try again.`);
     }
-    return { jsonrpc: "2.0", id, result: payload.result };
+    const result = message.method === "tools/list"
+      ? capToolListResult(payload.result, connection.toolLimit, (line) => console.warn(`[${connection.kind}] ${line}`)) : payload.result;
+    return { jsonrpc: "2.0", id, result };
   } catch (error) {
     return failure(id, message.method, unansweredText(error, name) + RECOVERY[connection.kind]);
   }

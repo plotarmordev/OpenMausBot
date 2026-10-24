@@ -9,7 +9,8 @@ import { cloudHomeConfigured } from "../../cloud-home.ts";
 import { DATA_DIR, OPENCODE_PROVIDER_ENV } from "../../config.ts";
 import { hostedWorkspaceConfigured } from "../../enterprise.ts";
 import { decodeInjectId, hostApiKey, localHost, mergeLocalInject } from "../local-inject.ts";
-import { createAcpDriver, offeredModels, type AccountErrorCode, type AcpSupport } from "./core.ts";
+import { createAcpDriver, type AccountErrorCode, type AcpSupport } from "./core.ts";
+import { offeredModels } from "./config-options.ts";
 import type { ModelCatalog, ProviderErrorCode } from "../../contracts.ts";
 import { titleCaseModelId } from "../../contracts.ts";
 import { execCli, killCliTree, spawnCli } from "../../procs.ts";
@@ -748,6 +749,8 @@ const support = (loadCatalog: OpenCodeCatalogLoader): AcpSupport => ({
   },
   modelVariants: true,
   ownMcpOverHttp: true,
+  // OpenCode 1.18.27's build agent lists 13 tools of its own (bash, read, edit, task, skill…); room for a newer CLI's.
+  engineTools: 24,
   resolveTurnModel: (model, env) => model ? ensureOpenCodeInjectModel(model, env) : model,
   transformEnv: withholdProviderKeysWhenManaged,
   spawnFingerprint: openCodeLoginsFingerprint,

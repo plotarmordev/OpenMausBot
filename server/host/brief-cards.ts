@@ -106,7 +106,8 @@ export const DRAFT_ACTION = "draft_reply";
 export const BRIEF_INTRO = "I keep an eye on your calendar and email and put what needs you here, once a day and when you come back. Tell me to stop, or what to watch for.";
 
 export interface BriefEmail { messageId: string; threadId: string; from: string; subject: string; why?: string; needsReply: boolean }
-export interface BriefRow { text: string; note: string; open?: OpenTarget }
+/** `page`: the live page a routine's run published; its row's Open page opens it, while Open opens the run's chat. */
+export interface BriefRow { text: string; note: string; open?: OpenTarget; page?: string }
 export interface BriefMeeting { title: string; start: number; joinUrl?: string }
 export interface BriefFacts {
   now: number;
@@ -144,6 +145,7 @@ function capped(rows: Node[], total: number): Node[] {
 const section = (title: string, rows: Node[], total: number, empty?: string): Node[] =>
   [{ type: "Title", value: title, size: "sm" }, ...(rows.length ? capped(rows, total) : empty ? [text(empty)] : [])];
 const openButton = (target: OpenTarget | undefined): Node[] => (target ? [button("Open", { type: "open_thread", payload: target })] : []);
+const pageButton = (url: string | undefined): Node[] => { const link = httpsLink(url), open = link ? openUrl(link) : undefined; return open ? [button("Open page", open)] : []; };
 
 function emailRow(email: BriefEmail): Node {
   const who = sender(email, BRIEF_TEXT.label);
@@ -170,7 +172,7 @@ export function briefCard(facts: BriefFacts): BuiltCard {
   const waiting = facts.waiting === true ? "More new emails than one check reads; I'll sort the rest next."
     : facts.waiting ? `${plural(facts.waiting, "more new email")} since you were away; I'll sort them next.` : undefined;
   const importantRows = [...important.map(emailRow), ...(waiting ? [caption(waiting)] : [])];
-  const routineRows = facts.routines.map((row) => rowBeside(row.text, row.note, openButton(row.open)));
+  const routineRows = facts.routines.map((row) => rowBeside(row.text, row.note, [...pageButton(row.page), ...openButton(row.open)]));
   const children: Node[] = [
     ...(facts.intro ? [caption(BRIEF_INTRO)] : []),
     ...section(NEEDS_YOU, needRows, needRows.length, NOTHING_NEEDS_YOU),

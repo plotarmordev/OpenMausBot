@@ -11,6 +11,9 @@ import { startFakeConnectedApps, type FakeConnectedApps } from "./testing/fake-c
 // connected-apps service: the Chief's default watch, its checks, the one batched run, the brief, Dismiss, presence and
 // the read-and-draft fence. Nothing here reaches a real Google account or a model.
 const MINUTE = 60_000;
+// The brief lists only the person's meetings today. Their zone is one where it is midday when the suite starts, so the
+// meeting 8 minutes from now is always today: in UTC, a run from 23:52 on would put it tomorrow.
+const MIDDAY_ZONE = (() => { const offset = 12 - new Date().getUTCHours(); return `Etc/GMT${offset > 0 ? "-" : "+"}${Math.abs(offset)}`; })();
 const WATCH_REPLY = JSON.stringify({
   important: [{ id: "important-1", why: "Ada needs the Q3 numbers from you by Friday.", needsReply: true }],
   prep: [{ id: "standup-uid", brief: "Ada leads the standup.\nOpen: the Q3 numbers.\nNext step: bring the draft." }],
@@ -56,7 +59,7 @@ describe("the Chief keeps an eye on the day", () => {
     vi.spyOn(console, "warn").mockImplementation(() => {});
     apps = await startFakeConnectedApps();
     writeFileSync(markers, JSON.stringify({ "Your checks found what is below": WATCH_REPLY }));
-    fixture = await launchVerificationServer({ ...process.env, OMB_COMPOSIO_BROKER_URL: apps.url, OMB_COMPOSIO_BROKER_TOKEN: apps.token, FAKE_CLAUDE_MARKER_REPLIES: markers });
+    fixture = await launchVerificationServer({ ...process.env, TZ: MIDDAY_ZONE, OMB_COMPOSIO_BROKER_URL: apps.url, OMB_COMPOSIO_BROKER_TOKEN: apps.token, FAKE_CLAUDE_MARKER_REPLIES: markers });
     api = client(fixture);
     const bots = (await api("GET", "/api/bots")).bots as any[];
     const found = bots.find((bot) => bot.chiefOfStaff);
@@ -85,7 +88,7 @@ describe("the Chief keeps an eye on the day", () => {
   });
 
   it("the first open of the day, with nothing for the person yet, posts no brief, opens nothing and starts no AI turn", async () => {
-    const answer = await api("POST", "/api/presence/active", { source: "desktop", timeZone: "UTC" });
+    const answer = await api("POST", "/api/presence/active", { source: "desktop", timeZone: MIDDAY_ZONE });
     expect(answer).toEqual({ ok: true, returned: false });
     expect(await brief()).toBeUndefined();
     expect(existsSync(fixture.fixtureDumpPath)).toBe(false);

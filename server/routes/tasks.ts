@@ -7,7 +7,7 @@ import type { Coordinator } from "../coordinator.ts";
 import type { Handoffs } from "../delta-context.ts";
 import type { hostedModelPolicy } from "../hosted-models.ts";
 import type { PhoneSecretSubmissionRegistry } from "../phone-secret.ts";
-import type { RequestAuth } from "../request-auth.ts";
+import { ownerOrAdmin, type RequestAuth } from "../request-auth.ts";
 import type { RoutineManager } from "../routines.ts";
 import type { SkillReview } from "../skill-review.ts";
 import { isProjectEmoji, type BotRecord, type Store, type TaskRecord } from "../store.ts";
@@ -18,6 +18,8 @@ import type { MessagePage } from "./channels.ts";
 import { bulkDeleteThreadIds, type BulkDeleteRefusal } from "./bulk-delete.ts";
 import { PASS, type RouteHandler } from "./table.ts";
 import { sawThread } from "../thread-presence.ts";
+import { closeRefusal, closeThread } from "../thread-close.ts";
+import { readThreadNotifications } from "./notifications.ts";
 
 type HostedModels = NonNullable<ReturnType<typeof hostedModelPolicy>>;
 
@@ -25,7 +27,7 @@ export interface TaskRouteDeps {
   store: Pick<Store,
     | "bot" | "bots" | "taskByThread" | "project" | "projectBotForTask" | "patchTask" | "patchProject" | "tasks"
     | "switchTaskModel" | "switchTask" | "retitleTask" | "reorderProjects" | "refreshTaskPermissions" | "messagesTail"
-    | "messagesFor" | "deleteTasks" | "deleteProject" | "createTask" | "createProject">;
+    | "messagesFor" | "deleteTasks" | "deleteProject" | "createTask" | "createProject" | "appendMessage" | "setTaskClosedBy">;
   /** On a Cloud home only the owner changes how a bot asks for approval. */
   cloudHome: boolean;
   /** The desktop app owns this server, so a loopback caller is its owner. */
@@ -35,7 +37,7 @@ export interface TaskRouteDeps {
   hostedFullAccessRefusal: string;
   hostedModels: Pick<HostedModels, "resetTask"> | null;
   routines(): Pick<RoutineManager, "isActiveThread"> | null;
-  coordinator: Pick<Coordinator, "cancelDirect">;
+  coordinator: Pick<Coordinator, "cancelDirect" | "awaitingAnswer" | "activeDirect">;
   handoffs: Pick<Handoffs, "forget">;
   skillReview: Pick<SkillReview, "dropThread">;
   threadStarters: Pick<ThreadStarters, "set">;
@@ -48,6 +50,8 @@ export interface TaskRouteDeps {
   sharedWorkspaceFullAccessEnabled(): boolean;
   supportsApprovalMode(selection: ModelSelection, mode: ApprovalMode): boolean;
   threadBusy(botId: string, threadId: string): boolean;
+  queuedThreadPosition(botId: string, threadId: string): number | null;
+  broadcast(payload: Record<string, unknown>): void;
   publicBot(bot: BotRecord): WireBot;
   wireBot(bot: BotRecord): WireBot;
   wireTask(task: TaskRecord, botModel: ModelSelection): WireTask;
@@ -68,11 +72,12 @@ export interface TaskRouteDeps {
   rejectDeletedThreadSkillStages(cleanups: Array<{ botId: string; stagedId: string }>): void;
 }
 
-export function createTaskRoutes(deps: TaskRouteDeps): RouteHandler {
+/** `deleteTasks`: the same deletion for the server's own use (a person leaving a Team Cloud, host/team-member-left.ts). */
+export function createTaskRoutes(deps: TaskRouteDeps): RouteHandler & { deleteTasks(botId: string, threadIds: string[]): ReturnType<TaskRouteDeps["store"]["deleteTasks"]> } {
   const {
     store, hostedModels, coordinator, handoffs, skillReview, threadStarters, phoneSecretSubmissions, titleRegenerations,
     directTurnGenerationByThread, actorKey, cloudOwnerSession, cloudThreadRefusal, sharedWorkspaceFullAccessEnabled,
-    supportsApprovalMode, threadBusy, publicBot, wireBot, wireTask, pageSize, messagePage, checkedModelSelection,
+    supportsApprovalMode, threadBusy, broadcast, publicBot, wireBot, wireTask, pageSize, messagePage, checkedModelSelection,
     checkedTaskModelSwitch, threadTitleGate, generateThreadTitle, settleDirectFollowup, clearTurnDigestState,
     revokeInternalCapabilitiesForThread, stagedSkillCleanupsForThread, rejectDeletedThreadSkillStages,
   } = deps;
@@ -106,7 +111,7 @@ export function createTaskRoutes(deps: TaskRouteDeps): RouteHandler {
     }
     return result;
   };
-  return async ({ req, res, url, path, method, auth, json, readBody }) => {
+  return Object.assign(async ({ req, res, url, path, method, auth, json, readBody }: Parameters<RouteHandler>[0]) => {
     let m: RegExpMatchArray | null = null;
 
     // Folders never own settings, transcripts or working directories; the "project" wire names stay.
@@ -224,6 +229,7 @@ export function createTaskRoutes(deps: TaskRouteDeps): RouteHandler {
       const switched = store.switchTask(bot.id, m[2]);
       if (!switched) return json(res, 404, { error: "no such task" });
       sawThread(m[2]);
+      readThreadNotifications(m[2], broadcast);
       const wiredSwitch = wireBot(switched);
       const switchedSettings = { ...wiredSwitch, tasks: wiredSwitch.tasks ?? [] };
       // "0": settings only; a positive page: that tail; omitted: the whole thread (search hits can be older than a page).
@@ -237,10 +243,28 @@ export function createTaskRoutes(deps: TaskRouteDeps): RouteHandler {
       if (!body || typeof body !== "object" || Array.isArray(body)) return json(res, 400, { error: "body must be a JSON object" });
       const current = store.projectBotForTask(m[1], m[2]);
       if (!current) return json(res, 404, { error: "no such task" });
-      const allowed = new Set(["title", "projectId", "modelSelection", "updateBotDefault", "resetApprovalToAsk", "approvalMode", "autoApprove", "requireAvailableModel", "pinnedMessageId", "acknowledgeLocalAuto", "archivedAt", "pinned", "snoozedUntil", "surface", "refreshPermissions", "link"]);
+      const allowed = new Set(["title", "projectId", "modelSelection", "updateBotDefault", "resetApprovalToAsk", "approvalMode", "autoApprove", "requireAvailableModel", "pinnedMessageId", "acknowledgeLocalAuto", "archivedAt", "pinned", "snoozedUntil", "surface", "refreshPermissions", "link", "close"]);
       if (Object.keys(body).some((key) => !allowed.has(key))) return json(res, 400, { error: "unsupported thread setting" });
       const notYours = cloudThreadRefusal(auth, m[2]);
       if (notYours) return json(res, 403, { error: notYours });
+      if (body.close !== undefined) {
+        if (body.close !== true || Object.keys(body).length !== 1) return json(res, 400, { error: "close must be true and the only field" });
+        if (!ownerOrAdmin(auth)) return json(res, 403, { error: "only the owner can close a thread here" });
+        const bot = store.bot(m[1]);
+        const task = store.taskByThread(m[1], m[2]);
+        if (!bot || !task) return json(res, 404, { error: "no such task" });
+        const answerClosed = (alreadyClosed: boolean) => {
+          const closed = store.taskByThread(bot.id, task.threadId)!;
+          return json(res, 200, { closed: true, ...(alreadyClosed ? { alreadyClosed: true } : {}), task: wireTask(closed, store.bot(bot.id)!.modelSelection), bot: publicBot(store.bot(bot.id)!) });
+        };
+        if (task.closedBy) return answerClosed(true);
+        const opener = task.openedBy ? store.bot(task.openedBy.botId) : undefined;
+        if (!opener) return json(res, 403, { error: "only a thread a bot opened can be closed here" });
+        const refusal = closeRefusal(deps, bot.id, task) ?? (deps.routines()?.isActiveThread(task.threadId) ? `#${task.title} is running a routine — wait for it to finish` : null);
+        if (refusal) return json(res, 409, { error: refusal });
+        closeThread(store, bot.id, task, opener);
+        return answerClosed(false);
+      }
       // On a Cloud home only the owner decides whether a bot may act without asking, even in someone else's conversation.
       if (CLOUD_HOME && !cloudOwnerSession(auth) &&
         (body.approvalMode !== undefined || body.autoApprove !== undefined || body.acknowledgeLocalAuto !== undefined || body.updateBotDefault === true || body.refreshPermissions === true)) {
@@ -413,5 +437,5 @@ export function createTaskRoutes(deps: TaskRouteDeps): RouteHandler {
       }
     }
     return PASS;
-  };
+  }, { deleteTasks });
 }

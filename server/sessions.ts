@@ -189,7 +189,7 @@ export class SessionRegistry {
   private failures = new Map<string, { count: number; windowStart: number; lockedUntil: number }>();
   private replays: Array<{ codeHash: string; attemptId: string; browser: boolean; result: ExchangeResult; expiresAt: number }> = [];
   private readonly onRevoked = new Set<(sessionId: string) => void>();
-  private readonly onIssued = new Set<(session: Pick<SessionRecord, "id" | "scopes">) => void>();
+  private readonly onIssued = new Set<(session: Pick<SessionRecord, "id" | "scopes" | "email" | "teamRole" | "membershipAuthority">) => void>();
   private lastSeenWrites = new Map<string, number>();
   private readonly now: () => number;
   private readonly options: SessionStoreOptions;
@@ -274,7 +274,7 @@ export class SessionRegistry {
   }
 
   /** Every session opened from now on, by pairing or sign-in. */
-  onSessionIssued(listener: (session: Pick<SessionRecord, "id" | "scopes">) => void): () => void {
+  onSessionIssued(listener: (session: Pick<SessionRecord, "id" | "scopes" | "email" | "teamRole" | "membershipAuthority">) => void): () => void {
     this.onIssued.add(listener);
     return () => this.onIssued.delete(listener);
   }
@@ -581,6 +581,22 @@ export class SessionRegistry {
   list(): PublicSession[] {
     this.prune();
     return this.sessions.map(publicSession);
+  }
+
+  /** The live sessions a Team Cloud member's own codes opened: their phones. Never an Admin-signed pairing (an app). */
+  memberPhones(): PublicSession[] {
+    this.prune();
+    return this.sessions.filter((s) => s.membershipAuthority === "team" && s.memberCheckedAt !== undefined).map(publicSession);
+  }
+
+  /** A person who left a Team Cloud: every session of theirs (app windows, phones) ends now, and no open code of theirs
+   * can open another. Returns how many sessions ended. */
+  revokeMember(email: string): number {
+    const address = email.trim().toLowerCase();
+    this.pairings = this.pairings.filter((pairing) => pairing.member?.email.toLowerCase() !== address);
+    const ended = this.sessions.filter((session) => session.membershipAuthority === "team" && session.email?.toLowerCase() === address);
+    for (const session of ended) this.revoke(session.id);
+    return ended.length;
   }
 
   revoke(id: string): boolean {
