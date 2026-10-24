@@ -6,6 +6,7 @@ import { EVENTS_DIR } from "../config.ts";
 import { redactSecrets } from "../redact.ts";
 import { capThreadLog, currentThreadLogCap } from "../thread-log-rotation.ts";
 import { newId, type ProviderInstance, type RuntimeEvent, type RuntimeEventListener } from "../contracts.ts";
+import { ProgressGate } from "./progress-gate.ts";
 
 const INCOMPLETE_LOG_MESSAGE =
   "Canonical event history is incomplete: OpenMausBot could not write one or more events to disk. Live updates will continue.";
@@ -53,9 +54,18 @@ export class EventBus {
   private kickScheduled = false;
   private readonly drainWaiters: Array<() => void> = [];
   private readonly queuedLogWarnings = new Map<string, RuntimeEvent>();
+  // A status-line report is live only: delivered to listeners, never queued for the log.
+  private readonly progress = new ProgressGate((event) => {
+    if (this.pendingText.has(event.threadId)) this.flushThread(event.threadId);
+    this.deliver(event);
+  });
 
-  constructor(appendLog: EventLogAppend = defaultAppend) {
+  private readonly gate?: (event: RuntimeEvent) => boolean;
+
+  /** `gate` sees each adapter event first; true means it took the event and publishes what it chooses. */
+  constructor(appendLog: EventLogAppend = defaultAppend, gate?: (event: RuntimeEvent) => boolean) {
     this.appendLog = appendLog;
+    this.gate = gate;
   }
 
   attach(instances: ProviderInstance[]) {
@@ -67,13 +77,19 @@ export class EventBus {
           console.error(`bus: dropped cross-driver event from ${instance.instanceId}`);
           return;
         }
-        this.publish({ ...event, providerInstanceId: instance.instanceId });
+        const stamped = { ...event, providerInstanceId: instance.instanceId };
+        if (!this.gate?.(stamped)) this.publish(stamped);
       });
       this.unsubscribes.set(instance.instanceId, unsub);
     }
   }
 
   publish(event: RuntimeEvent) {
+    if (event.type === "turn.progress") {
+      this.progress.offer(event);
+      return;
+    }
+    this.progress.supersede(event.threadId, isTerminalEvent(event));
     const pending = this.pendingText.get(event.threadId);
     if (event.type === "content.delta") {
       if (pending && sameStream(pending.event, event)) {

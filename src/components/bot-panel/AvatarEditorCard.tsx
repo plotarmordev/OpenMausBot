@@ -4,7 +4,7 @@ import { ImagePlus, Loader2, Trash2 } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { t } from "@/lib/i18n";
 import type { LocaleKey } from "@/locales";
-import { MAUS_COLORS, MAUS_COLOR_NAMES, PICKABLE_STATES, type MausState } from "@/lib/mascot";
+import { colorSwatch, MAUS_COLOR_LABEL, MAUS_COLOR_NAMES, PICKABLE_STATES, type MausState } from "@/lib/mascot";
 import type { Bot } from "@/state/store";
 import { MASCOT_BODIES, MASCOT_BODY_IDS } from "../../../shared/mascot-bodies";
 import { HALLOWEEN_BODIES, HALLOWEEN_BODY_IDS } from "../../../shared/halloween-bodies";
@@ -149,13 +149,13 @@ export function AvatarEditorCard({ bot, activeState, onPatch, onClose }: {
                   disabled={busy}
                   aria-pressed={bot.color === color}
                   aria-label={`Use ${color} mascot color`}
-                  title={color}
+                  title={t(MAUS_COLOR_LABEL[color])}
                   onClick={() => pickMascot({ color })}
                   className={cn(
                     "size-6 rounded-full disabled:opacity-50",
                     bot.color === color && "ring-2 ring-ink/80 ring-offset-2 ring-offset-menu",
                   )}
-                  style={{ backgroundColor: MAUS_COLORS[color] }}
+                  style={{ background: colorSwatch(color) }}
                 />
               ))}
             </div>

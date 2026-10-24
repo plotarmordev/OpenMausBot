@@ -5,6 +5,7 @@
 import { existsSync, mkdirSync, openSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 
+import { engineInstallRoots } from "../engine-roots.ts";
 import { SERVER_ROOT, resolveProxy } from "../proxy-paths.ts";
 import { bridgedCommand, type BridgeTools } from "./bridge.ts";
 import { brokerRewrite } from "./broker-env.ts";
@@ -163,6 +164,7 @@ export interface StartOptions {
   env?: Record<string, string | undefined>;
   denyEnv: ReadonlySet<string>;
   codeRoots?: readonly string[];
+  engineRoots?: readonly string[];
   log?: (line: string) => void;
   /** Overrides for tests. */
   detect?: (env: Record<string, string | undefined>) => BoxDetection;
@@ -213,7 +215,7 @@ export class BotBox {
     this.runner = new BoxRunner({
       bwrap: this.detection.tools.bwrap,
       bridge: { socat: this.detection.tools.socat, bridgeScript: BOX_BRIDGE_SCRIPT, node: process.execPath },
-      setup: { dataDir: options.dataDir, home: options.home, codeRoots: options.codeRoots ?? defaultCodeRoots(), bridges },
+      setup: { dataDir: options.dataDir, home: options.home, codeRoots: options.codeRoots ?? defaultCodeRoots(), engineRoots: options.engineRoots ?? engineInstallRoots(options.dataDir), bridges },
       denyEnv: options.denyEnv, seccompFile: this.seccompFile,
       broker: { port: BOX_BROKER_PORT, mintForProcess: this.credentials.mintForProcess, revoke: this.credentials.revoke },
     });
@@ -249,7 +251,7 @@ export class BotBox {
    * Chrome on. bubblewrap's options before `--`; null when turns are not boxed here. */
   browserBox(seccompFd: number, ro: readonly string[]): { bwrap: string; options: string[]; seccomp: string | null } | null {
     if (!this.runner || !this.detection.tools) return null;
-    const setup = this.runner.setup;
+    const setup = { ...this.runner.setup, engineRoots: [] };
     const seccomp = this.seccompFile && !setup.mutate?.has("no-seccomp") ? this.seccompFile : null;
     const plan = planBox({ ...setup, seccompFd: seccomp ? seccompFd : undefined }, { command: "chrome", args: [], env: {}, net: "shared", ro });
     const home = resolve(setup.home), dataDir = resolve(setup.dataDir);

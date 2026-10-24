@@ -21,12 +21,28 @@ export interface DesktopAnalyticsBridge {
   /** This computer's page only. */
   set?(enabled: boolean): Promise<void>;
 }
+/** The app's language on this computer, one pick for every page its window shows. */
+export interface DesktopLanguageBridge {
+  /** A locale code, "" to follow the system, or null until one is picked on this computer. */
+  choice(): string | null;
+  set(language: string): Promise<boolean>;
+  /** A pick made on another page of this desktop. */
+  onChange(listener: (language: string) => void): () => void;
+}
 export interface DesktopPrefs {
   seen(): string[];
   markSeen(id: string): void;
   shown(id: string): boolean;
   analytics(): boolean | null;
   setAnalytics(enabled: boolean): void;
+  language(): string | null;
+  /** False for anything that is not a locale code or "". */
+  setLanguage(language: unknown): boolean;
+  /** Random, made and saved on first use. */
+  installId(): string;
+  updatesConsent(): import("./updates-consent.mjs").UpdatesConsentRecord | null;
+  /** False, and nothing saved, for a record updates-consent.mjs would not read back. */
+  setUpdatesConsent(value: unknown): boolean;
 }
 type Files = Pick<typeof import("node:fs"), "readFileSync" | "writeFileSync" | "renameSync" | "rmSync">;
 export declare function jsonFile(file: string, files?: Files): { read(): unknown; write(value: unknown): void };
@@ -38,5 +54,8 @@ export declare function registerDesktopPrefs(options: {
   page(event: unknown): "local" | "cloud" | "server" | null;
   cloudOffered(): Promise<boolean>;
   localConfig?(): unknown;
+  languageChanged?(language: string, sender: unknown): void;
+  /** The MausBot Cloud sign-in client: with it, the product-updates question is asked and its answer kept here. */
+  cloudAccount?(): import("./updates-consent.mjs").UpdatesConsentClient | null;
   now?: () => number;
-}): void;
+}): import("./updates-consent.mjs").UpdatesConsent | null;

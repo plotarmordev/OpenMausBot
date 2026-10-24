@@ -19,6 +19,9 @@ export interface TodayViewer {
   admin: boolean;
   thread(threadId: string): boolean;
   routine(run: { botId?: unknown; groupId?: unknown }): boolean;
+  /** A Team Cloud: whether an ask in this conversation is this viewer's. It then holds approvals too, since each one
+   * waits on the one person it is for. */
+  asks?(botId: string | undefined, threadId: string): boolean;
 }
 
 interface RunRecord {
@@ -108,6 +111,10 @@ function runEnd(run: RunRecord, now: number): number | null {
   if (run.status === "completed" || run.status === "failed") return run.finishedAt ?? run.startedAt ?? run.scheduledFor;
   if (run.status === "missed") return run.finishedAt ?? run.scheduledFor;
   return run.status === "cancelled" ? null : now;
+}
+
+function approvalText(card: QuestionCard & { tool?: string }): string {
+  return plainTitle(`Approve: ${card.subtitle || card.tool || card.title || ""}`);
 }
 
 function questionText(card: QuestionCard): string {
@@ -239,12 +246,11 @@ function needsYou(sources: TodaySources, viewer: TodayViewer, owners: Map<string
   const rows = attentionRows(now - NEEDS_YOU_WINDOW_MS).filter((row) => seen(row.threadId));
   const botOf = (row: AttentionRow) => row.digestBotId ?? row.fromBotId ?? owners.get(row.threadId)?.botId;
   const engineOf = new Map(sources.bots.map((bot) => [bot.id, bot.modelSelection?.instanceId]));
-  const lastTurnByBot = new Map<string, number>(), lastTurnByThread = new Map<string, number>();
+  const lastTurnByBot = new Map<string, number>();
   for (const row of rows) {
     if (row.kind !== "digest") continue;
     const botId = botOf(row);
     if (botId) lastTurnByBot.set(botId, row.at);
-    lastTurnByThread.set(row.threadId, row.at);
   }
 
   const items = new Map<string, NeedsYouItem>();
@@ -263,12 +269,13 @@ function needsYou(sources: TodaySources, viewer: TodayViewer, owners: Map<string
     if (row.kind === "options") {
       const card = parse<QuestionCard>(row.card);
       const botId = botOf(row);
-      if (!card || !botId || !isPersistentQuestionCard(card) || card.outboundRequest || card.quotaSwitch || card.teamMemoryRequest || card.autoApplied) continue;
-      if ((lastTurnByThread.get(row.threadId) ?? -Infinity) > row.at) continue;
+      if (!card || !botId || card.outboundRequest || card.quotaSwitch || card.teamMemoryRequest || card.autoApplied) continue;
+      const approval = viewer.asks !== undefined && (card.requestType === "permission" || Boolean(card.tool));
+      if (!(approval || isPersistentQuestionCard(card)) || (viewer.asks && !viewer.asks(botId, row.threadId))) continue;
       const earlier = card.requestId ? askedIn.get(card.requestId) : undefined;
       if (earlier && earlier !== `question:${row.threadId}`) items.delete(earlier);
       if (card.requestId) askedIn.set(card.requestId, `question:${row.threadId}`);
-      keep(`question:${row.threadId}`, { kind: "question", id: row.id, at: row.at, botId, threadId: row.threadId, text: questionText(card) });
+      keep(`question:${row.threadId}`, { kind: "question", id: row.id, at: row.at, botId, threadId: row.threadId, text: approval ? approvalText(card) : questionText(card) });
       continue;
     }
     if (!viewer.admin || row.kind !== "activity" || !row.name) continue;
@@ -317,7 +324,7 @@ function needsYou(sources: TodaySources, viewer: TodayViewer, owners: Map<string
   }
 
   for (const work of sources.parked) {
-    if (!work.question || items.has(`question:${work.threadId}`) || !seen(work.threadId)) continue;
+    if (!work.question || items.has(`question:${work.threadId}`) || !seen(work.threadId) || (viewer.asks && !viewer.asks(work.botId, work.threadId))) continue;
     keep(`question:${work.threadId}`, { kind: "question", id: work.id, at: work.createdAt, botId: work.botId, threadId: work.threadId, text: plainTitle(work.question) });
   }
 

@@ -4,6 +4,8 @@ import { join } from "node:path";
 import { writeFileAtomic, writeFileAtomicIfChanged } from "./atomic.ts";
 import { commitRegistryChange, keptRevocation, saveRegistryFor } from "./registry-save.ts";
 import { parseToolScope, toolScopeWidens } from "../shared/tool-scope.ts";
+import { reorderStable } from "../shared/bot-order.ts";
+import { botOwner, chiefConflict, chiefScope, ownerEmail } from "../shared/bot-owner.ts";
 import { ensureSections, readSections, changeEmptySection } from "./section-context.ts";
 import type { TeamComputers } from "./team-computers.ts";
 import { removeBotFolder, soulFile, soulHash, writeSoulMirror } from "./bot-folder.ts";
@@ -17,13 +19,11 @@ import { workspaceDir } from "./workspace.ts";
 import type { Destination } from "./surface.ts";
 import { newId, type ModelSelection } from "./contracts.ts";
 import { pickBotName } from "./names.ts";
-import { redactSecretsInText } from "./redact.ts";
-import { scrubbedSkillRequest } from "./skill-request-card.ts";
+import { redactBotAuthored } from "./message-redaction.ts";
 import { AVATAR_FOCUS_CENTER, AVATAR_ZOOM_MIN, botAvatarProfile, clampAvatarFocus, clampAvatarZoom } from "../shared/bot-avatar.ts";
 import { approvalModeFor, isApprovalMode, modelSwitchNeedsAsk, threadApproval, type ApprovalMode } from "../shared/approval-mode.ts";
 import { lastChangeRequestUrl } from "../shared/thread-link.ts";
 import { REMOVED_COMPUTER_DRIVER, type ComputerEngineMove } from "./computer-engine-removal.ts";
-import type { ProfileRequestChanges } from "../shared/profile-request.ts";
 import type { TeamSetupRequest, TeamSetupResult } from "../shared/team-setup.ts";
 import type { GroupGoalRunCardData } from "../shared/group-goal-run.ts";
 import { isMentionBoundary, isMentionNameContinuation } from "../shared/mention-boundary.ts";
@@ -31,13 +31,13 @@ import type { HandedState } from "./delta-context.ts";
 import type { AgentPart, PartPair, RoomPart } from "./package-parts.ts";
 import type {
   BotActivity, GroupDefaultResponder, GroupTask as GroupTaskRecord, MausColor,
-  OptionCardData, TaskClosedBy, TaskOpenedBy, TaskUsage, WireBot, WireGroup,
+  TaskClosedBy, TaskOpenedBy, TaskUsage, WireBot, WireGroup,
   WireMessage, WireTask, BotProject as BotProjectRecord,
 } from "../shared/wire.ts";
 import { movesThreadToTop, nextOpenThread } from "../shared/wire.ts";
 import { parseConnectorTools } from "./connector-tools.ts";
 import { sameModelSelection } from "../shared/thread-model.ts";
-import { initialGreetingMessage } from "./initial-greeting.ts";
+import { initialGreetingMessage } from "./initial-greeting.ts"; import { createDefaultBot, defaultBotRefusal } from "./default-bot.ts";
 import { ThreadCache, type ThreadState } from "./thread-cache.ts";
 export type {
   BotActivity, ConnectorCardData, GroupDefaultResponder, OptionCardData,
@@ -119,137 +119,6 @@ function persistedPin<T extends { pinned?: boolean }>(task: T): T {
   return rest as T;
 }
 
-/** Bot-authored text is scrubbed of secrets before it is stored (the transcript replays into every rebuild); what the user typed stays as typed. */
-function redactBotAuthored<T extends Omit<Message, "id" | "at"> & { at?: number }>(message: T): T {
-  if (message.role !== "bot") return message;
-  const out = { ...message };
-  if (out.dataResult) out.dataResult = {
-    ...out.dataResult,
-    title: redactSecretsInText(out.dataResult.title),
-    ...(out.dataResult.sql === undefined ? {} : { sql: redactSecretsInText(out.dataResult.sql) }),
-  };
-  if (typeof out.text === "string") out.text = redactSecretsInText(out.text);
-  if (out.compaction) out.compaction = { ...out.compaction, summary: redactSecretsInText(out.compaction.summary) };
-  if (out.tool?.name) {
-    out.tool = { ...out.tool, name: redactSecretsInText(out.tool.name) };
-    if (out.tool.summary) out.tool.summary = redactSecretsInText(out.tool.summary);
-  }
-  if (out.routineRun) {
-    const routineRun = { ...out.routineRun };
-    routineRun.routineName = redactSecretsInText(routineRun.routineName);
-    if (routineRun.summary) routineRun.summary = redactSecretsInText(routineRun.summary);
-    if (routineRun.error) routineRun.error = redactSecretsInText(routineRun.error);
-    out.routineRun = routineRun;
-  }
-  if (out.goalRun) {
-    out.goalRun = {
-      ...out.goalRun,
-      goal: redactSecretsInText(out.goalRun.goal),
-      coordinatorName: redactSecretsInText(out.goalRun.coordinatorName),
-      detail: out.goalRun.detail ? redactSecretsInText(out.goalRun.detail) : undefined,
-    };
-  }
-  if (out.call?.title) out.call = { ...out.call, title: redactSecretsInText(out.call.title) };
-  if (out.card) {
-    const card = { ...out.card } as OptionCardData & { summary?: string };
-    card.title = redactSecretsInText(card.title);
-    if (typeof card.subtitle === "string") card.subtitle = redactSecretsInText(card.subtitle);
-    if (typeof card.summary === "string") card.summary = redactSecretsInText(card.summary);
-    if (typeof card.held === "string") card.held = redactSecretsInText(card.held);
-    if (typeof card.answeredText === "string") card.answeredText = redactSecretsInText(card.answeredText);
-    if (card.commandAllowlist && (
-      redactSecretsInText(card.commandAllowlist.command) !== card.commandAllowlist.command ||
-      redactSecretsInText(card.commandAllowlist.cwd) !== card.commandAllowlist.cwd
-    )) delete card.commandAllowlist;
-    if (card.questionRequest) {
-      card.questionRequest = {
-        ...card.questionRequest,
-        questions: card.questionRequest.questions.map((question) => ({
-          ...question,
-          question: redactSecretsInText(question.question),
-          ...(question.header ? { header: redactSecretsInText(question.header) } : {}),
-          options: question.options.map((option) => ({
-            ...option,
-            label: redactSecretsInText(option.label),
-            ...(option.description ? { description: redactSecretsInText(option.description) } : {}),
-          })),
-        })),
-      };
-    }
-    if (card.routineRequest) {
-      const operation = card.routineRequest.operation;
-      card.routineRequest = {
-        ...card.routineRequest,
-        operation: operation.action === "create"
-          ? {
-              ...operation,
-              routine: {
-                ...operation.routine,
-                name: redactSecretsInText(operation.routine.name),
-                instructions: redactSecretsInText(operation.routine.instructions),
-              },
-            }
-          : operation.action === "update"
-            ? {
-                ...operation,
-                changes: {
-                  ...operation.changes,
-                  ...(typeof operation.changes.name === "string"
-                    ? { name: redactSecretsInText(operation.changes.name) }
-                    : {}),
-                  ...(typeof operation.changes.instructions === "string"
-                    ? { instructions: redactSecretsInText(operation.changes.instructions) }
-                    : {}),
-                },
-              }
-            : { ...operation },
-      };
-    }
-    if (card.skillRequest) card.skillRequest = scrubbedSkillRequest(card.skillRequest);
-    if (card.profileRequest) {
-      const scrubChanges = (changes: ProfileRequestChanges): ProfileRequestChanges => {
-        const out = { ...changes };
-        for (const [key, value] of Object.entries(changes)) {
-          if (typeof value === "string") (out as Record<string, string | boolean>)[key] = redactSecretsInText(value);
-        }
-        return out;
-      };
-      card.profileRequest = {
-        ...card.profileRequest,
-        targetName: redactSecretsInText(card.profileRequest.targetName),
-        reason: redactSecretsInText(card.profileRequest.reason),
-        before: scrubChanges(card.profileRequest.before),
-        changes: scrubChanges(card.profileRequest.changes),
-      };
-    }
-    out.card = card;
-  }
-  if (out.connector) {
-    out.connector = {
-      ...out.connector,
-      label: redactSecretsInText(out.connector.label),
-      description: redactSecretsInText(out.connector.description),
-      error: out.connector.error ? redactSecretsInText(out.connector.error) : undefined,
-    };
-  }
-  if (out.secret) {
-    out.secret = {
-      ...out.secret,
-      label: redactSecretsInText(out.secret.label),
-      description: redactSecretsInText(out.secret.description),
-      error: out.secret.error ? redactSecretsInText(out.secret.error) : undefined,
-    };
-  }
-  if (out.signIn) {
-    out.signIn = {
-      ...out.signIn,
-      reason: out.signIn.reason ? redactSecretsInText(out.signIn.reason) : undefined,
-      error: out.signIn.error ? redactSecretsInText(out.signIn.error) : undefined,
-    };
-  }
-  return out;
-}
-
 export const ACTIVITY_BUSY: ReadonlySet<BotActivity> = new Set(["working", "waiting-on-you", "no-signal"]);
 
 export type StoreChange =
@@ -260,6 +129,8 @@ export type StoreChange =
   | { type: "thread.deleted"; threadId: string }
   | { type: "bot"; botId: string }
   | { type: "bot.deleted"; botId: string }
+  /** The fleet was reordered as a whole; the broadcast carries every id in its new place. */
+  | { type: "bots.order" }
   | { type: "group"; groupId: string }
   | { type: "group.deleted"; groupId: string };
 
@@ -577,7 +448,7 @@ export class Store {
     }
     for (const b of this.bots) {
       if (!b.chiefOfStaff) continue;
-      const key = sectionKey(b.section);
+      const key = chiefScope(b);
       if (!chiefSectionsSeen.has(key)) {
         chiefSectionsSeen.add(key);
         if (b.hidden) {
@@ -869,16 +740,16 @@ export class Store {
   }
 
   renameSection(name: string, nextName: string, computers?: TeamComputers): string | undefined {
-    if (!name || !this.sections.includes(name)) return "No such team";
+    if (!name || !this.sections.includes(name)) return "No such department";
     nextName = nextName.trim();
-    if (!nextName || nextName.length > 60 || [...nextName].some(char => char.charCodeAt(0) < 32 || char.charCodeAt(0) === 127)) return "Team name must be 1 to 60 characters without control characters";
+    if (!nextName || nextName.length > 60 || [...nextName].some(char => char.charCodeAt(0) < 32 || char.charCodeAt(0) === 127)) return "Department name must be 1 to 60 characters without control characters";
     if (name === nextName) return undefined;
-    if (this.sections.includes(nextName) || computers?.forSection(nextName)) return "A team with that name already exists";
+    if (this.sections.includes(nextName) || computers?.forSection(nextName)) return "A department with that name already exists";
     const members = this.bots.filter(bot => sectionKey(bot.section) === name);
     const rooms = this.groups.filter(group => sectionKey(group.section) === name);
     const affected = this.bots.filter(bot => members.includes(bot) || bot.managedSections?.some(section => sectionKey(section) === name));
     if (affected.some(bot => bot.busy || bot.tasks?.some(task => task.busy)) || rooms.some(group => group.busyBotId)) {
-      return "Stop this team's active work before renaming the team";
+      return "Stop this department's active work before renaming it";
     }
     // Removing an empty identity revokes its old grants, so recreating it cannot restore access.
     if (!members.length && !rooms.length && !computers?.forSection(name)) return this.changeEmptySection(name, nextName);
@@ -910,12 +781,12 @@ export class Store {
   }
 
   changeEmptySection(name: string, nextName: string | null): string | undefined {
-    if (!this.sections.includes(name)) return "No such team";
+    if (!this.sections.includes(name)) return "No such department";
     if ([...this.bots, ...this.groups].some((record) => sectionKey(record.section) === name)) {
-      return "Move all bots (including archived bots) and group chats out of this team first";
+      return "Move all bots (including archived bots) and group chats out of this department first";
     }
     if (nextName !== null && nextName !== name && this.sections.includes(nextName)) {
-      return "A team with that name already exists";
+      return "A department with that name already exists";
     }
     if (nextName === name) return undefined;
     const revoked = this.bots.filter((bot) => bot.managedSections?.some((section) => sectionKey(section) === name));
@@ -932,19 +803,19 @@ export class Store {
   }
 
   deleteSection(name: string): string | undefined {
-    if (!name || !this.sections.includes(name)) return "No such team";
+    if (!name || !this.sections.includes(name)) return "No such department";
     const members = this.bots.filter(bot => sectionKey(bot.section) === name);
     const rooms = this.groups.filter(group => sectionKey(group.section) === name);
     if (members.some(bot => bot.busy || bot.tasks?.some(task => task.busy)) || rooms.some(group => group.busyBotId)) {
-      return "Stop this team's active work before deleting the team";
-    }
-    if (this.bots.filter(bot => bot.chiefOfStaff && (!sectionKey(bot.section) || sectionKey(bot.section) === name)).length > 1) {
-      return "General already has a Chief of Staff. Move or change this team's Chief before deleting the team";
+      return "Stop this department's active work before deleting it";
     }
     const nextBots = this.bots.map(bot => ({ ...bot,
       ...(sectionKey(bot.section) === name ? { section: undefined } : {}),
       ...(bot.managedSections ? { managedSections: bot.managedSections.filter(section => sectionKey(section) !== name) } : {}),
     }));
+    if (chiefConflict(nextBots)) {
+      return "General already has a Chief of Staff. Move or change this department's Chief before deleting it";
+    }
     const nextGroups = this.groups.map(group => sectionKey(group.section) === name ? { ...group, section: undefined } : group);
     try {
       this.saveBots(nextBots);
@@ -1034,7 +905,7 @@ export class Store {
     );
   }
 
-  patchGroup(id: string, patch: Partial<Pick<GroupRecord, "name" | "memberIds" | "defaultResponder" | "bulletin" | "unread" | "lastReadMessageId" | "busyBotId" | "cwd" | "pinnedMessageId" | "section" | "setupCompletedAt" | "setupSkippedAt" | "audienceFloor" | "installedPackage" | "turnTimeoutMinutes" | "holds" | "heldMessages">>): GroupRecord | null {
+  patchGroup(id: string, patch: Partial<Pick<GroupRecord, "name" | "memberIds" | "defaultResponder" | "bulletin" | "description" | "unread" | "lastReadMessageId" | "busyBotId" | "cwd" | "pinnedMessageId" | "section" | "setupCompletedAt" | "setupSkippedAt" | "audienceFloor" | "installedPackage" | "turnTimeoutMinutes" | "holds" | "heldMessages">>): GroupRecord | null {
     const group = this.group(id);
     if (!group) return null;
     if (Object.prototype.hasOwnProperty.call(patch, "section")) {
@@ -1460,7 +1331,7 @@ export class Store {
     profile: Partial<
       Pick<
         BotRecord,
-        "name" | "title" | "description" | "soul" | "color" | "mascotExpression" | "mascotBody" | "modelSelection" | "section" | "cwd" | "visibility" | "toolScope"
+        "name" | "title" | "description" | "soul" | "color" | "mascotExpression" | "mascotBody" | "modelSelection" | "section" | "cwd" | "visibility" | "toolScope" | "createdBy" | "reportsTo"
       >
     > = {},
     opts: {
@@ -1493,6 +1364,8 @@ export class Store {
       createdAt: Date.now(),
     };
     if (section) bot.section = section;
+    if (profile.createdBy?.trim()) bot.createdBy = ownerEmail(profile.createdBy);
+    if (profile.reportsTo?.trim()) bot.reportsTo = ownerEmail(profile.reportsTo);
     if (profile.cwd) bot.cwd = profile.cwd;
     bot.tasks = [{
       threadId: bot.threadId,
@@ -1544,6 +1417,8 @@ export class Store {
           connectorTools: {},
           // A restricted Chief never creates a bot everyone sees.
           ...(chief.visibility && chief.visibility !== "everyone" ? { visibility: structuredClone(chief.visibility) } : {}),
+          // A Chief's new specialist reports to the Chief's own person.
+          ...(botOwner(chief) ? { createdBy: botOwner(chief)! } : {}),
           tasks: [{ threadId: operation.threadId, title: UNTITLED_THREAD, createdAt, updatedAt: createdAt, resumeCursors: {},
             unread: false, activity: "idle", busy: false }],
         };
@@ -1613,6 +1488,7 @@ export class Store {
   deleteBot(id: string, setupRequest?: TeamSetupRequest): boolean {
     const bot = this.bot(id);
     if (!bot) return false;
+    if (bot.defaultBot) throw Object.assign(new Error(defaultBotRefusal(bot.name)), { status: 409 });
     let nextBots = this.bots.filter((b) => b.id !== id);
     if (setupRequest) {
       const chief = this.bot(setupRequest.botId);
@@ -1743,18 +1619,11 @@ export class Store {
 
     const targetSection = sectionKey(section);
     const selected = targets as BotRecord[];
-    const destinationChiefIds = new Set([
-      ...selected.filter((bot) => bot.chiefOfStaff).map((bot) => bot.id),
-      ...this.bots
-        .filter((bot) => bot.chiefOfStaff && sectionKey(bot.section) === targetSection)
-        .map((bot) => bot.id),
-    ]);
-    if (destinationChiefIds.size > 1) return { ok: false, reason: "chief-conflict" };
-
     const patches = new Map<string, Partial<BotRecord>>();
     for (const bot of selected) {
       patches.set(bot.id, { section: targetSection || undefined });
     }
+    if (chiefConflict(this.bots.map((bot) => ({ ...bot, ...patches.get(bot.id) })))) return { ok: false, reason: "chief-conflict" };
 
     const changedIds = new Set<string>();
     const nextBots = this.bots.map((bot) => {
@@ -1790,11 +1659,7 @@ export class Store {
     }
     const next = this.bots.map(bot => ids.has(bot.id)
       ? { ...bot, section: adds.has(bot.id) ? key : undefined } : bot);
-    for (const destination of [key, ""]) {
-      if (next.filter(bot => bot.chiefOfStaff && sectionKey(bot.section) === destination).length > 1) {
-        return { ok: false, reason: "chief-conflict" };
-      }
-    }
+    if (chiefConflict(next)) return { ok: false, reason: "chief-conflict" };
     if (ids.size) {
       this.saveBots(next);
       for (let i = 0; i < next.length; i++) if (ids.has(next[i].id)) Object.assign(this.bots[i], next[i]);
@@ -1840,13 +1705,15 @@ export class Store {
     bot.busy = ACTIVITY_BUSY.has(bot.activity);
   }
 
+  /** Makes `id` its scope's one Chief (its owner's on a Team Cloud, else its department's), or with no `id` leaves
+   * `section` without one. */
   setChiefOfStaff(id: string | null, section?: string | null): BotRecord[] | null {
     const selected = id ? this.bot(id) : null;
     if (id && !selected) return null;
-    const targetSection = sectionKey(selected?.section ?? section);
+    const scope = selected ? chiefScope(selected) : chiefScope({ section: section ?? undefined });
     const changed: BotRecord[] = [];
     for (const bot of this.bots) {
-      if (sectionKey(bot.section) !== targetSection) continue;
+      if (chiefScope(bot) !== scope) continue;
       const next = bot.id === id;
       if (Boolean(bot.chiefOfStaff) === next && !(next && bot.hidden)) continue;
       if (next) {
@@ -2139,6 +2006,20 @@ export class Store {
     this.saveBots();
     this.emit({ type: "bot", botId });
     return bot.projects;
+  }
+
+  /** A stable partial reorder of the fleet (shared/bot-order.ts): the listed bots take, in the order given, the positions
+   * they already share; every other bot stays put. Empty, repeated or unknown ids change nothing and give null. */
+  reorderBots(botIds: string[]): BotRecord[] | null {
+    if (!botIds.length || new Set(botIds).size !== botIds.length) return null;
+    const byId = new Map(this.bots.map((bot) => [bot.id, bot]));
+    if (botIds.some((id) => !byId.has(id))) return null;
+    const next = reorderStable(this.bots, botIds);
+    // Mutate in place: schedulers and other consumers hold this array and its records.
+    this.bots.splice(0, this.bots.length, ...next);
+    this.saveBots();
+    this.emit({ type: "bots.order" });
+    return this.bots;
   }
 
   deleteProject(botId: string, projectId: string): BotRecord | null {
@@ -2439,12 +2320,11 @@ export class Store {
     return { bot, deleted, missing };
   }
 
-  needsSeed() {
-    return this.bots.length === 0;
-  }
+  needsSeed() { return this.bots.length === 0; }
 
-  seedIfEmpty() {
+  /** A new place's first bot is its MausBot and its Chief; a Team Cloud's (`defaultBot: false`) is the team's Chief only. */
+  seedIfEmpty({ defaultBot = true }: { defaultBot?: boolean } = {}) {
     if (!this.needsSeed()) return;
-    this.setChiefOfStaff(this.createBot().id);
+    if (defaultBot) createDefaultBot(this, { chief: (id) => this.setChiefOfStaff(id) }); else this.setChiefOfStaff(this.createBot().id);
   }
 }

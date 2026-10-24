@@ -28,6 +28,10 @@ describe("the box's environment allow-list", () => {
     expect(BOX_ENV_NAMES.has("PATH")).toBe(true);
   });
 
+  it("keeps what Antigravity's runtime is started with: its harness, its file storage switch and the browser hook", () => {
+    for (const name of ["ANTIGRAVITY_HARNESS_PATH", "AGY_ACP_FORCE_FILE_STORAGE", "BROWSER", "GEMINI_HOME"]) expect(boxEnvironmentAllows(name), name).toBe(true);
+  });
+
   it("returns a fresh object, never the caller's", () => {
     const source = { PATH: "/usr/bin" };
     const kept = boxEnvironment(source);

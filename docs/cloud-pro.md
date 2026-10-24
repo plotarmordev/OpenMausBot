@@ -678,10 +678,30 @@ connection and may turn your bots away.**
 **The default grant at the move.** The move to My Cloud turns lending on by
 itself (`installCloudLending(...).lendByDefault({ projects })`): the internet
 connection, Desktop, Documents and Downloads read only, each moved bot's own
-project folder with editing, and the screen only when it was lent before (and
-this app's computer control is ready). It adds to what is lent already, never
-takes away, and never undoes the person's own Off: lending they turned off
-(`stopped.reason "you"`) stays off, across restarts too.
+project folder with editing, and apps and screen when they were lent before or
+computer control already works here for this computer's own bots (on macOS:
+Accessibility and Screen Recording already granted, read from computer
+control's running state, never by asking macOS). It adds to what is lent
+already, never takes away, and never undoes the person's own Off: lending they
+turned off (`stopped.reason "you"`) stays off, across restarts too.
+
+**Use my Mac** (`electron/use-my-computer.mjs`). When the move leaves this
+computer not fully lent (apps and screen still off because macOS hasn't granted
+them yet), main shows one popup of its own, once: **Let your bots use this
+Mac?** (this PC, this computer), one plain line, **Use my Mac** and **Not now**.
+It waits for a shown window and a few seconds with no typing, so a key meant for
+the page never answers it. **Use my Mac** lends every part at once (undoing even
+the person's own earlier Off); where apps and screen still need macOS, the same
+press starts computer control again, which asks macOS, then opens each
+permission still missing in System Settings, Accessibility then Screen
+Recording, and starts computer control again whenever the person comes back.
+Screen Recording often works only after OpenMausBot restarts: the choice is kept
+(`use-my-computer.json`), and apps and screen go on once computer control works.
+**Not now** is never asked again on its own. A computer that moved before this
+version gets the same popup once, on its first launch after it. When a bot
+needs the computer, it gives the person `[Use my Mac](openmausbot://use-my-computer)`;
+in the desktop app that opens the same popup (on My Cloud's page only from a
+click), and anywhere else it is plain text.
 
 While lending is on, a menu-bar item shows it (**In use** while bots use this
 Mac: running something on it or browsing through it) with **Stop sharing**, and the
@@ -1153,7 +1173,7 @@ For each service the Admin has configured, it also sets:
 | `OMB_TTS_DEFAULT_VOICE` | env | An ElevenLabs voice id, used until the person picks a voice or another speech provider in Settings. |
 | `OMB_CLOUD_DECIDER_URL` | env | `https://cloud.openmausbot.com/api/cloud/services/decider`, the Admin's Jev relay. It is a Jev base URL, used as it is: the decider adds `/v1/systemone`, the relay's only route, so every included decision goes to exactly `<OMB_CLOUD_DECIDER_URL>/v1/systemone`. |
 | `OMB_CLOUD_DECIDER_TOKEN` | secret | This machine's decision relay token (`omb_decide_…`). It is not a Jev key and works only through the relay. |
-| `OMB_CLOUD_X_URL` | env | `https://cloud.openmausbot.com/api/cloud/services/x`, the Admin's treg relay; the client calls `<OMB_CLOUD_X_URL>/call/<endpoint>` for the X tools' eight endpoints, and `/research/search`, `/research/endpoints/<id>` and `/research/call/<id>` for the research tools. A person's own treg key (Settings → API keys) wins over it and goes straight to treg. |
+| `OMB_CLOUD_X_URL` | env | `https://cloud.openmausbot.com/api/cloud/services/x`, the Admin's treg relay; the client calls `<OMB_CLOUD_X_URL>/call/<endpoint>` for the X tools' eight endpoints, `/research/search`, `/research/endpoints/<id>` and `/research/call/<id>` for the research tools, and `GET /usage` for the month's calls on the Apps page's X card (`GET /api/x/status`). A person's own treg key (Settings → API keys) wins over it and goes straight to treg. |
 | `OMB_CLOUD_X_TOKEN` | secret | This machine's X research relay token (`omb_x_…`). Not a treg key; it works only through the relay, within the plan's monthly X research calls. A signed-in desktop gets its own (`omb_xd_…`) from `POST /api/cloud/desktop/services/x` and hands it to its server in memory. |
 
 A service is included only when both its URL and its token are set
@@ -1797,6 +1817,42 @@ sleeps: true}`; `cloud.state` stays `ready`. Without `cloud.power`, nothing belo
   shows the line for a plan whose allowances say `sleeps`.
 - **App events:** the connected-apps broker asks the Admin to wake a Cloud when it queues an event for one that isn't
   polling (`cloudflare/composio-broker`, off until `CLOUD_ADMIN_URL` and `CLOUD_GRANT_SECRET` are set).
+
+### Usage meter: how close the plan is to its limits, and Upgrade
+
+The session's `cloud.usage` (additive; the Admin's `server/cloud-usage.ts`) says, for an active plan whose Cloud is
+ready: the plan (`tier`), when the monthly allowances start over (`resetsAt`, the first of next month UTC; `trialEndsAt`
+during a free trial), each included allowance as `{kind, used, max, usedUp?}` (`computerHours` in hours, `voice` in
+characters, `decisions`, `x` in calls, `research` in dollars, `storage` in GB of the most the disk grows to), and the bigger
+plans the app can move to itself (`upgrades: [{tier, amount}]`, US cents a month; empty on Max, a team's plan, or while
+the Admin's `OMB_CLOUD_APP_UPGRADES` is off). `electron/cloud-home.mjs` `parseCloudUsage` drops anything malformed (an
+unknown kind, an allowance of nothing, a plan it doesn't know); it is display only and never grants or limits anything.
+Main keeps it on the account's state, and `cloudPlanSnapshot` hands it to this computer's page and the person's own Cloud
+page alike (`ogb.cloudPlan`), so the meter reads the same on both (`src/components/CloudUsageMeter.tsx`,
+`src/lib/usage-meter.ts`).
+
+- **The sidebar card**, above the person's name (not in the icon rail), only while an allowance is at 80% or more: the
+  one or two fullest, used of included with a bar (amber from 80%, red at 100%), when they start over, **Upgrade to
+  <next plan>**, and **See all usage** (Settings → General). **Hide for now** keeps it hidden on this computer for this
+  month at this level: it comes back when one reaches 100%, and next month. Never shown in a browser, without a paid plan,
+  or on a Team Cloud unless the plan whose usage it is is that team's (only the person who pays for a team sees its usage;
+  its members never do).
+- **Settings → General → MausBot Cloud usage**, while there is a paid plan: every allowance with its meter, when they
+  start over, and Upgrade to the next plan (the others as links), "You're on the top plan" on Max, or "To change your
+  team's plan, write to us" on a team's plan.
+- **Upgrade, one tap and a confirm.** Upgrade asks main for a preview (`ogb.cloudPlan.upgradePreview(plan, source)`,
+  only from a click, only for a plan the verified session lists), which asks the Admin
+  (`POST /api/cloud/desktop/upgrade/preview`): Dodo's own numbers for this change, nothing changed. The confirm says them
+  in plain words: "Max is $99 a month and starts right away. Today you pay $23.40, the difference for the rest of this
+  billing month. From Nov 18 it's $99 a month, plus any tax." (a free trial: nothing today, the new price at its first
+  payment). The preview's confirmation stays in main, never in a page. Only the confirm's own **Upgrade to Max**
+  (`ogb.cloudPlan.upgrade(plan, source)`, which needs a click) sends `POST /api/cloud/desktop/upgrade` with it; without a
+  preview of that very plan, still good (ten minutes), main sends nothing. The Admin changes the plan in Dodo (the prorated
+  difference now, the billing date kept; `on_payment_failure: prevent_change`), refuses if Dodo would now charge more than
+  the confirm said, and reads the plan back, so the session (read again at once) shows the new plan and allowances. Plain
+  lines for what happened: on the new plan; still going through; the card was declined, nothing changed; the price
+  changed, nothing charged; couldn't, nothing charged. Where the Admin can't change plans from the app (off, or an older
+  Admin), Upgrade opens the Cloud page instead. Funnel source `app_usage` (the card) or `app_settings`.
 
 ## Add a Cloud
 

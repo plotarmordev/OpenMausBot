@@ -3,7 +3,9 @@
 The Chief of Staff keeps an eye on the person's day with one ordinary routine,
 "Keep an eye on my day". It is made once, with no button, on a personal install
 or Cloud that can reach connected apps, and it is built from four upgrades every
-routine can use.
+routine can use, plus the helper models for the inbox.
+The bot that is proactive is the one `proactiveOwner` names
+(`server/host/proactive-owner.ts`): the main Chief today, in one place.
 There is no second bot and no separate watcher: the routine engine
 (`server/routines.ts`) runs it like any other routine, on the desktop, headless
 and on a Cloud.
@@ -34,7 +36,7 @@ Pausing or deleting the routine in Automations is the off switch: with it off
 there is no brief at all. Its row says
 "reads and drafts only" and "checked … , nothing new".
 
-## The four routine upgrades
+## The four routine upgrades, and the helper models
 
 1. **Checks before the model.** A routine can name `checks`: `calendar` (the
    next 36 hours), `mail` (new inbox mail since the cursor) and `runs` (other
@@ -67,8 +69,20 @@ there is no brief at all. Its row says
      notices.
 
    The model work needs an engine whose every tool use reaches OpenMausBot's
-   answerer (Claude today). On any other engine the watch sorts no email and
-   prepares no meeting, says so in the brief, and still does what needs no AI.
+   answerer (Claude today). On any other engine the watch prepares no meeting,
+   says so in the brief, and still does what needs no AI.
+5. **Helper models sort the inbox** (`server/host/inbox-triage.ts`). With a
+   decision model set up (Settings → Decision and extraction: the person's own
+   Cloudflare Workers AI or Jev key, or Cloud's included one), new mail is
+   sorted with no AI turn, on every engine: Clairic reads each email (sender,
+   the ask, any deadline or amount, whether it waits on a reply, what kind of
+   mail it is) and Clef decides important, needs a reply, or skip, hearing the
+   senders the person recently dismissed. Only important and needs-a-reply
+   mail becomes rows; the why is built in plain code from what was read. The
+   helper models can't act, so no fence is needed. If they fail, the mail
+   waits for the next check. A full AI turn runs only for meeting prep, or when
+   the person presses Draft a reply. Without any helper model, the AI run sorts
+   mail as above, on Claude only.
 4. **Deliver to the brief** (`deliver: "brief"`): results become brief rows,
    not chat lines of their own.
 

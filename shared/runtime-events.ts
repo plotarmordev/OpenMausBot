@@ -1,6 +1,7 @@
 /** Canonical runtime-event shapes, as they ride the live wire and the
  * inspector log. */
 import type { AskQuestion } from "./ask-question.ts";
+import type { TurnProgressFields } from "./turn-progress.ts";
 
 export type DriverKind = string;
 export type InstanceId = string;
@@ -107,6 +108,9 @@ export type RuntimeEvent = RuntimeEventBase &
         input?: string;
       }
     | { type: "item.updated"; itemType: "tool" | "reasoning"; tokens?: number | null }
+    /** What the engine is doing right now (a tool call being written or run), for the chat's status line. Live only:
+     * the bus coalesces it and never writes it to the event log; nothing stores it. */
+    | Omit<TurnProgressFields, "itemId">
     | { type: "item.completed"; itemType: "tool"; ok: boolean; output?: string }
     | { type: "item.completed"; itemType: "assistant_text"; text: string }
     /** Provider-generated raster bytes, folded into the private attachment
