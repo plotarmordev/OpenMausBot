@@ -9,6 +9,7 @@ import vm from "node:vm";
 import ts from "typescript";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
+import { roomTurnHolds } from "./admission.ts";
 import { saveChatFollowup } from "./message-db.ts";
 import { killCliTree } from "./procs.ts";
 import {
@@ -89,7 +90,7 @@ describe("steer-queue module", () => {
     const context = vm.createContext({
       store, startTurn, drainSteeredMessages, automationReports: { flush() {} },
       queuedTurnTrigger: () => undefined, threadBusy: () => false, botAtThreadCapacity: () => false,
-      activeGroupTurnForBot: () => null, botMainThread: () => bot.threadId,
+      activeGroupTurnForBot: () => null, roomTurnHolds, botMainThread: () => bot.threadId,
       directRootQueued: () => rootQueued, parksBehindCoordination: () => false,
     });
     vm.runInContext(ts.transpileModule(source.slice(start, end), {
