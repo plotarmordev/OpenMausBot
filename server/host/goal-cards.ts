@@ -8,6 +8,7 @@ import type { BotRecord, Message, Store } from "../store.ts";
 
 export interface LiveGoalRun {
   runId: string;
+  capacity?: "person";
   cardMessageId: string;
   goal: string;
   coordinatorBotId: string;
@@ -29,7 +30,7 @@ export interface GoalCardDeps {
 export function createGoalCards(deps: GoalCardDeps) {
   const { store } = deps;
 
-  function start(threadId: string, coordinator: Pick<BotRecord, "id" | "name" | "color">, goal: string, runId: string): LiveGoalRun {
+  function start(threadId: string, coordinator: Pick<BotRecord, "id" | "name" | "color">, goal: string, runId: string, capacity?: "person"): LiveGoalRun {
     const startedAt = Date.now();
     const detail = `${coordinator.name} is coordinating this goal.`;
     const card = store.appendMessage(threadId, {
@@ -39,6 +40,7 @@ export function createGoalCards(deps: GoalCardDeps) {
       from: { botId: coordinator.id, name: coordinator.name, color: coordinator.color },
       goalRun: {
         runId,
+        ...(capacity ? { capacity } : {}),
         goal,
         status: "working",
         coordinatorBotId: coordinator.id,
@@ -51,6 +53,7 @@ export function createGoalCards(deps: GoalCardDeps) {
     });
     return {
       runId,
+      ...(capacity ? { capacity } : {}),
       cardMessageId: card.id,
       goal,
       coordinatorBotId: coordinator.id,
@@ -76,6 +79,7 @@ export function createGoalCards(deps: GoalCardDeps) {
     const safeDetail = redactSecretsInText(detail.trim()).slice(0, 500);
     const card: GroupGoalRunCardData = {
       runId: run.runId,
+      ...(run.capacity ? { capacity: run.capacity } : {}),
       goal: redactSecretsInText(run.goal),
       status,
       coordinatorBotId: run.coordinatorBotId,
@@ -137,6 +141,7 @@ export function createGoalCards(deps: GoalCardDeps) {
       text: `Goal in progress: ${safeDetail || redactSecretsInText(run.goal)}`,
       goalRun: {
         runId: run.runId,
+        ...(run.capacity ? { capacity: run.capacity } : {}),
         goal: redactSecretsInText(run.goal),
         status: "working",
         coordinatorBotId: run.coordinatorBotId,

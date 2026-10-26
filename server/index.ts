@@ -7422,7 +7422,7 @@ function drainQueuedSendsNow() {
     }),
     // Provider completion can precede its dispatch promise: keep the queue until that exact handshake releases its claim.
     (botId, threadId, head) => threadBusy(botId, threadId) || botAtThreadCapacity(botId, head.capacity) || Boolean(activeGroupTurnForBot(botId))
-      || ((head.peerAsk || threadId !== botMainThread(botId)) && directRootQueued(threadId)) || (!head.peerAsk?.incident && parksBehindCoordination(botId, threadId)),
+      || (head.capacity !== "person" && directRootQueued(threadId)) || (!head.peerAsk?.incident && parksBehindCoordination(botId, threadId)),
   );
 }
 

@@ -42,7 +42,11 @@ Each bot defaults to sixteen direct threads at once. Settings → General → Pa
 threads can set the per-bot limit from one to sixteen. Extra messages wait above
 the composer, off the transcript, until that bot has a free slot; they can be
 cancelled. The existing queue batches follow-ups within each waiting thread
-and drains waiting threads in order. It is in-memory, not restart-durable.
+and drains waiting threads in order. The message database persists the queue
+across restarts. Only work explicitly marked `capacity: "person"` at trusted
+main-chat ingress bypasses capacity; missing markers remain capped. Manual
+person-originated main-chat goals carry that marker through card continuations;
+routine goals remain capped.
 Raising the limit releases queued work; lowering it never stops active turns.
 A thread waiting for a human approval occupies a slot. Native provider sessions were already keyed
 by thread; the harness now keeps dispatch, permission responses, interruption,

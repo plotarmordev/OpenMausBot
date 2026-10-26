@@ -5,6 +5,8 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import vm from "node:vm";
+import ts from "typescript";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
 import { saveChatFollowup } from "./message-db.ts";
@@ -71,6 +73,40 @@ function fakeStore(bots: BotRecord[]): SteerStore & { messages: Message[] } {
 }
 
 describe("steer-queue module", () => {
+  it("keeps an unmarked persisted main-chat item behind a queued direct root while a marked person passes", async () => {
+    const bot = fakeBot("root-order", "root-order-main", false);
+    const store = fakeStore([bot]);
+    const waiting = queueSteeredMessage(bot.id, bot.threadId, "Unmarked waits");
+    queueSteeredMessage(bot.id, bot.threadId, "Person passes", { capacity: "person" });
+    restoreSteeredMessages();
+    let rootQueued = true;
+    const startTurn = vi.fn(async (_botId, _prompt, options) => { options.onTurnSettled(); });
+    const source = readFileSync(join(SERVER_DIR, "index.ts"), "utf8");
+    const start = source.indexOf("\nfunction drainQueuedSendsNow()");
+    const end = source.indexOf("\nasync function startOrQueueDirectMessage(", start);
+    expect(start).toBeGreaterThan(0);
+    expect(end).toBeGreaterThan(start);
+    const context = vm.createContext({
+      store, startTurn, drainSteeredMessages, automationReports: { flush() {} },
+      queuedTurnTrigger: () => undefined, threadBusy: () => false, botAtThreadCapacity: () => false,
+      activeGroupTurnForBot: () => null, botMainThread: () => bot.threadId,
+      directRootQueued: () => rootQueued, parksBehindCoordination: () => false,
+    });
+    vm.runInContext(ts.transpileModule(source.slice(start, end), {
+      compilerOptions: { target: ts.ScriptTarget.ESNext },
+    }).outputText, context);
+    context.drainQueuedSendsNow();
+    await Promise.resolve();
+    expect(store.messages.map(message => message.text)).toEqual(["Person passes"]);
+    expect(startTurn).toHaveBeenCalledTimes(1);
+    expect(startTurn.mock.calls[0][2].capacity).toBe("person");
+    expect(isSteeredMessageQueued(bot.id, bot.threadId, waiting.id)).toBe(true);
+    rootQueued = false;
+    context.drainQueuedSendsNow();
+    await Promise.resolve();
+    expect(store.messages.map(message => message.text)).toEqual(["Person passes", "Unmarked waits"]);
+  });
+
   it("dispatches a main-chat person behind a capacity-blocked peer head without dispatching the peer", () => {
     const bot = fakeBot("mixed-capacity", "mixed-main", false);
     const store = fakeStore([bot]);

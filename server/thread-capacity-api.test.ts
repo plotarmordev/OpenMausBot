@@ -291,6 +291,42 @@ describe("per-bot thread capacity through an isolated HTTP fixture", () => {
     }
   }, 90_000);
 
+  it("runs a verified person's manual goal and its card continuation while a routine holds the slot", async () => {
+    await limit(1);
+    const { botId, threads: [main] } = await botWithThreads(1);
+    const routine = (await api("POST", "/api/routines", {
+      name: "Goal slot holder", prompt: "Hold the capacity slot.", target: "bot", botId, runOn: "maus", enabled: true,
+      schedule: { type: "daily", time: "23:00" },
+    })).body.routine;
+    try {
+      await api("POST", `/api/routines/${routine.id}/run`);
+      await expect.poll(() => busyThreads(botId), { timeout: 15_000 }).toHaveLength(1);
+      const [holder] = await busyThreads(botId);
+      await dump(holder);
+      const wrapper = join(fixture.info.dataDir, "goal-claude.mjs");
+      writeFileSync(wrapper, [
+        "#!/usr/bin/env node",
+        'process.env.FAKE_CLAUDE_MODE = "happy";',
+        `process.env.FAKE_CLAUDE_REPLY_STATE = ${JSON.stringify(threadFile(main, "replies"))};`,
+        `process.env.FAKE_CLAUDE_REPLIES = ${JSON.stringify(JSON.stringify([
+          '<openmaus-goal>{"status":"continue","next":"Capacity fixture","instruction":"Finish the second card turn","detail":"Continue"}</openmaus-goal>',
+          '<openmaus-goal>{"status":"completed","detail":"Goal completed at capacity"}</openmaus-goal>',
+        ]))};`,
+        `await import(${JSON.stringify(pathToFileURL(join(process.cwd(), "server/testing/fake-claude-cli.ts")).href)});`,
+      ].join("\n"), { mode: 0o700 });
+      expect((await api("PATCH", "/api/instances/claude", { cli: wrapper })).status).toBe(200);
+      const sent = await api("POST", `/api/bots/${botId}/messages`, { threadId: main, mode: "goal", text: "PERSON_GOAL_AT_CAPACITY" });
+      expect(sent.status).toBe(202);
+      await expect.poll(async () => (await messages(main)).find(message => message.kind === "goal.run")?.goalRun,
+        { timeout: 15_000 }).toMatchObject({ status: "completed", turnCount: 2, capacity: "person" });
+      expect(await busyThreads(botId)).toEqual([holder]);
+      expect(existsSync(threadFile(holder, "gate"))).toBe(false);
+    } finally {
+      for (const thread of await busyThreads(botId)) finish(thread);
+      await api("DELETE", `/api/routines/${routine.id}`);
+    }
+  }, 60_000);
+
   it.each(["Chief peer retry", "guarded admin", "guarded person relay"])("applies person-only main-chat admission at full capacity for %s", async (ingress) => {
     await limit(1);
     const { botId, threads: [main] } = await botWithThreads(1);

@@ -14,12 +14,13 @@ export interface OneOnOneGoalDeps {
   cards: GoalCards;
   turns: GoalTurns;
   /** startTurn would admit a turn in this conversation now. */
-  canStart(botId: string, threadId: string): boolean;
+  canStart(botId: string, threadId: string, capacity?: "person"): boolean;
   startTurn(botId: string, text: string, opts: {
     threadId: string;
     cardContinuation: true;
     requestMessageId: string;
     origin: WorkOrigin;
+    capacity?: "person";
     unattended: boolean;
     onSettled: (outcome: HostTurnResult) => void;
   }): Promise<unknown>;
@@ -29,6 +30,7 @@ export interface OneOnOneGoalDeps {
 export interface OneOnOneGoalStart {
   /** The routine run this goal is; it names the run, and its work is never the person's own request. */
   runId?: string;
+  capacity?: "person";
   sendId?: string;
   sender?: Message["sender"];
 }
@@ -55,7 +57,7 @@ export function createOneOnOneGoals(deps: OneOnOneGoalDeps) {
   function availability(goal: LiveGoal, botId: string, threadId: string): Availability | null {
     if (goal.cancelled) return "cancelled";
     if (!store.bot(botId) || !store.taskByThread(botId, threadId)) return "unavailable";
-    return deps.canStart(botId, threadId) ? "ready" : null;
+    return deps.canStart(botId, threadId, goal.run.capacity) ? "ready" : null;
   }
 
   function waitUntilFree(goal: LiveGoal, bot: BotRecord, threadId: string): Promise<Availability> {
@@ -110,6 +112,7 @@ export function createOneOnOneGoals(deps: OneOnOneGoalDeps) {
             cardContinuation: true,
             requestMessageId: request.id,
             origin: request.origin,
+            capacity: run.capacity,
             unattended: deps.isUnattended(bot.id, threadId),
             onSettled: settle,
           });
@@ -166,7 +169,7 @@ export function createOneOnOneGoals(deps: OneOnOneGoalDeps) {
     });
     store.titleTaskFromFirstMessage(botId, text, threadId);
     const goal: LiveGoal = {
-      run: deps.cards.start(threadId, bot, text, options.runId ?? `goal-${Date.now().toString(36)}-${randomUUID()}`),
+      run: deps.cards.start(threadId, bot, text, options.runId ?? `goal-${Date.now().toString(36)}-${randomUUID()}`, options.runId ? undefined : options.capacity),
       botId,
       cancelled: false,
     };

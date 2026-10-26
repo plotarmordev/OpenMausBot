@@ -228,6 +228,9 @@ to main. Recovery preserves the marker rather than inferring it from origin.
 Trusted ingress derives the marker only when both person provenance and the main
 target are known. Queued sends persist it; start, drain, coordinator admission,
 status and recursive recovery consume it without inferring provenance again.
+Manual one-on-one goals derive the same marker at authenticated main-chat
+ingress and retain it on their persisted goal cards and each continuation.
+Routine goals, unmarked goals, and goals outside main remain capped.
 Only a marked person message can pass a blocked queue head; peers and routines
 remain queued in order. Compact, routine and unattended work remain capped on
 main. Guarded admin input without `onBehalfOf` is refused at capacity without
