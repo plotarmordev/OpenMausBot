@@ -266,6 +266,7 @@ import {
   queueSteeredMessage,
   restoreSteeredMessages,
 } from "./steer-queue.ts";
+import type { QueuedAutomaticRecovery, SerializableTurnOptions } from "./turn-options.ts";
 import {
   drainChannelMessages,
   restoreChannelMessages,
@@ -7390,17 +7391,12 @@ bus.subscribe((event: RuntimeEvent) => {
   drainQueuedSends();
 });
 
-type TurnOptions = NonNullable<Parameters<typeof startTurn>[2]>;
-export interface QueuedAutomaticRecovery {
-  selection: ModelSelection;
-  from: ModelSelection;
-  userMessage: Message;
-  recoveryUserMessageId: string | undefined;
-  activity: string;
-  limit?: { resetsAt: number | null };
-  generation: string;
-  options: Omit<TurnOptions, "coordination" | "onSettled" | "onTurnSettled" | "onDispatchError" | "recovery">;
-  coordination?: { id: string; resumed: boolean };
+interface TurnOptions extends SerializableTurnOptions {
+  onDispatchError?: (message: string) => void;
+  recovery?: QueuedAutomaticRecovery;
+  onTurnSettled?: () => void;
+  onSettled?: (outcome: HostTurnResult) => void;
+  coordination?: { id: string; resumed: boolean; settle: (outcome: HostTurnResult) => void };
 }
 const queuedRecoveryCallbacks = new Map<string, Pick<TurnOptions, "coordination" | "onSettled" | "onTurnSettled" | "onDispatchError">>();
 
@@ -7862,43 +7858,7 @@ const titleRegenerations = new Set<string>();
 async function startTurn(
   botId: string,
   text: string,
-  opts?: {
-    commsDepth?: number;
-    userMessage?: Message;
-    editedMessageId?: string;
-    sender?: ResolvedSender;
-    trigger?: UsageTrigger;
-    excludeMessageIds?: string[];
-    threadId?: string;
-    runOn?: RoutineRunOn;
-    /** Puts externally supplied payloads behind an explicit untrusted-data boundary in the system prompt. */
-    automationSource?: RoutineRunTrigger;
-    unattended?: boolean;
-    peerAsk?: Message["peerAsk"];
-    /** The prompt is control-plane context, never a message authored by the user. */
-    cardContinuation?: boolean;
-    /** Harness-only provenance: never a client option, never inferred from the latest user line. */
-    requestMessageId?: string;
-    origin?: WorkOrigin;
-    computerSelectionContinuation?: boolean;
-    replyTo?: ReplyTarget;
-    sendId?: string;
-    via?: "call"; callId?: string;
-    relayed?: boolean;
-    capacity?: "person";
-    dataContext?: DataContext;
-    app?: { context?: string; fromApp?: Message["fromApp"]; pointed?: Message["pointed"] };
-    onDispatchError?: (message: string) => void;
-    compactOnly?: boolean;
-    automaticRecoveryAttempted?: boolean;
-    automaticRecoveryIndex?: number;
-    recovery?: QueuedAutomaticRecovery;
-    onTurnSettled?: () => void;
-    /** The turn's outcome, for a caller that runs it outside any coordinated work. */
-    onSettled?: (outcome: HostTurnResult) => void;
-    coordination?: { id: string; resumed: boolean; settle: (outcome: HostTurnResult) => void };
-    /** A person's own send: it may run beside a room turn on another thread. */ allowRoomTurnElsewhere?: boolean;
-  },
+  opts?: TurnOptions,
 ) {
   workspaceMaintenance.assertAvailable(); moveFreeze.assertTurns();
   const profile = store.bot(botId); assertBotHere(profile);

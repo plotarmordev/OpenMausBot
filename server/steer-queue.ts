@@ -8,7 +8,7 @@ import { workOriginSchema, type WorkOrigin } from "./peer-provenance.ts";
 import type { ResolvedSender, SteerQueueReason } from "../shared/wire.ts";
 import type { BotRecord, Message } from "./store.ts";
 import type { UsageTrigger } from "./usage-ledger.ts";
-import type { QueuedAutomaticRecovery } from "./index.ts";
+import type { QueuedAutomaticRecovery } from "./turn-options.ts";
 
 export interface SteerStore {
   bot(id: string): BotRecord | null;

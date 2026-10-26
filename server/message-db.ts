@@ -12,7 +12,7 @@ import { MessageSearchWorker } from "./message-search-worker.ts";
 import { searchMessagesInDatabase, type SearchHit } from "./message-search-query.ts";
 import type { Notification, NotificationLogEntry } from "../shared/notification.ts";
 export type { SearchHit } from "./message-search-query.ts";
-import type { QueuedAutomaticRecovery } from "./index.ts";
+import type { QueuedAutomaticRecovery } from "./turn-options.ts";
 
 const DB_FILE = () => join(DATA_DIR, "messages.db");
 /** The rows the Today page reads, and among them the failed tool calls. JSON.stringify escapes every quote inside a
