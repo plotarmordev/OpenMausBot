@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { setTimeout as delay } from "node:timers/promises";
@@ -14,14 +14,14 @@ const responseSchema = z.object({
   bots: z.array(botSchema).default([]), bot: botSchema.optional(), task: taskSchema.optional(),
   routine: z.object({ id: z.string() }).optional(), botQueuedMessages: z.record(z.string(), z.array(z.unknown())).default({}),
   messages: z.array(z.object({ role: z.string(), text: z.string().optional(), queueId: z.string().optional(),
-    turnSucceeded: z.boolean().optional(), tool: z.object({ name: z.string() }).optional() })).default([]),
+    requestCancelled: z.boolean().optional(), turnSucceeded: z.boolean().optional(), tool: z.object({ name: z.string() }).optional() })).default([]),
 });
 
 const primary = { instanceId: "opencodeGo", model: "fixture/recovery" };
 const backup = { instanceId: "claude", model: "claude-sonnet-5" };
 const lines = (path: string): Array<{ method?: string }> => existsSync(path) ? readFileSync(path, "utf8").split("\n").filter(Boolean).map(line => JSON.parse(line)) : [];
 
-it.each(["disabled", "dispatching", "pending"] as const)("settles %s recovery without replaying the original line", async mode => {
+it.each(["disabled", "dispatching", "pending", "superseded", "stopped", "stopped-restart"] as const)("settles %s recovery without replaying the original line", async mode => {
   const server = await launchRestartableServer();
   const { dataDir } = server;
   const failure = join(dataDir, "failure.json");
@@ -90,8 +90,25 @@ it.each(["disabled", "dispatching", "pending"] as const)("settles %s recovery wi
     expect((await messages()).filter(message => message.tool?.name?.startsWith("recovery:"))).toHaveLength(0);
     const failovers = () => existsSync(join(dataDir, "limit-failovers.json")) ? readFileSync(join(dataDir, "limit-failovers.json"), "utf8") : null;
     const beforeFailovers = failovers();
+    const cancelled = mode === "disabled" || mode === "superseded" || mode === "stopped" || mode === "stopped-restart";
     if (mode === "disabled") {
       await api("PATCH", "/api/config", { automaticRecovery: { enabled: false, backup } });
+      writeFileSync(holderGate, "");
+    } else if (mode === "superseded") {
+      await api("POST", `/api/bots/${bot.id}/messages`, { threadId, text: "NEWER_USER_INTENT" });
+      expect(await queued()).toHaveLength(2);
+      expect(journal()).toMatchObject([{ status: "pending" }, { status: "pending" }]);
+      unlinkSync(failure);
+      writeFileSync(holderGate, "");
+    } else if (mode === "stopped" || mode === "stopped-restart") {
+      await api("POST", `/api/bots/${bot.id}/interrupt`, { threadId });
+      expect((await messages()).find(message => message.text === "RECOVER_ORIGINAL_LINE")?.requestCancelled).toBe(true);
+      expect(journal()).toMatchObject([{ status: "pending" }]);
+      if (mode === "stopped-restart") {
+        await server.stop();
+        await server.start();
+        expect((await messages()).find(message => message.text === "RECOVER_ORIGINAL_LINE")?.requestCancelled).toBe(true);
+      }
       writeFileSync(holderGate, "");
     } else {
       if (mode === "dispatching") {
@@ -113,11 +130,16 @@ it.each(["disabled", "dispatching", "pending"] as const)("settles %s recovery wi
     expect(users).toHaveLength(1);
     expect(users[0].queueId).toBeUndefined();
     if (mode === "dispatching") expect(readHandoffs(dataDir).filter(node => node.threadId === threadId && node.status === "source")).toHaveLength(0);
-    expect(lines(prompts)).toHaveLength(mode === "disabled" ? 0 : 1);
-    if (mode === "disabled") {
+    expect(lines(prompts)).toHaveLength(cancelled ? 0 : 1);
+    if (cancelled) {
       expect((await current()).modelSelection).toEqual(primary);
       expect(page.filter(message => message.tool?.name?.startsWith("recovery:"))).toHaveLength(0);
       expect(failovers()).toBe(beforeFailovers);
+    }
+    if (mode === "superseded") {
+      await expect.poll(async () => (await messages()).some(message => message.turnSucceeded === true), { timeout: 20_000 }).toBe(true);
+      expect((await messages()).filter(message => message.role === "user" && message.text === "NEWER_USER_INTENT")).toHaveLength(1);
+      expect(lines(rpc).filter(call => call.method === "session/prompt")).toHaveLength(1);
     }
     if (mode === "dispatching") expect(page.some(message => message.tool?.name?.includes("interrupted"))).toBe(true);
     if (mode === "pending") await expect.poll(async () => (await messages()).some(message => message.turnSucceeded === true), { timeout: 20_000 }).toBe(true);
