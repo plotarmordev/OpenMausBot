@@ -6,9 +6,16 @@ import { DatabaseSync } from "node:sqlite";
 import { expect, it } from "vitest";
 import { launchRestartableServer } from "./testing/restartable-server.ts";
 import { readHandoffs } from "./testing/handoff-rows.ts";
-import type { WireBot, WireTask, WireMessage } from "../shared/wire.ts";
+import { z } from "zod";
 
-type FixtureResponse = { bots: WireBot[]; bot: WireBot; task: WireTask; routine: { id: string }; botQueuedMessages: Record<string, unknown[]>; messages: WireMessage[] };
+const taskSchema = z.object({ threadId: z.string(), busy: z.boolean().optional(), modelSelection: z.object({ instanceId: z.string(), model: z.string() }).optional() });
+const botSchema = z.object({ id: z.string(), chiefOfStaff: z.boolean().optional(), tasks: z.array(taskSchema).default([]) });
+const responseSchema = z.object({
+  bots: z.array(botSchema).default([]), bot: botSchema.optional(), task: taskSchema.optional(),
+  routine: z.object({ id: z.string() }).optional(), botQueuedMessages: z.record(z.string(), z.array(z.unknown())).default({}),
+  messages: z.array(z.object({ role: z.string(), text: z.string().optional(), queueId: z.string().optional(),
+    turnSucceeded: z.boolean().optional(), tool: z.object({ name: z.string() }).optional() })).default([]),
+});
 
 const primary = { instanceId: "opencodeGo", model: "fixture/recovery" };
 const backup = { instanceId: "claude", model: "claude-sonnet-5" };
@@ -23,12 +30,12 @@ it.each(["disabled", "dispatching", "pending"] as const)("settles %s recovery wi
   const backupGate = join(dataDir, "backup-release");
   const prompts = join(dataDir, "backup.jsonl");
   const rpc = join(dataDir, "primary.jsonl");
-  const api = async (method: string, path: string, body?: unknown): Promise<FixtureResponse> => {
+  const api = async (method: string, path: string, body?: unknown) => {
     const response = await fetch(server.url + path, { method, headers: { "content-type": "application/json", origin: server.url },
       ...(body === undefined ? {} : { body: JSON.stringify(body) }), signal: AbortSignal.timeout(30_000) });
     const result = await response.json();
     expect(response.ok, JSON.stringify(result)).toBe(true);
-    return result;
+    return responseSchema.parse(result);
   };
   try {
     await server.stop();
@@ -45,8 +52,8 @@ it.each(["disabled", "dispatching", "pending"] as const)("settles %s recovery wi
     const { bots } = await api("GET", "/api/bots");
     const chief = bots.find(bot => bot.chiefOfStaff);
     if (chief) await api("PATCH", `/api/bots/${chief.id}`, { chiefOfStaff: false });
-    const { bot } = await api("POST", "/api/bots", { name: "Recovery restart" });
-    const { task } = await api("POST", `/api/bots/${bot.id}/tasks`, { title: "Ordinary recovery" });
+    const bot = (await api("POST", "/api/bots", { name: "Recovery restart" })).bot!;
+    const task = (await api("POST", `/api/bots/${bot.id}/tasks`, { title: "Ordinary recovery" })).task!;
     const threadId = task.threadId;
     const wrapper = join(dataDir, "recovery-claude.mjs");
     writeFileSync(wrapper, ["#!/usr/bin/env node", 'import { basename } from "node:path";',
@@ -63,7 +70,7 @@ it.each(["disabled", "dispatching", "pending"] as const)("settles %s recovery wi
     await api("POST", `/api/bots/${bot.id}/messages`, { threadId, text: "RECOVER_ORIGINAL_LINE" });
     await expect.poll(() => lines(rpc).some(call => call.method === "initialize"), { timeout: 20_000 }).toBe(true);
     const { routine } = await api("POST", "/api/routines", { name: "Capacity holder", prompt: "Hold the slot.", target: "bot", botId: bot.id, runOn: "maus", enabled: true, schedule: { type: "daily", time: "23:00" } });
-    await api("POST", `/api/routines/${routine.id}/run`);
+    await api("POST", `/api/routines/${routine!.id}/run`);
     const state = () => api("GET", "/api/bots?messages=0");
     const current = async () => (await state()).bots.find(entry => entry.id === bot.id)!.tasks.find(entry => entry.threadId === threadId)!;
     await expect.poll(async () => (await state()).bots.find(entry => entry.id === bot.id)!.tasks.some(entry => entry.threadId !== threadId && entry.busy), { timeout: 20_000 }).toBe(true);

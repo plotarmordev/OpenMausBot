@@ -7466,7 +7466,7 @@ function drainQueuedSendsNow() {
       };
       if (stale) {
         fail("Automatic recovery cancelled: the request or backup selection is no longer current.");
-        return Promise.reject(new Error("stale automatic recovery"));
+        return;
       }
       return new Promise<void | "retry">((resolve, reject) => {
         void startTurn(botId, prompt, {

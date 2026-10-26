@@ -7,7 +7,6 @@ import { DatabaseSync } from "node:sqlite";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
-import { roomTurnHolds } from "./admission.ts";
 import { saveChatFollowup } from "./message-db.ts";
 import { killCliTree } from "./procs.ts";
 import {
