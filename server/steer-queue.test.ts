@@ -71,6 +71,21 @@ function fakeStore(bots: BotRecord[]): SteerStore & { messages: Message[] } {
 }
 
 describe("steer-queue module", () => {
+  it("dispatches a main-chat person behind a capacity-blocked peer head without dispatching the peer", () => {
+    const bot = fakeBot("mixed-capacity", "mixed-main", false);
+    const store = fakeStore([bot]);
+    const peer = queueSteeredMessage(bot.id, bot.threadId, "Peer waits", { peerAsk: { botId: "chief", name: "Chief" }, reason: "capacity" });
+    queueSteeredMessage(bot.id, bot.threadId, "Person runs");
+    const run = vi.fn();
+    drainSteeredMessages(store, run, (_botId, threadId, head) => threadId !== bot.threadId || Boolean(head.peerAsk));
+    expect(store.messages.map(message => message.text)).toEqual(["Person runs"]);
+    expect(run).toHaveBeenCalledTimes(1);
+    expect(isSteeredMessageQueued(bot.id, bot.threadId, peer.id)).toBe(true);
+    drainSteeredMessages(store, run, () => false);
+    expect(store.messages.map(message => message.text)).toEqual(["Person runs", "Peer waits"]);
+    expect(run.mock.calls[1][3].peerAsk).toEqual({ botId: "chief", name: "Chief" });
+  });
+
   it("keeps readable citation prompts byte-for-byte through queue, hold, and drain", () => {
     const bot = fakeBot("bot-citation-queue", "thread-citation-queue", true);
     const store = fakeStore([bot]);

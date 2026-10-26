@@ -39,7 +39,7 @@ export const MAX_ROOM_TURN_TIMEOUT_MINUTES = 1_440;
 export const DEFAULT_MCP_CALL_TIMEOUT_MINUTES = 10;
 export const MIN_MCP_CALL_TIMEOUT_MINUTES = 1;
 export const MAX_MCP_CALL_TIMEOUT_MINUTES = 60;
-export const DEFAULT_MAX_CONCURRENT_BOT_THREADS = 3;
+export const DEFAULT_MAX_CONCURRENT_BOT_THREADS = 16;
 export const MAX_CONCURRENT_BOT_THREADS = 16;
 /** The floor keeps a log tail large enough for the event inspector's recent-line window. */
 export const MIN_THREAD_EVENT_LOG_BYTES = 256 * 1024;

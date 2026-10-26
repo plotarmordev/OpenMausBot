@@ -175,13 +175,19 @@ export function drainSteeredMessages(
       changed();
       continue;
     }
-    if (bot.busy || isBlocked?.(entry.botId, threadId, entry.items[0])) continue;
+    if (bot.busy) continue;
+    let start = 0;
+    if (isBlocked?.(entry.botId, threadId, entry.items[0])) {
+      if (!entry.items[0].peerAsk) continue;
+      start = entry.items.findIndex(item => !item.peerAsk && !isBlocked(entry.botId, threadId, item));
+      if (start < 0) continue;
+    }
     // isBlocked can re-enter this drain; if a nested drain took this entry, it is stale.
     if (queues.get(threadId) !== entry) continue;
-    const group = drainCoalesceHead(entry.items, coalesceIdentity, (item) => item.queuedAt);
+    const group = drainCoalesceHead(start ? entry.items.slice(start) : entry.items, coalesceIdentity, (item) => item.queuedAt);
     const ids = group.map((item) => item.messageId);
     settleChatFollowups(ids, "dispatching");
-    const rest = entry.items.slice(group.length);
+    const rest = start ? [...entry.items.slice(0, start), ...entry.items.slice(start + group.length)] : entry.items.slice(group.length);
     if (rest.length > 0) queues.set(threadId, { botId: entry.botId, items: rest });
     else queues.delete(threadId);
     changed();

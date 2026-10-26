@@ -10,10 +10,10 @@ vi.mock("@/state/store", () => ({
 }));
 
 describe("ThreadConcurrencySettings", () => {
-  it("keeps three as the legacy default and offers one through ten", () => {
+  it("defaults to sixteen and offers one through sixteen", () => {
     fixture.limit = undefined;
     const markup = renderToStaticMarkup(createElement(ThreadConcurrencySettings));
-    expect(markup).toContain('value="3" selected=""');
+    expect(markup).toContain('value="16" selected=""');
     expect(markup.match(/<option /g)).toHaveLength(16);
     expect(markup).toContain('value="16"');
     expect(markup).toContain("Extra messages queue until a slot opens.");

@@ -118,12 +118,13 @@ describe("per-bot thread capacity through an isolated HTTP fixture", () => {
     for (const project of projectDirs.splice(0)) await removeTempDir(project);
   });
 
-  it("defaults to three, runs ten real turns after raising the limit, and safely queues and cancels overflow", async () => {
-    expect((await api("GET", "/api/config")).body.threads).toEqual({ maxConcurrentPerBot: 3 });
+  it("defaults to sixteen, runs ten real turns after raising an explicit limit, and safely queues and cancels overflow", async () => {
+    expect((await api("GET", "/api/config")).body.threads).toEqual({ maxConcurrentPerBot: 16 });
     for (const maxConcurrentPerBot of [0, 17, 1.5, "2", null]) {
       expect((await api("PATCH", "/api/config", { threads: { maxConcurrentPerBot } })).status).toBe(400);
     }
-    expect((await api("GET", "/api/config")).body.threads.maxConcurrentPerBot).toBe(3);
+    expect((await api("GET", "/api/config")).body.threads.maxConcurrentPerBot).toBe(16);
+    await limit(3);
     const { botId, threads } = await botWithThreads(12);
     const firstThree = await Promise.all(threads.slice(0, 3).map((threadId, i) => send(botId, threadId, `ACTIVE_${i}`)));
     expect(firstThree.map((result) => result.status)).toEqual([202, 202, 202]);
@@ -252,6 +253,54 @@ describe("per-bot thread capacity through an isolated HTTP fixture", () => {
       for (const threadId of await busyThreads(botId)) finish(threadId);
       await api("DELETE", `/api/routines/${routineId}`).catch(() => undefined);
       await api("DELETE", `/api/bots/${botId}`).catch(() => undefined);
+    }
+  }, 90_000);
+
+  it.each(["Chief peer retry", "guarded person relay"])("applies person-only main-chat admission at full capacity for %s", async (ingress) => {
+    await limit(1);
+    const { botId, threads: [main] } = await botWithThreads(1);
+    const { botId: chiefId, threads: [chiefThread] } = await botWithThreads(1);
+    expect((await api("PATCH", `/api/bots/${chiefId}`, { chiefOfStaff: true, managedSections: [], acknowledgePeerScope: true })).status).toBe(200);
+    expect((await api("PATCH", `/api/bots/${botId}`, { approvalMode: "ask", autoApprove: false })).status).toBe(200);
+    await send(botId, main, "MAIN_WARM_UP");
+    await dump(main);
+    finish(main);
+    await expect.poll(() => busyThreads(botId), { timeout: 15_000 }).toEqual([]);
+    const routine = (await api("POST", "/api/routines", {
+      name: "Retry slot holder", prompt: "Hold the capacity slot.", target: "bot", botId, runOn: "maus", enabled: true,
+      schedule: { type: "daily", time: "23:00" },
+    })).body.routine;
+    try {
+      await api("POST", `/api/routines/${routine.id}/run`);
+      await expect.poll(() => busyThreads(botId), { timeout: 15_000 }).toHaveLength(1);
+      if (ingress === "Chief peer retry") {
+        await send(chiefId, chiefThread, "CHIEF_RETRY_AUTHORITY");
+        const chief = await dump(chiefThread);
+        const response = await fetch(`${fixture.info.url}/api/internal/retry-thread`, {
+          method: "POST",
+          headers: { "content-type": "application/json", authorization: `Bearer ${chief.mcpConfig.mcpServers.agents.env.OMB_COMMS_TOKEN}` },
+          body: JSON.stringify({ toBotId: botId, toThreadId: main }),
+        });
+        const retry = await response.json();
+        evidence.push({ retryStatus: response.status, retry });
+        expect(response.status, JSON.stringify(retry)).toBe(409);
+        expect(retry).toMatchObject({ error: expect.stringContaining("parallel threads") });
+        expect((await messages(main)).some(message => message.peerAsk?.botId === chiefId)).toBe(false);
+        return;
+      }
+      const snapshot = await api("GET", `/api/threads/${main}/messages`);
+      const relay = await api("POST", `/api/bots/${botId}/messages/guarded`, {
+        threadId: main, sendId: "guarded-capacity-person", text: "PERSON_RELAY_AT_CAPACITY",
+        expectedActiveLeafId: snapshot.body.activeLeafId, expectedApprovalMode: "ask",
+        onBehalfOf: { name: "Sam", email: "sam@example.test" },
+      });
+      expect(relay.status, JSON.stringify(relay.body)).toBe(202);
+      expect(relay.body.queued).toBeUndefined();
+      expect((await messages(main)).some(message => message.text === "PERSON_RELAY_AT_CAPACITY")).toBe(true);
+    } finally {
+      for (const thread of await busyThreads(botId)) finish(thread);
+      finish(chiefThread);
+      await api("DELETE", `/api/routines/${routine.id}`);
     }
   }, 90_000);
 

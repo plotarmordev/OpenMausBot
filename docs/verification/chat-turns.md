@@ -214,6 +214,16 @@ The fixture prints its server log and a retained `.log.json` evidence path with
 the exact control commands, wait results, and bounded transcripts. Its temporary
 home is removed after the test.
 
+The per-bot thread limit defaults to sixteen and accepts one through sixteen.
+Person messages in the bot's main chat bypass capacity, including guarded
+relays and coordinator continuations. Peer work, including Chief retries,
+remains capped. A queued person message can pass a capacity-blocked peer
+entry in the main chat without dispatching that peer.
+
+```sh
+pnpm exec vitest run --no-file-parallelism server/thread-capacity-api.test.ts server/steer-queue.test.ts server/direct-coordination.e2e.test.ts
+```
+
 See the [Threads renderer recipe](threads.md) for the real sidebar, composer,
 optional folders, and group-history navigation checks.
 

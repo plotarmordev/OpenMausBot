@@ -80,7 +80,7 @@ export interface BotMessageRouteDeps {
   requestedTaskBot(botId: string, rawThreadId: unknown): BotRecord;
   botForThread(botId: string, threadId: string): BotRecord | null;
   threadBusy(botId: string, threadId: string): boolean;
-  botAtThreadCapacity(botId: string): boolean;
+  botAtThreadCapacity(botId: string, personThreadId?: string): boolean;
   parksBehindCoordination(botId: string, threadId: string): boolean;
   activeGroupTurnForBot(botId: string): { group: GroupRecord; threadId: string } | null;
   runningTurnInstance(bot: BotRecord | null | undefined, threadId: string): RunningInstance;
@@ -262,7 +262,7 @@ export function createBotMessageRoutes(deps: BotMessageRouteDeps): RouteHandler 
             const guardedAdmission = admit("guarded", {}, {
               botBusy: currentAtStart.busy,
               threadBusy: threadBusy(bot.id, threadId),
-              atCapacity: botAtThreadCapacity(bot.id),
+              atCapacity: botAtThreadCapacity(bot.id, trigger.kind === "user" ? threadId : undefined),
               parksBehindCoordination: parksBehindCoordination(bot.id, threadId),
               groupTurn: Boolean(activeGroupTurnForBot(bot.id)),
             });

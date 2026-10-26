@@ -2365,11 +2365,10 @@ function hasDirectDispatch(botId: string): boolean {
   return [...directTurnDispatchClaims.values()].some((claim) => claim.botId === botId);
 }
 
-/** Must match what startTurn admits for a direct thread. */
-function canAdmitDirectTurn(botId: string, threadId: string): boolean {
+function canAdmitDirectTurn(botId: string, threadId: string, personRoot = false): boolean {
   return admit("peer", {}, {
     threadBusy: threadBusy(botId, threadId),
-    atCapacity: botAtThreadCapacity(botId),
+    atCapacity: botAtThreadCapacity(botId, personRoot ? threadId : undefined),
     groupTurn: Boolean(activeGroupTurnForBot(botId)),
   }).action === "start";
 }
@@ -3984,7 +3983,7 @@ function outstandingAssignmentsPrompt(threadId: string): string {
 }
 
 function queuedBehindPerson(node: HandoffView): { threadId: string; kind: "approval" | "question" | "review"; title: string } | undefined {
-  if (node.groupId || node.status !== "queued" || threadBusy(node.botId, node.threadId) || !botAtThreadCapacity(node.botId)) return undefined;
+  if (node.groupId || node.status !== "queued" || threadBusy(node.botId, node.threadId) || !botAtThreadCapacity(node.botId, !node.parentId && node.origin?.kind === "user" ? node.threadId : undefined)) return undefined;
   for (const task of store.tasks(node.botId)) {
     if (task.threadId === node.threadId || task.activity !== "waiting-on-you") continue;
     const card = openPersonCard(task.threadId);
@@ -4124,7 +4123,7 @@ const coordinator: Coordinator = createCoordinator({
       const seat = parkedSeats.get(n.id);
       if (seat && !turnResources.free(seat)) return true;
       if (n.groupId) return Boolean(store.bot(n.botId)?.busy || groupThreadIsWorking(n.groupId, n.threadId));
-      if (canAdmitDirectTurn(n.botId, n.threadId)) return false;
+      if (canAdmitDirectTurn(n.botId, n.threadId, !n.parentId && n.origin?.kind === "user")) return false;
       noteQueuedBehindPerson(n);
       return true;
     },
@@ -7560,7 +7559,7 @@ function drainQueuedSendsNow() {
     }),
     // Provider completion can precede its dispatch promise: keep the queue until that exact handshake releases its claim.
     (botId, threadId, head) => threadBusy(botId, threadId) || botAtThreadCapacity(botId, head.peerAsk ? undefined : threadId) || Boolean(activeGroupTurnForBot(botId))
-      || directRootQueued(threadId) || (!head.peerAsk?.incident && parksBehindCoordination(botId, threadId)),
+      || ((head.peerAsk || threadId !== botMainThread(botId)) && directRootQueued(threadId)) || (!head.peerAsk?.incident && parksBehindCoordination(botId, threadId)),
   );
 }
 
@@ -7998,7 +7997,7 @@ async function startTurn(
   if (activeGroupTurnForBot(botId)) {
     throw Object.assign(new Error("the bot is already working in a channel — wait for it to finish"), { status: 409, code: "thread_busy" });
   }
-  if (botAtThreadCapacity(botId, threadId)) {
+  if (botAtThreadCapacity(botId, opts?.peerAsk || opts?.userMessage?.peerAsk ? undefined : threadId)) {
     throw Object.assign(new Error(`this bot has reached its limit of ${maxConcurrentBotThreads(cfg)} parallel threads — wait for one to finish`), { status: 409, code: "thread_limit" });
   }
   // Revoke what a previous turn left behind before minting this turn's integrations.

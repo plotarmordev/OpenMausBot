@@ -702,6 +702,37 @@ it("queues a recipient at capacity, preserving its existing task and resuming on
   expect(f.evidence().filter((turn: any) => turn.botId === f.lead.id).map((turn: any) => turn.threadId)).toEqual([f.lead.activeTaskId, f.nodes().find((node: any) => node.parentId && node.botId === f.lead.id).threadId]);
 }), 45_000);
 
+it("resumes a person main-chat root while a routine holds every capacity slot", () => fixture(async f => {
+  await f.api("/api/config", { threads: { maxConcurrentPerBot: 1 } }, "PATCH");
+  const childGate = join(f.session.info.dataDir, "capacity-child");
+  const routineGate = join(f.session.info.dataDir, "capacity-routine");
+  const routineReady = join(f.session.info.dataDir, "capacity-routine-ready");
+  f.plan[f.lead.id] = { gateFile: childGate, reply: "Saturated delegation finished" };
+  f.plan[f.chief.id].byPrompt = [{
+    promptIncludes: "HOLD_ROUTINE_CAPACITY",
+    plan: { gateFile: routineGate, readyFile: routineReady, reply: "Routine finished" },
+  }];
+  await f.start();
+  await assigningTurnEnded(f);
+  const routine = (await f.api("/api/routines", {
+    name: "Coordinator capacity holder", prompt: "HOLD_ROUTINE_CAPACITY", target: "bot", botId: f.chief.id,
+    runOn: "maus", enabled: true, schedule: { type: "daily", time: "23:00" },
+  })).routine;
+  try {
+    await f.api(`/api/routines/${routine.id}/run`, {});
+    await expect.poll(() => existsSync(routineReady), { timeout: 20_000 }).toBe(true);
+    writeFileSync(childGate, "return the delegated result");
+    await expect.poll(async () => (await f.messages(f.chief.activeTaskId))
+      .some((message: { text?: string }) => message.text === "The requested CSV export is implemented and verified"), { timeout: 20_000 }).toBe(true);
+    const chief = (await f.api("/api/bots?messages=0")).bots.find((bot: { id: string }) => bot.id === f.chief.id);
+    expect(chief.tasks.some((task: { threadId: string; busy: boolean }) => task.threadId !== f.chief.activeTaskId && task.busy)).toBe(true);
+    expect(f.nodes().find((node: { parentId?: string; threadId: string }) => !node.parentId && node.threadId === f.chief.activeTaskId)?.status).toBe("completed");
+  } finally {
+    writeFileSync(childGate, "finish child");
+    writeFileSync(routineGate, "finish routine");
+  }
+}), 90_000);
+
 /** A message sent while the Chief's assigning turn is still finishing is steered into that turn, so it is never parked or started on its own. */
 const assigningTurnEnded = (f: any) => expect.poll(async () => {
   const chief = (await f.api("/api/bots?messages=0")).bots.find((bot: any) => bot.id === f.chief.id);
