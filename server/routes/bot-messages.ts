@@ -67,7 +67,7 @@ export interface BotMessageRouteDeps {
   ): Promise<DirectSendReceipt>;
   directSendRefusal(botId: string, threadId: string): { status: number; body: Record<string, unknown> } | null;
   startTurn(botId: string, text: string, opts?: {
-    threadId?: string; replyTo?: Message; sendId?: string; sender?: ResolvedSender; trigger?: UsageTrigger; relayed?: boolean; personRelay?: boolean;
+    threadId?: string; replyTo?: Message; sendId?: string; sender?: ResolvedSender; trigger?: UsageTrigger; relayed?: boolean; capacity?: "person";
     dataContext?: DataContext; compactOnly?: boolean; cardContinuation?: boolean; editedMessageId?: string;
   }): Promise<Message>;
   usageTriggerFor(auth: RequestAuth): UsageTrigger;
@@ -80,7 +80,8 @@ export interface BotMessageRouteDeps {
   requestedTaskBot(botId: string, rawThreadId: unknown): BotRecord;
   botForThread(botId: string, threadId: string): BotRecord | null;
   threadBusy(botId: string, threadId: string): boolean;
-  botAtThreadCapacity(botId: string, personThreadId?: string): boolean;
+  botAtThreadCapacity(botId: string, capacity?: "person"): boolean;
+  botMainThread(botId: string): string | undefined;
   parksBehindCoordination(botId: string, threadId: string): boolean;
   activeGroupTurnForBot(botId: string): { group: GroupRecord; threadId: string } | null;
   runningTurnInstance(bot: BotRecord | null | undefined, threadId: string): RunningInstance;
@@ -149,7 +150,7 @@ export function createBotMessageRoutes(deps: BotMessageRouteDeps): RouteHandler 
     desktopManaged: DESKTOP_MANAGED, cloudHome: CLOUD_HOME, DirectSendRefused,
     acceptDirectSend, directSendRefusal, startTurn, usageTriggerFor, messageSender, cloudGuestSendRefusal, cloudThreadRefusal,
     cardAnswerRefusal, commandRememberRefusal, requestBehavior, requestedTaskBot, botForThread, threadBusy,
-    botAtThreadCapacity, parksBehindCoordination, activeGroupTurnForBot, runningTurnInstance, engineSteersImages, resolveReplyTarget,
+    botAtThreadCapacity, botMainThread, parksBehindCoordination, activeGroupTurnForBot, runningTurnInstance, engineSteersImages, resolveReplyTarget,
     turnSelection, policyModelRefusal, clearUnattended, drainQueuedSends, answeringCardAs, resolveAndSendTrust, resolveAndSendTeamSetup,
     resolveAndSendRoutine, resolveAndSendProfile, resolveAndSendModel, resolveSkillRequest, sendSkillResolution, answerRequest,
     deliverLateQuestionAnswer, interruptDirectThread, stopThreadForPerson, cancelDirectTurnDispatch, revokeInternalCapabilitiesForThread,
@@ -201,6 +202,7 @@ export function createBotMessageRoutes(deps: BotMessageRouteDeps): RouteHandler 
       const notYours = cloudGuestSendRefusal(auth, threadId);
       if (notYours) return json(res, 403, { error: notYours });
       const onBehalfOf = guardedBody?.data?.onBehalfOf;
+      const capacity = onBehalfOf && threadId === botMainThread(bot.id) ? "person" : undefined;
       const trigger: UsageTrigger = onBehalfOf
         ? { kind: "user", ...(onBehalfOf.email ? { email: onBehalfOf.email } : {}), ...(onBehalfOf.name ? { label: onBehalfOf.name } : {}) }
         : usageTriggerFor(auth);
@@ -262,7 +264,7 @@ export function createBotMessageRoutes(deps: BotMessageRouteDeps): RouteHandler 
             const guardedAdmission = admit("guarded", {}, {
               botBusy: currentAtStart.busy,
               threadBusy: threadBusy(bot.id, threadId),
-              atCapacity: botAtThreadCapacity(bot.id, trigger.kind === "user" ? threadId : undefined),
+              atCapacity: botAtThreadCapacity(bot.id, capacity),
               parksBehindCoordination: parksBehindCoordination(bot.id, threadId),
               groupTurn: Boolean(activeGroupTurnForBot(bot.id)),
             });
@@ -270,7 +272,7 @@ export function createBotMessageRoutes(deps: BotMessageRouteDeps): RouteHandler 
               throw Object.assign(new Error("wait for a free thread slot before retrying this message"), { status: 409, code: "guarded_busy" });
             }
             const message = await startTurn(bot.id, text, { threadId, replyTo, sendId, sender, trigger, relayed: true,
-              ...(trigger.kind === "user" ? { personRelay: true } : {}), dataContext });
+              capacity, dataContext });
             return { ok: true as const, threadId, message };
           }
         : undefined;
@@ -438,8 +440,9 @@ export function createBotMessageRoutes(deps: BotMessageRouteDeps): RouteHandler 
       const quoted = source.replyToId ? resolveReplyTarget(bot.threadId, source.replyToId) : undefined;
       const replyTo: ReplyTarget | undefined = quoted && source.reaction && text === source.text ? { ...quoted, reactedWith: source.reaction } : quoted;
       const dataContext = parseDataContext(body.dataContext) ?? (text === source.text ? source.dataContext : undefined);
+      const capacity = (auth.kind === "session" || DESKTOP_MANAGED) && bot.threadId === botMainThread(bot.id) ? "person" : undefined;
       const message = await startTurn(bot.id, text, { threadId: bot.threadId, editedMessageId: messageId, replyTo, sendId, trigger: usageTriggerFor(auth), dataContext,
-        ...(CLOUD_HOME ? { sender: messageSender(auth) } : {}) });
+        capacity, ...(CLOUD_HOME ? { sender: messageSender(auth) } : {}) });
       return json(res, 202, { ok: true, message });
     }
 

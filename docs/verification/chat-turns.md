@@ -225,9 +225,13 @@ exemption, and guarded relays retain outside/relay origin and outside child
 authority. Peer work, including Chief retries and self-opened `start_thread`
 roots, remains capped even when archiving an older main chat promotes its thread
 to main. Recovery preserves the marker rather than inferring it from origin.
-A queued person message can pass a capacity-blocked peer entry in the main chat
-without dispatching that peer. Guarded admin input without a person trigger is
-refused at capacity without appending, queuing, or launching a provider.
+Trusted ingress derives the marker only when both person provenance and the main
+target are known. Queued sends persist it; start, drain, coordinator admission,
+status and recursive recovery consume it without inferring provenance again.
+Only a marked person message can pass a blocked queue head; peers and routines
+remain queued in order. Compact, routine and unattended work remain capped on
+main. Guarded admin input without `onBehalfOf` is refused at capacity without
+appending, queuing, or launching a provider.
 
 ```sh
 pnpm exec vitest run --no-file-parallelism server/thread-capacity-api.test.ts server/steer-queue.test.ts server/direct-coordination.e2e.test.ts

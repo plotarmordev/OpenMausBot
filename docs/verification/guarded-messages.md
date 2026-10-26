@@ -10,7 +10,7 @@ The guarded request includes `text`, `threadId`, a stable `sendId`, and the
 `null`; a newly created bot may already have a greeting and a non-null leaf.
 The runtime admits new work only while the task is idle, has a free slot, uses
 the exact expected approval mode, and still has that leaf. A send made for a
-person (`onBehalfOf`, or a person's own session) to the bot's main chat needs
+person through permitted `onBehalfOf` to the bot's main chat needs
 no free slot, and neither does the coordinator resuming that main-chat turn
 after its teammates report back. Omitted
 `expectedApprovalMode` means Ask without automatic or remembered approvals.
@@ -28,8 +28,11 @@ someone else.
 The coordinator persists this capacity-only person marker separately from its
 outside/relay origin. Restart recovery retains the exemption without granting
 the relay or its delegated children direct-person authority. An admin owner
-token without a person trigger does not grant the exemption: at capacity the
+token without `onBehalfOf` does not grant the exemption: at capacity the
 main-chat request returns `guarded_busy` without transcript or queue changes.
+The route derives `capacity: "person"` only after identifying the relay and main
+target. Provider recovery consumes that same marker; thread identity, trigger
+shape and inherited origin cannot create it.
 
 Every guarded send's user line is stored with `relayed: true`: an external
 interface relayed it, and nobody typed it in one of this workspace's clients.

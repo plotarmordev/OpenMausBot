@@ -75,7 +75,7 @@ describe("steer-queue module", () => {
     const bot = fakeBot("mixed-capacity", "mixed-main", false);
     const store = fakeStore([bot]);
     const peer = queueSteeredMessage(bot.id, bot.threadId, "Peer waits", { peerAsk: { botId: "chief", name: "Chief" }, reason: "capacity" });
-    queueSteeredMessage(bot.id, bot.threadId, "Person runs");
+    queueSteeredMessage(bot.id, bot.threadId, "Person runs", { capacity: "person" });
     const run = vi.fn();
     drainSteeredMessages(store, run, (_botId, threadId, head) => threadId !== bot.threadId || Boolean(head.peerAsk));
     expect(store.messages.map(message => message.text)).toEqual(["Person runs"]);
@@ -84,6 +84,25 @@ describe("steer-queue module", () => {
     drainSteeredMessages(store, run, () => false);
     expect(store.messages.map(message => message.text)).toEqual(["Person runs", "Peer waits"]);
     expect(run.mock.calls[1][3].peerAsk).toEqual({ botId: "chief", name: "Chief" });
+  });
+
+  it("dispatches only the marked person past a blocked peer and unattended routine after restore", () => {
+    const bot = fakeBot("mixed-restored-capacity", "mixed-restored-main", false);
+    const store = fakeStore([bot]);
+    const peer = queueSteeredMessage(bot.id, bot.threadId, "Peer waits", { peerAsk: { botId: "chief", name: "Chief" }, reason: "capacity" });
+    const routine = queueSteeredMessage(bot.id, bot.threadId, "Routine waits", { unattended: true, origin: { kind: "outside" }, trigger: { kind: "routine" } });
+    queueSteeredMessage(bot.id, bot.threadId, "Person runs", { capacity: "person" });
+    restoreSteeredMessages();
+    const run = vi.fn();
+    drainSteeredMessages(store, run, (_botId, _threadId, head) => head.capacity !== "person");
+    expect(store.messages.map(message => message.text)).toEqual(["Person runs"]);
+    expect(run).toHaveBeenCalledTimes(1);
+    expect(run.mock.calls[0][6].capacity).toBe("person");
+    expect(isSteeredMessageQueued(bot.id, bot.threadId, peer.id)).toBe(true);
+    expect(isSteeredMessageQueued(bot.id, bot.threadId, routine.id)).toBe(true);
+    drainSteeredMessages(store, run, () => false);
+    drainSteeredMessages(store, run, () => false);
+    expect(store.messages.map(message => message.text)).toEqual(["Person runs", "Peer waits", "Routine waits"]);
   });
 
   it("keeps readable citation prompts byte-for-byte through queue, hold, and drain", () => {

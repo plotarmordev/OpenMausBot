@@ -262,6 +262,35 @@ describe("per-bot thread capacity through an isolated HTTP fixture", () => {
     }
   }, 90_000);
 
+  it("caps main-thread compact while a routine holds the sole slot", async () => {
+    await limit(1);
+    const { botId, threads: [main] } = await botWithThreads(1);
+    await send(botId, main, "COMPACT_WARM_UP");
+    const initial = await dump(main);
+    finish(main);
+    await expect.poll(() => busyThreads(botId), { timeout: 10_000 }).toEqual([]);
+    const routine = (await api("POST", "/api/routines", {
+      name: "Compact slot holder", prompt: "HOLD_COMPACT_SLOT", target: "bot", botId, runOn: "maus", enabled: true,
+      schedule: { type: "daily", time: "23:00" },
+    })).body.routine;
+    try {
+      await api("POST", `/api/routines/${routine.id}/run`);
+      await expect.poll(async () => (await busyThreads(botId)).length, { timeout: 15_000 }).toBe(1);
+      const occupied = await busyThreads(botId);
+      const before = await messages(main);
+      const compact = await api("POST", `/api/bots/${botId}/compact`, { threadId: main });
+      expect(compact.status).toBe(409);
+      expect(compact.body.error).toContain("parallel threads");
+      expect(await busyThreads(botId)).toEqual(occupied);
+      expect(await messages(main)).toEqual(before);
+      expect((await dump(main)).pid).toBe(initial.pid);
+      expect((await api("GET", "/api/bots?messages=0")).body.botQueuedMessages[main]).toBeUndefined();
+    } finally {
+      for (const threadId of await busyThreads(botId)) finish(threadId);
+      await api("DELETE", `/api/routines/${routine.id}`);
+    }
+  }, 90_000);
+
   it.each(["Chief peer retry", "guarded admin", "guarded person relay"])("applies person-only main-chat admission at full capacity for %s", async (ingress) => {
     await limit(1);
     const { botId, threads: [main] } = await botWithThreads(1);

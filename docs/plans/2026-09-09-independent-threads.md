@@ -38,8 +38,8 @@ native folder navigation is a follow-up, not silently claimed as implemented.
 
 ## Execution and resource ownership
 
-Each bot defaults to three direct threads at once. Settings → General → Parallel
-threads can set the per-bot limit from one to ten. Extra messages wait above
+Each bot defaults to sixteen direct threads at once. Settings → General → Parallel
+threads can set the per-bot limit from one to sixteen. Extra messages wait above
 the composer, off the transcript, until that bot has a free slot; they can be
 cancelled. The existing queue batches follow-ups within each waiting thread
 and drains waiting threads in order. It is in-memory, not restart-durable.

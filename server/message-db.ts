@@ -221,6 +221,7 @@ export interface FollowupPayload {
   sender?: ResolvedSender;
   trigger?: UsageTrigger;
   origin?: WorkOrigin;
+  capacity?: "person";
   queuedAt?: number;
 }
 export type FollowupStatus = "pending" | "dispatching" | "interrupted" | "cancelled";

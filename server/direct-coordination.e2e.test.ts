@@ -746,7 +746,7 @@ it.each(["typed", "guarded relay"])("resumes a person's %s main-chat root while 
     writeFileSync(childGate, "finish child");
     writeFileSync(routineGate, "finish routine");
   }
-}), 90_000);
+}, { OMB_TEST_DESKTOP_OWNER_TOKEN: randomBytes(32).toString("base64url") }), 90_000);
 
 it.each(["peer", "peer restart", "relay restart"])("preserves capacity provenance for %s", (ingress) => fixture(async f => {
   await f.api("/api/config", { threads: { maxConcurrentPerBot: 1 } }, "PATCH");
@@ -812,6 +812,50 @@ it.each(["peer", "peer restart", "relay restart"])("preserves capacity provenanc
     await expect.poll(resumed, { timeout: 30_000 }).toBe(true);
     if (relay) expect((await f.api("/api/bots?messages=0")).bots.find((bot: { id: string }) => bot.id === f.chief.id)
       .tasks.some((task: { threadId: string; busy: boolean }) => task.threadId !== root.threadId && task.busy)).toBe(true);
+  } finally {
+    writeFileSync(childGate, "finish");
+    writeFileSync(routineGate, "finish");
+  }
+}, {}, true), 120_000);
+
+it.each([false, true])("caps non-person main coordinator recovery with restart=%s", (restart) => fixture(async f => {
+  await f.api("/api/config", { threads: { maxConcurrentPerBot: 1 } }, "PATCH");
+  const childGate = join(f.session.info.dataDir, "admin-child");
+  const routineGate = join(f.session.info.dataDir, "admin-routine");
+  const routineReady = join(f.session.info.dataDir, "admin-routine-ready");
+  f.plan[f.lead.id] = { gateFile: childGate, reply: "Admin child finished" };
+  f.plan[f.chief.id] = {
+    steps: [{ arguments: { bot_ids: [f.lead.id], message: "ADMIN_CHILD" } }],
+    reply: "Delegated", resumeReply: "ADMIN_RESUMED",
+    byPrompt: [{ promptIncludes: "ADMIN_ROUTINE", plan: { gateFile: routineGate, readyFile: routineReady, reply: "Routine finished" } }],
+  };
+  f.save();
+  await f.api(`/api/bots/${f.chief.id}`, { approvalMode: "ask", autoApprove: false }, "PATCH");
+  const snapshot = await f.api(`/api/threads/${f.chief.activeTaskId}/messages`);
+  await f.api(`/api/bots/${f.chief.id}/messages/guarded`, {
+    threadId: f.chief.activeTaskId, sendId: "admin-capacity-root", text: "Delegate admin work",
+    expectedActiveLeafId: snapshot.activeLeafId, expectedApprovalMode: "ask",
+  });
+  try {
+    await assigningTurnEnded(f);
+    const child = f.nodes().find((node: { parentId?: string }) => node.parentId);
+    const root = f.nodes().find((node: { id: string }) => node.id === child.parentId);
+    if (restart) await f.restart();
+    expect(f.nodes().find((node: { id: string }) => node.id === root.id).capacity).toBeUndefined();
+    const routine = (await f.api("/api/routines", {
+      name: "Admin capacity holder", prompt: "ADMIN_ROUTINE", target: "bot", botId: f.chief.id,
+      runOn: "maus", enabled: true, schedule: { type: "daily", time: "23:00" },
+    })).routine;
+    await f.api(`/api/routines/${routine.id}/run`, {});
+    await expect.poll(() => existsSync(routineReady), { timeout: 20_000 }).toBe(true);
+    writeFileSync(childGate, "finish");
+    await expect.poll(() => f.eventsOf(root.id)).toContain("resume_due");
+    expect(f.nodes().find((node: { id: string }) => node.id === root.id).status).toBe("resume");
+    expect((await f.messages(root.threadId)).some((message: { text?: string }) => message.text === "ADMIN_RESUMED")).toBe(false);
+    expect((await f.api("/api/bots?messages=0")).bots.find((bot: { id: string }) => bot.id === f.chief.id)
+      .tasks.filter((task: { busy: boolean }) => task.busy).map((task: { threadId: string }) => task.threadId)).not.toContain(root.threadId);
+    writeFileSync(routineGate, "release");
+    await expect.poll(async () => (await f.messages(root.threadId)).some((message: { text?: string }) => message.text === "ADMIN_RESUMED"), { timeout: 30_000 }).toBe(true);
   } finally {
     writeFileSync(childGate, "finish");
     writeFileSync(routineGate, "finish");

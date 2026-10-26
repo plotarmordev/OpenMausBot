@@ -30,6 +30,7 @@ interface QueueEntry {
     unattended?: boolean;
     peerAsk?: Message["peerAsk"];
     origin?: WorkOrigin;
+    capacity?: "person";
     sender?: ResolvedSender;
     trigger?: UsageTrigger;
     queuedAt: number;
@@ -40,7 +41,7 @@ interface QueueEntry {
   }>;
 }
 
-export type SteerQueueHead = Pick<QueueEntry["items"][number], "trigger" | "sender" | "peerAsk" | "origin">;
+export type SteerQueueHead = Pick<QueueEntry["items"][number], "trigger" | "sender" | "peerAsk" | "origin" | "capacity">;
 
 const queues = new Map<string, QueueEntry>();
 
@@ -100,7 +101,7 @@ export function queueSteeredMessage(
   botId: string,
   threadId: string,
   text: string,
-  options: { prompt?: string; replyToId?: string; sendId?: string; dataContext?: Message["dataContext"]; reason?: SteerQueueReason; unattended?: boolean; peerAsk?: Message["peerAsk"]; origin?: WorkOrigin; sender?: ResolvedSender; trigger?: UsageTrigger; callId?: string; via?: "call"; reaction?: string; fromApp?: Message["fromApp"] } = {},
+  options: { prompt?: string; replyToId?: string; sendId?: string; dataContext?: Message["dataContext"]; reason?: SteerQueueReason; unattended?: boolean; peerAsk?: Message["peerAsk"]; origin?: WorkOrigin; capacity?: "person"; sender?: ResolvedSender; trigger?: UsageTrigger; callId?: string; via?: "call"; reaction?: string; fromApp?: Message["fromApp"] } = {},
 ): QueuedSteer {
   const id = newId();
   const entry = queues.get(threadId) ?? { botId, items: [] };
@@ -116,6 +117,7 @@ export function queueSteeredMessage(
     unattended: options.unattended,
     peerAsk: options.peerAsk,
     ...(options.origin ? { origin: options.origin } : {}),
+    ...(options.capacity ? { capacity: options.capacity } : {}),
     sender: options.sender,
     trigger: options.trigger,
     queuedAt: Date.now(),
@@ -178,8 +180,7 @@ export function drainSteeredMessages(
     if (bot.busy) continue;
     let start = 0;
     if (isBlocked?.(entry.botId, threadId, entry.items[0])) {
-      if (!entry.items[0].peerAsk) continue;
-      start = entry.items.findIndex(item => !item.peerAsk && !isBlocked(entry.botId, threadId, item));
+      start = entry.items.findIndex(item => item.capacity === "person" && !isBlocked(entry.botId, threadId, item));
       if (start < 0) continue;
     }
     // isBlocked can re-enter this drain; if a nested drain took this entry, it is stale.
@@ -222,7 +223,7 @@ export function drainSteeredMessages(
       appended.map((message) => message.id),
       // One unattended line makes the turn unattended: a person's words in the group cannot re-attend a bot's own.
       group.some((item) => item.unattended === true),
-      { trigger: group[0].trigger, sender: group[0].sender, peerAsk: group[0].peerAsk, origin: group[0].origin },
+      { trigger: group[0].trigger, sender: group[0].sender, peerAsk: group[0].peerAsk, origin: group[0].origin, capacity: group[0].capacity },
     );
     void Promise.resolve(running).then(
       () => settleChatFollowups(ids, null),
@@ -236,7 +237,7 @@ function coalesceIdentity(item: QueueEntry["items"][number]): string {
   if (item.peerAsk?.incident) return "incident";
   if (item.peerAsk) return `peer:${item.peerAsk.botId}:${item.unattended === true ? "unattended" : "attended"}:${JSON.stringify(item.origin ?? null)}`;
   if (item.unattended === true) return "unattended";
-  const person = item.sender ? `person:${item.sender.id ?? item.sender.name}` : "person:local";
+  const person = `${item.capacity ?? "ordinary"}:${item.sender ? `person:${item.sender.id ?? item.sender.name}` : "person:local"}`;
   return item.via === "call" ? `call:${item.callId ?? ""}|${person}` : person;
 }
 

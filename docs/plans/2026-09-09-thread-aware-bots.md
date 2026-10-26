@@ -18,8 +18,8 @@ either thing up front.
 ## Where the code is today (main 922715f, 0.1.69)
 
 - **Threads exist and run independently.** #981 made Tasks the user-facing
-  Threads: one bot runs up to three direct threads at once (Settings →
-  General → Parallel threads, 1–10), each with its own model, approval
+  Threads: one bot defaults to sixteen direct threads at once (Settings →
+  General → Parallel threads, 1–16), each with its own model, approval
   preference, unread state, working directory and Stop. Extra messages queue
   above the composer until a slot frees. `docs/plans/2026-09-09-independent-threads.md`.
 - **Only a person can open one.** `POST /api/bots/:id/tasks` (server/index.ts

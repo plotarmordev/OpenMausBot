@@ -108,6 +108,7 @@ async function fixture() {
     startTurn,
     threadBusy: () => false,
     botAtThreadCapacity: () => false,
+    botMainThread: (botId: string) => store.bot(botId)?.threadId,
     parksBehindCoordination: () => false,
     activeGroupTurnForBot: () => null,
     cloudThreadRefusal: () => null,
