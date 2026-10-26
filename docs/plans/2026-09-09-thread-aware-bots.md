@@ -30,8 +30,8 @@ either thing up front.
   reads `store.bot(toBotId)?.threadId` (server/index.ts ~3816) and `ask_bot`
   dispatches to the same. Ten delegations to one bot are ten turns queued
   behind each other in whichever thread the person happens to be looking at,
-  interleaved with their own conversation. The three-slot concurrency that
-  #981 built is never used by bot-to-bot work.
+  interleaved with their own conversation. The configurable thread concurrency
+  is never used by bot-to-bot work.
 - **The delegation ledger is per delegation, not per thread.** `check_delegation`
   and `wait_delegation` key on the delegation's task id; a delegating bot can
   ask about one hand-off but cannot list "the QA threads I opened yesterday"

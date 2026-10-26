@@ -7453,7 +7453,7 @@ function drainQueuedSendsNow() {
       const callbacks = queuedRecoveryCallbacks.get(queueId);
       const current = store.projectBotForTask(botId, threadId);
       const checked = current && checkedTaskModelSwitch(current, recovery.selection, false, false, true);
-      const stale = !current || !store.taskByThread(botId, threadId)?.cwd ||
+      const stale = cfg.automaticRecovery?.enabled !== true || !current || !store.taskByThread(botId, threadId)?.cwd ||
         directRequestOwners.get(threadId)?.stopped ||
         store.activePath(threadId).findLast(m => m.role === "user" && m.kind === "text")?.id !== recovery.recoveryUserMessageId ||
         JSON.stringify(current.modelSelection) !== JSON.stringify(recovery.from) ||
@@ -16106,7 +16106,9 @@ for (const row of chatFollowups()) {
   if (!owned) { settleChatFollowups([row.id], "cancelled"); continue; }
   settleChatFollowups([row.id], "interrupted");
   const messages = store.messagesFor(row.threadId);
-  const recovered = messages.find((message) => message.queueId === row.id && message.role === "user") ?? store.appendMessage(row.threadId, {
+  const recovered = row.payload.recovery
+    ? messages.find((message) => message.id === row.payload.recovery?.recoveryUserMessageId && message.role === "user")
+    : messages.find((message) => message.queueId === row.id && message.role === "user") ?? store.appendMessage(row.threadId, {
     role: "user", kind: "text", text: row.payload.text, replyToId: row.payload.replyToId,
     sendId: row.payload.sendId, queueId: row.id, sender: row.payload.sender,
     ...(row.kind === "channel" ? { channelMode: row.payload.mode, via: row.payload.via } : {}),
@@ -16115,7 +16117,7 @@ for (const row of chatFollowups()) {
   const recoveredTask = row.kind !== "channel" ? store.taskByThread(row.ownerId, row.threadId) : undefined;
   const order = store.activePath(row.threadId).filter(isContextMessage).map((m) => m.id);
   for (const [instanceId, state] of Object.entries(recoveredTask?.handedMessages ?? {})) {
-    if (state.session !== undefined) store.setHandedMessages(row.ownerId, row.threadId, instanceId, recordHanded(state, order, [recovered.id]));
+    if (recovered && state.session !== undefined) store.setHandedMessages(row.ownerId, row.threadId, instanceId, recordHanded(state, order, [recovered.id]));
   }
   if (!messages.some((message) => message.queueId === row.id && message.kind === "activity")) {
     store.appendMessage(row.threadId, {

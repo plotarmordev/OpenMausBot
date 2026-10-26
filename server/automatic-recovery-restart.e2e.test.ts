@@ -2,6 +2,7 @@ import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { setTimeout as delay } from "node:timers/promises";
+import { DatabaseSync } from "node:sqlite";
 import { expect, it } from "vitest";
 import { launchRestartableServer } from "./testing/restartable-server.ts";
 import { readHandoffs } from "./testing/handoff-rows.ts";
@@ -70,6 +71,12 @@ it.each(["disabled", "dispatching", "pending"] as const)("settles %s recovery wi
     writeFileSync(failureGate, "");
     const queued = async () => (await state()).botQueuedMessages[threadId] ?? [];
     await expect.poll(async () => (await queued()).length, { timeout: 20_000 }).toBe(1);
+    const journal = () => {
+      const db = new DatabaseSync(join(dataDir, "messages.db"), { readOnly: true });
+      try { return db.prepare("SELECT id, status FROM chat_followups WHERE thread_id = ?").all(threadId); }
+      finally { db.close(); }
+    };
+    expect(journal()).toMatchObject([{ status: "pending" }]);
     expect(lines(prompts)).toHaveLength(0);
     expect((await current()).modelSelection).toEqual(primary);
     const messages = async () => (await api("GET", `/api/threads/${threadId}/messages?limit=100`)).messages;
@@ -83,8 +90,10 @@ it.each(["disabled", "dispatching", "pending"] as const)("settles %s recovery wi
       if (mode === "dispatching") {
         writeFileSync(holderGate, "");
         await expect.poll(() => lines(prompts).length, { timeout: 20_000 }).toBe(1);
+        expect(journal()).toMatchObject([{ status: "dispatching" }]);
       }
       await server.stop();
+      expect(journal()).toMatchObject([{ status: mode }]);
       await server.start();
       writeFileSync(holderGate, "");
       if (mode === "pending") await expect.poll(() => lines(prompts).length, { timeout: 20_000 }).toBe(1);
@@ -105,6 +114,7 @@ it.each(["disabled", "dispatching", "pending"] as const)("settles %s recovery wi
     }
     if (mode === "dispatching") expect(page.some(message => message.tool?.name?.includes("interrupted"))).toBe(true);
     if (mode === "pending") await expect.poll(async () => (await messages()).some(message => message.turnSucceeded === true), { timeout: 20_000 }).toBe(true);
+    await expect.poll(journal, { timeout: 20_000 }).toEqual([]);
   } finally {
     writeFileSync(failureGate, ""); writeFileSync(holderGate, ""); writeFileSync(backupGate, "");
     await server.close();

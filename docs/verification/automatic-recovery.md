@@ -18,8 +18,15 @@ has no free thread slot. While waiting, the task still shows the failed
 attempt's model. The backup selection and recovery activity are committed only
 after admission; cancelling or superseding the queued recovery does not select
 the backup. A verified person-main recovery retains its immediate capacity
-exemption. Queue dispatch rechecks the original request and model selection,
-including the source selection of each step in an ordered fallback list.
+exemption. Queue dispatch rechecks the global enable flag, original request,
+provider eligibility and model selection, including the source selection of
+each step in an ordered fallback list. Disabling recovery while it waits settles
+the item without selecting the backup or recording a recovery switch.
+
+A pending recovery survives restart and dispatches once when admitted. A recovery
+already dispatching at shutdown is interrupted, not replayed: restart retains
+the original user line and adds an interruption notice without synthesizing
+another user message.
 
 Direct bot threads, Chief and direct coordinated work use this path. Channels
 and drivers without the startup-proof contract do not. Credential-card
@@ -39,6 +46,7 @@ runner changes require a manual choice. Backup provider charges may apply.
 ```sh
 pnpm exec vitest run server/automatic-recovery.test.ts server/automatic-recovery.e2e.test.ts server/drivers/acp/acp.test.ts server/drivers/retry.test.ts server/turn-dispatch-guard.test.ts server/config.test.ts src/components/AutomaticRecoverySettings.test.ts src/state/store.test.ts
 pnpm exec vitest run server/drivers/claude-auth-recovery.test.ts server/drivers/claude.test.ts
+pnpm exec vitest run --no-file-parallelism server/automatic-recovery-restart.e2e.test.ts
 pnpm exec vitest run server/direct-coordination.e2e.test.ts server/guarded-messages-api.test.ts server/acp-recovery.e2e.test.ts --maxWorkers=2
 pnpm typecheck
 pnpm lint
