@@ -10,8 +10,8 @@ import { DATA_DIR, OPENCODE_PROVIDER_ENV } from "../../config.ts";
 import { hostedWorkspaceConfigured } from "../../enterprise.ts";
 import { decodeInjectId, hostApiKey, localHost, mergeLocalInject } from "../local-inject.ts";
 import { createAcpDriver, type AccountErrorCode, type AcpSupport } from "./core.ts";
-import { offeredModels } from "./config-options.ts";
-import type { ModelCatalog, ProviderErrorCode } from "../../contracts.ts";
+import { acpModelOption, acpVariantOption, offeredModels } from "./config-options.ts";
+import type { ModelCatalog, ModelVariantOption, ProviderErrorCode } from "../../contracts.ts";
 import { titleCaseModelId } from "../../contracts.ts";
 import { execCli, killCliTree, spawnCli } from "../../procs.ts";
 
@@ -23,6 +23,7 @@ const freeModels = new Set<string>();
 const paidModels = new Set<string>();
 
 const DISCOVERY_TIMEOUT_MS = 20_000;
+const EFFORT_SURVEY_MS = 8_000;
 const DISCOVERY_PROBE_TTL_MS = 30_000;
 const discoveryProbeCache = new Map<string, { expiresAt: number; result: Promise<boolean> }>();
 
@@ -258,13 +259,57 @@ function discoveryDirectory(): Promise<string> {
   return discoveryFolder;
 }
 
+const UNANSWERED = Symbol("unanswered");
+
+function answerWithin(answer: Promise<unknown>, ms: number): Promise<unknown> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  return Promise.race([
+    answer.catch(() => null),
+    new Promise((resolve) => {
+      timer = setTimeout(() => resolve(UNANSWERED), ms);
+    }),
+  ]).finally(() => clearTimeout(timer));
+}
+
+export interface OpenCodeSessionProbe {
+  session: unknown;
+  /** Each surveyed model's ACP effort choices; an empty list means it has none. */
+  efforts: Map<string, ModelVariantOption[]>;
+}
+
+/** OpenCode (1.18.27, 1.19.4, 2.1.4) names a model's efforts only in the session's `effort` option once that
+ * model is selected, and OpenCode 2.1.4 answers overlapping selections with another model's options. */
+export async function surveyOpenCodeEfforts(
+  request: (method: string, params: unknown) => Promise<unknown>,
+  session: unknown,
+  budgetMs = EFFORT_SURVEY_MS,
+): Promise<Map<string, ModelVariantOption[]>> {
+  const efforts = new Map<string, ModelVariantOption[]>();
+  const sessionId = (session as { sessionId?: unknown } | null)?.sessionId;
+  if (typeof sessionId !== "string") return efforts;
+  const deadline = Date.now() + budgetMs;
+  for (const id of new Set(offeredModels(session, "model"))) {
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) break;
+    const selected = await answerWithin(
+      request("session/set_config_option", { sessionId, configId: "model", value: id }),
+      remaining,
+    );
+    if (selected === UNANSWERED) break;
+    if (acpModelOption(selected, "model")?.currentValue !== id) continue;
+    efforts.set(id, acpVariantOption(selected)?.options ?? []);
+  }
+  return efforts;
+}
+
 export async function probeOpenCodeSession(
   cli: string,
   environment: Record<string, string | undefined>,
   folder?: string,
   timeoutMs = DISCOVERY_TIMEOUT_MS,
-): Promise<unknown> {
+): Promise<OpenCodeSessionProbe> {
   const cwd = folder ?? await discoveryDirectory();
+  const deadline = Date.now() + timeoutMs;
   return new Promise((resolve, reject) => {
     let child: ReturnType<typeof spawnCli>;
     try {
@@ -274,6 +319,7 @@ export async function probeOpenCodeSession(
       return;
     }
     let settled = false;
+    let listed: OpenCodeSessionProbe | undefined;
     let buffer = "";
     let nextId = 0;
     const pending = new Map<number, { resolve: (value: unknown) => void; reject: (error: Error) => void }>();
@@ -282,7 +328,7 @@ export async function probeOpenCodeSession(
         child.stdin.write(`${JSON.stringify(message)}\n`);
       } catch {}
     };
-    const finish = (error: Error | null, value?: unknown) => {
+    const finish = (error: Error | null, value?: OpenCodeSessionProbe) => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
@@ -290,8 +336,11 @@ export async function probeOpenCodeSession(
         child.stdin.end();
       } catch {}
       void killCliTree(child);
-      if (error) reject(error);
-      else resolve(value);
+      for (const waiter of pending.values()) waiter.reject(new Error("OpenCode closed"));
+      pending.clear();
+      const result = value ?? listed;
+      if (result) resolve(result);
+      else reject(error ?? new Error("OpenCode did not list its models"));
     };
     const timer = setTimeout(
       () => finish(Object.assign(new Error("OpenCode did not list its models in time"), { timedOut: true })),
@@ -330,6 +379,10 @@ export async function probeOpenCodeSession(
       }
     });
     const request = (method: string, params: unknown) => new Promise<unknown>((resolveRequest, rejectRequest) => {
+      if (settled) {
+        rejectRequest(new Error("OpenCode closed"));
+        return;
+      }
       const id = ++nextId;
       pending.set(id, { resolve: resolveRequest, reject: rejectRequest });
       write({ jsonrpc: "2.0", id, method, params });
@@ -340,9 +393,22 @@ export async function probeOpenCodeSession(
         clientInfo: { name: "openmausbot", version: "0.0.0" },
         clientCapabilities: { fs: { readTextFile: false, writeTextFile: false }, terminal: false },
       });
-      return request("session/new", { cwd, mcpServers: [] });
+      const session = await request("session/new", { cwd, mcpServers: [] });
+      listed = { session, efforts: new Map() };
+      const budget = Math.min(EFFORT_SURVEY_MS, deadline - Date.now() - 1_000);
+      return { session, efforts: await surveyOpenCodeEfforts(request, session, budget) };
     })().then((result) => finish(null, result), (error: Error) => finish(error));
   });
+}
+
+/** The session's own effort choices win over `models --verbose`: they are what set_config_option accepts. */
+function withEfforts(
+  option: ModelCatalog["options"][number],
+  efforts: ModelVariantOption[] | undefined,
+): ModelCatalog["options"][number] {
+  if (!efforts) return option;
+  const { variants: _verbose, ...rest } = option;
+  return efforts.length ? { ...rest, variants: efforts } : rest;
 }
 
 /** `models --verbose` is OpenCode 1 only (2 rejects the flag). Plain `opencode models` on 2 answers from a
@@ -362,11 +428,15 @@ export async function discoverOpenCodeModels(
   if (retry(verbose)) [verbose] = await Promise.allSettled([readMetadata()]);
   const metadata = verbose.status === "fulfilled" ? verbose.value : null;
   if (metadata) rememberPrices(metadata);
-  const live = session.status === "fulfilled" ? catalogFromOpenCodeSession(session.value) : null;
+  const probe = session.status === "fulfilled" ? session.value : null;
+  const live = probe ? catalogFromOpenCodeSession(probe.session) : null;
   let catalog: ModelCatalog | null = null;
-  if (live) {
+  if (probe && live) {
     const details = new Map((metadata?.options ?? []).map((option) => [option.id, option]));
-    const options = live.options.map((option) => ({ ...option, ...details.get(option.id), id: option.id }));
+    const options = live.options.map((option) => withEfforts(
+      { ...option, ...details.get(option.id), id: option.id },
+      probe.efforts.get(option.id),
+    ));
     catalog = { default: preferredOpenCodeModel(options.map((option) => option.id), live.current), options };
   } else if (metadata?.options.length) {
     catalog = { default: preferredOpenCodeModel(metadata.options.map((option) => option.id)), options: metadata.options };

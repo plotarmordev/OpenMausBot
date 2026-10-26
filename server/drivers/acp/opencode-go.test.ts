@@ -22,6 +22,7 @@ import {
   preferredOpenCodeModel,
   resetOpenCodeModelCache,
   setOpenCodeProviderKeyPolicy,
+  surveyOpenCodeEfforts,
 } from "./opencode-go.ts";
 import { ATTACHMENTS_DIR } from "../../attachments.ts";
 import { cloudHomeConfigured } from "../../cloud-home.ts";
@@ -573,10 +574,147 @@ describe("OpenCode catalog discovery from the ACP session", () => {
     }
   });
 
+  const efforts = (ids: string[]) => ({ currentValue: "default", options: ids.map((value) => ({ value, name: value === "xhigh" ? "Xhigh" : value })) });
+
+  it("offers each model's efforts on OpenCode 2, where only its ACP session names them", async () => {
+    const scratch = mkdtempSync(join(tmpdir(), "omb-opencode-discover-v2-efforts-"));
+    try {
+      const found = await discoverOpenCodeModels({
+        ...process.env, HOME: scratch, FAKE_ACP_MODELS_LIST: "v2",
+        FAKE_ACP_MODELS: "opencode/big-pickle,github-copilot/gpt-5.3-codex,github-copilot/claude-sonnet-4.6,github-copilot/gemini-3.8-flash",
+        FAKE_ACP_VARIANTS: JSON.stringify({
+          "github-copilot/gpt-5.3-codex": efforts(["low", "medium", "high", "xhigh", "default"]),
+          "github-copilot/claude-sonnet-4.6": efforts(["low", "medium", "high", "default"]),
+        }),
+      }, FAKE_CLI);
+      const byId = new Map(found.options.map((option) => [option.id, option]));
+      expect(byId.get("github-copilot/gpt-5.3-codex")?.variants).toEqual([
+        { id: "low", label: "low" }, { id: "medium", label: "medium" }, { id: "high", label: "high" },
+        { id: "xhigh", label: "Xhigh" }, { id: "default", label: "default" },
+      ]);
+      expect(byId.get("github-copilot/claude-sonnet-4.6")?.variants?.map((variant) => variant.id)).toEqual(["low", "medium", "high", "default"]);
+      expect(byId.get("github-copilot/gemini-3.8-flash")).not.toHaveProperty("variants");
+      expect(byId.get("opencode/big-pickle")).not.toHaveProperty("variants");
+    } finally {
+      await removeTempDir(scratch);
+    }
+  });
+
+  it("keeps the model list when OpenCode stops while its efforts are being read", async () => {
+    const scratch = mkdtempSync(join(tmpdir(), "omb-opencode-discover-v2-exit-"));
+    try {
+      const found = await discoverOpenCodeModels({
+        ...process.env, HOME: scratch, FAKE_ACP_MODELS_LIST: "v2",
+        FAKE_ACP_MODELS: "opencode/big-pickle,github-copilot/gpt-5.3-codex,github-copilot/gemini-3.8-flash",
+        FAKE_ACP_EXIT_ON_MODEL: "github-copilot/gpt-5.3-codex",
+      }, FAKE_CLI);
+      expect(found.options.map((option) => option.id)).toEqual([
+        "opencode/big-pickle", "github-copilot/gpt-5.3-codex", "github-copilot/gemini-3.8-flash",
+      ]);
+    } finally {
+      await removeTempDir(scratch);
+    }
+  });
+
+  it("keeps OpenCode 1's metadata beside the efforts its session names", async () => {
+    const scratch = mkdtempSync(join(tmpdir(), "omb-opencode-discover-v1-efforts-"));
+    try {
+      const found = await discoverOpenCodeModels({
+        ...process.env, HOME: scratch, FAKE_ACP_MODELS: "opencode/big-pickle,github-copilot/gpt-5.3-codex",
+        FAKE_ACP_VARIANTS: JSON.stringify({ "github-copilot/gpt-5.3-codex": efforts(["low", "high"]) }),
+      }, FAKE_CLI);
+      expect(found.options[1]).toEqual({
+        id: "github-copilot/gpt-5.3-codex", label: expect.any(String), contextWindow: 200_000,
+        variants: [{ id: "low", label: "low" }, { id: "high", label: "high" }],
+      });
+    } finally {
+      await removeTempDir(scratch);
+    }
+  });
+
   it("offers nothing rather than an invented id when OpenCode cannot answer", async () => {
     await expect(discoverOpenCodeModels({ ...process.env }, join(tmpdir(), "no-such-opencode-binary"))).resolves.toEqual({
       default: "", options: [],
     });
+  });
+});
+
+describe("OpenCode effort survey", () => {
+  const session = (ids: string[]) => ({ sessionId: "ses_probe", configOptions: [
+    { id: "model", type: "select", currentValue: ids[0], options: ids.map((value) => ({ value, name: value })) },
+  ] });
+  const selected = (model: string, efforts?: string[]) => ({ configOptions: [
+    { id: "model", type: "select", currentValue: model, options: [] },
+    ...(efforts ? [{ id: "effort", category: "thought_level", type: "select", currentValue: "default",
+      options: efforts.map((value) => ({ value, name: value.toUpperCase() })) }] : []),
+  ] });
+
+  it("selects one model at a time and records the efforts the session then names", async () => {
+    let inFlight = 0;
+    let most = 0;
+    const requests: unknown[] = [];
+    const found = await surveyOpenCodeEfforts(async (method, params) => {
+      requests.push({ method, params });
+      most = Math.max(most, ++inFlight);
+      await new Promise((resolve) => setTimeout(resolve, 1));
+      inFlight--;
+      const value = (params as { value: string }).value;
+      return selected(value, value === "github-copilot/gpt-5.3-codex" ? ["low", "high", "default"] : undefined);
+    }, session(["opencode/big-pickle", "github-copilot/gpt-5.3-codex"]));
+    expect(most).toBe(1);
+    expect(requests).toEqual([
+      { method: "session/set_config_option", params: { sessionId: "ses_probe", configId: "model", value: "opencode/big-pickle" } },
+      { method: "session/set_config_option", params: { sessionId: "ses_probe", configId: "model", value: "github-copilot/gpt-5.3-codex" } },
+    ]);
+    expect(found).toEqual(new Map([
+      ["opencode/big-pickle", []],
+      ["github-copilot/gpt-5.3-codex", [{ id: "low", label: "LOW" }, { id: "high", label: "HIGH" }, { id: "default", label: "DEFAULT" }]],
+    ]));
+  });
+
+  it("leaves out a model the answer is not about, or that OpenCode refused", async () => {
+    const found = await surveyOpenCodeEfforts(async (_method, params) => {
+      const value = (params as { value: string }).value;
+      if (value === "openrouter/gone") throw new Error("Invalid params: model not found");
+      return selected(value === "github-copilot/claude-sonnet-4.6" ? "github-copilot/gpt-5.3-codex" : value, ["low"]);
+    }, session(["openrouter/gone", "github-copilot/claude-sonnet-4.6", "github-copilot/gpt-5.3-codex"]));
+    expect([...found.keys()]).toEqual(["github-copilot/gpt-5.3-codex"]);
+  });
+
+  it("stops at its time budget with what it has, even when OpenCode never answers", async () => {
+    const asked: string[] = [];
+    const started = Date.now();
+    const found = await surveyOpenCodeEfforts(async (_method, params) => {
+      const value = (params as { value: string }).value;
+      asked.push(value);
+      if (value === "opencode/stuck") return new Promise(() => {});
+      return selected(value, ["high"]);
+    }, session(["opencode/quick", "opencode/stuck", "opencode/never-asked"]), 200);
+    expect(Date.now() - started).toBeLessThan(2_000);
+    expect(asked).toEqual(["opencode/quick", "opencode/stuck"]);
+    expect([...found.keys()]).toEqual(["opencode/quick"]);
+  });
+
+  it("asks nothing more once the budget is spent, however fast OpenCode answers", async () => {
+    const blockFor = (ms: number) => {
+      const until = Date.now() + ms;
+      while (Date.now() < until);
+    };
+    const asked: string[] = [];
+    const found = await surveyOpenCodeEfforts((_method, params) => {
+      const value = (params as { value: string }).value;
+      asked.push(value);
+      if (value === "opencode/slow") blockFor(120);
+      return Promise.resolve(selected(value, ["high"]));
+    }, session(["opencode/slow", "opencode/next"]), 100);
+    expect(asked).toEqual(["opencode/slow"]);
+    expect([...found.keys()]).toEqual(["opencode/slow"]);
+  });
+
+  it("asks nothing without a session id", async () => {
+    const request = vi.fn();
+    expect(await surveyOpenCodeEfforts(request, { configOptions: session(["opencode/a"]).configOptions })).toEqual(new Map());
+    expect(request).not.toHaveBeenCalled();
   });
 });
 
@@ -986,6 +1124,17 @@ describe("OpenCode session variants", () => {
     expect(done).toMatchObject({ ok: true, threadId: "resumed-thread" });
     expect(f.calls().slice(before).map((entry) => entry.params)).toEqual([{ sessionId: "native-resumed", configId: "effort", value: "high" }]);
     expect(events.filter((event) => event.type === "session.model-variants").every((event) => event.threadId === "resumed-thread")).toBe(true);
+  });
+
+  it("sends a new effort to the same conversation's session on its next turn", async () => {
+    const f = await fixture({ [model]: variantConfig(["low", "high", "default"], "default") });
+    for (const variant of ["high", "low", "default"]) {
+      expect((await f.run({ variant })).done).toMatchObject({ ok: true });
+      expect(JSON.parse(readFileSync(`${f.dump}.selection.json`, "utf8"))).toMatchObject({ sessionId: "fake-acp-session", variant });
+    }
+    expect(f.calls().map((entry) => entry.params)).toEqual(["high", "low", "default"].map((value) => (
+      { sessionId: "fake-acp-session", configId: "effort", value }
+    )));
   });
 
   it.each(["FAKE_ACP_VARIANT_STICKS", "FAKE_ACP_EMPTY_VARIANT_ACK"])("requires confirmation when %s", async (flag) => {

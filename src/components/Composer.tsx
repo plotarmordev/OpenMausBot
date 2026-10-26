@@ -33,7 +33,7 @@ import { MentionMenu, type MentionChoice } from "./MentionMenu";
 import { SlashCommandMenu } from "./SlashCommandMenu";
 import { MentionTextarea } from "./MentionTextarea";
 import { ComposerAttachments, pathForFile } from "./ComposerAttachments";
-import { PointedChips } from "./app/PointedChips";
+import { PointedChips } from "./app/PointedChips"; import { SetupRequestChip, setupRequestPlaceholder } from "./SetupOffer";
 import { takePointedChips } from "@/lib/pointed-chips";
 import { splitTranscriptCitations, type CitationAttachment } from "@/lib/citations";
 import { LocalComputerAutoWarning } from "./LocalComputerAutoWarning";
@@ -758,7 +758,7 @@ export function Composer({
             />
           </div>
         )}
-        {!group && <PointedChips threadId={threadId} />}
+        {!group && <PointedChips threadId={threadId} />}{!group && bot && <SetupRequestChip bot={bot} threadId={threadId} />}
         <ComposerAttachments
           items={attachments}
           onAdd={addAttachments}
@@ -964,7 +964,7 @@ export function Composer({
                         name: group.name,
                         hint: groupComposerHint(group, members ?? [], { jevOn: jevRoomRoutingOn(state.config) }),
                       })
-                  : t(channelMode === "goal" ? "composer.placeholder.goalSolo" : "composer.placeholder.bot", { name: bot?.name ?? "" })
+                  : setupRequestPlaceholder(bot, threadId) ?? t(channelMode === "goal" ? "composer.placeholder.goalSolo" : "composer.placeholder.bot", { name: bot?.name ?? "" })
           }
           aria-label={t("composer.placeholder.bot", { name: group ? group.name : (bot?.name ?? "") })}
             className={cn("block max-h-[9rem] w-full resize-none overflow-y-auto bg-transparent px-1 py-1 text-[15px] leading-6 placeholder:text-ink-secondary focus:outline-none", singleRow ? "min-h-6" : "min-h-14")}

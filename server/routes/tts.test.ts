@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 
 import type { AppConfig } from "../config.ts";
+import { addHeldSecretScrubber } from "../redact.ts";
+import { VOICE_FIRST_BLOCK_MAX_CHARS } from "../tts/speech-text.ts";
 import { PASS } from "./table.ts";
 import { createTtsRoutes } from "./tts.ts";
 
@@ -23,6 +25,20 @@ describe("voice routes", () => {
   it("add a Voice Library voice only with an owner, a voice id and a name made of plain ids", async () => {
     for (const body of [{}, { publicOwnerId: "owner1", voiceId: "../voices", name: "x" }, { publicOwnerId: "owner1", voiceId: "v1", name: " " }]) {
       expect((await call("POST", "/api/tts/voices/add", body)).answers).toEqual([[400, { error: "publicOwnerId, voiceId and name required" }]]);
+    }
+  });
+
+  it("prepare a reply with a short first block, and never a held secret", async () => {
+    const remove = addHeldSecretScrubber((text) => text.replaceAll("correct-horse-battery", "••••••"));
+    try {
+      const text = `I logged in with correct-horse-battery and then ${Array.from({ length: 30 }, (_, i) => `checked item ${i}`).join(", ")}. Done.`;
+      const { answers } = await call("POST", "/api/tts/prepare", { text });
+      const { utterances } = answers[0]![1] as { utterances: string[] };
+      expect(utterances[0]!.length).toBeLessThanOrEqual(VOICE_FIRST_BLOCK_MAX_CHARS);
+      expect(utterances.length).toBeGreaterThan(2);
+      expect(utterances.join(" ")).not.toContain("correct-horse-battery");
+    } finally {
+      remove();
     }
   });
 

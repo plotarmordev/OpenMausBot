@@ -726,7 +726,7 @@ alone.
   thread could carry the other's answers to people who cannot see it. Bots nobody restricted all
   share "everyone", so nothing changes until an admin restricts one. A bot a
   Chief creates (directly, or in a reviewed team setup) gets exactly the
-  Chief's audience.
+  Chief's audience, and a copy of the Chief's connected apps.
 - **Who sees everything.** Admin sessions, the owner on this machine, and a
   session-less local service (the Slack worker under `service` trust) see
   every bot. A pairing-code device with no email sees only bots everyone

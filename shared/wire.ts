@@ -191,6 +191,10 @@ export interface WireTask {
   cacheKeepWarm?: CacheKeepWarmStatus;
   /** the folder this task's turns run in, pinned on its first turn. */
   cwd?: string | null;
+  /** Set me up was pressed here (server/setup-request.ts): the person's next line in this conversation runs as a
+   * setup request. Server-owned; a client only shows it. `by`: who pressed, where several people share the place (their
+   * reactor key); only their next line takes it, and only they see its chip. */
+  setupRequest?: { at: number; by?: string };
 }
 
 /** One thread's keep-warm window as a client shows it. Times are epoch ms. */
@@ -468,6 +472,11 @@ export interface WireMessage extends HelperIntroField {
   serverCard?: true;
   /** A setup suggestion the device renders in its own words (server/host/helper-suggestion.ts); `text` is the English. */
   setupSuggestion?: { kind: "helperKey"; answer?: "notNow" };
+  /** A new bot's greeting while it has no role or instructions: clients that know it draw Set me up under the text
+   * (server/setup-request.ts); `text` reads on its own for older ones. Cleared once it is pressed or the person writes. */
+  setupOffer?: true;
+  /** A person's line Set me up turned into a setup request: the bot reads it as `/setup <text>`; the chat shows `text`. */
+  setupRequest?: true;
   /** app rows (kind "app"): bot HTML or an MCP server's UI. `text` is always the readable fallback. */
   app?: AppPayload;
   /** user rows sent by an app's ui/message: the app row that sent them. Every client draws "Sent from <title>". */

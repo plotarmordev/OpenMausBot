@@ -40,6 +40,7 @@
 //   FAKE_ACP_MODELS_LIST=v2  OpenCode 2: `models` answers empty with exit 0, `models --verbose` exits 1
 //   FAKE_ACP_VERBOSE_FAIL_ONCE  marker path: the first `models --verbose` fails, like a new OpenCode home's first run
 //   FAKE_ACP_MODEL_STICKS  set_config_option succeeds but keeps the old model
+//   FAKE_ACP_EXIT_ON_MODEL  the process exits when set_config_option selects this model
 //   FAKE_ACP_VARIANTS  JSON map model -> {id?, currentValue?, options} of ACP select values
 //   FAKE_ACP_CONFIG_UPDATES  JSON [{after, sessionId?, configOptions, replay?}] emitted after the named response
 //   FAKE_ACP_USAGE_ROOT  usage at the prompt result's root, as opencode 1.18.18 sends it
@@ -790,6 +791,7 @@ function handle(msg: any) {
         result(msg.id, process.env.FAKE_ACP_EMPTY_MODE_ACK ? {} : { configOptions: configOptions() });
         break;
       }
+      if (configId === "model" && value === process.env.FAKE_ACP_EXIT_ON_MODEL) process.exit(4);
       if (configId !== "model" || !models.includes(value)) {
         out({
           jsonrpc: "2.0",

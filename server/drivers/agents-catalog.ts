@@ -381,7 +381,7 @@ const TOOL_DEFINITIONS = [
   {
     name: "create_bot",
     description:
-      "Chief of Staff only: add a specialist to your section now; the person can undo it. instructions become its soul. Omit modelSelection for the workspace default, or use exact IDs from list_team_setup. It starts with connected apps off, at the default access level. Assign work with coordinate_bots. At most four per turn.",
+      "Chief of Staff only: add a specialist to your section now; the person can undo it. instructions become its soul. Omit modelSelection for the workspace default, or use exact IDs from list_team_setup. It starts with your connected apps, at the default access level. Assign work with coordinate_bots. At most four per turn.",
     inputSchema: {
       type: "object",
       properties: {

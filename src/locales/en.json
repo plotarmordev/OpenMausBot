@@ -6325,5 +6325,9 @@
   "usageMeter.err.unavailable": "Your plan can't be changed from the app right now. Nothing was charged. Open your Plan page to see your options.",
   "usageMeter.err.priceChanged": "The price changed since you looked, so nothing was charged. Choose Upgrade to see the new price.",
   "usageMeter.err.rateLimited": "Too many tries. Wait a few minutes, then try again.",
-  "usageMeter.err.failed": "We couldn't change your plan. Nothing was charged. Try again in a minute."
+  "usageMeter.err.failed": "We couldn't change your plan. Nothing was charged. Try again in a minute.",
+  "chat.setupOffer.button": "Set me up",
+  "composer.setupRequest.placeholder": "Tell {name} what you'd like help with",
+  "composer.setupRequest.waiting": "{name} is ready to be set up",
+  "composer.setupRequest.cancel": "Stop setting up {name}"
 }
