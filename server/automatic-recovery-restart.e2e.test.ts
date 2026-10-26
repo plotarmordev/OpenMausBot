@@ -1,0 +1,113 @@
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { setTimeout as delay } from "node:timers/promises";
+import { expect, it } from "vitest";
+import { launchRestartableServer } from "./testing/restartable-server.ts";
+import { readHandoffs } from "./testing/handoff-rows.ts";
+import type { WireBot, WireTask, WireMessage } from "../shared/wire.ts";
+
+type FixtureResponse = { bots: WireBot[]; bot: WireBot; task: WireTask; routine: { id: string }; botQueuedMessages: Record<string, unknown[]>; messages: WireMessage[] };
+
+const primary = { instanceId: "opencodeGo", model: "fixture/recovery" };
+const backup = { instanceId: "claude", model: "claude-sonnet-5" };
+const lines = (path: string): Array<{ method?: string }> => existsSync(path) ? readFileSync(path, "utf8").split("\n").filter(Boolean).map(line => JSON.parse(line)) : [];
+
+it.each(["disabled", "dispatching", "pending"] as const)("settles %s recovery without replaying the original line", async mode => {
+  const server = await launchRestartableServer();
+  const { dataDir } = server;
+  const failure = join(dataDir, "failure.json");
+  const failureGate = join(dataDir, "failure-release");
+  const holderGate = join(dataDir, "holder-release");
+  const backupGate = join(dataDir, "backup-release");
+  const prompts = join(dataDir, "backup.jsonl");
+  const rpc = join(dataDir, "primary.jsonl");
+  const api = async (method: string, path: string, body?: unknown): Promise<FixtureResponse> => {
+    const response = await fetch(server.url + path, { method, headers: { "content-type": "application/json", origin: server.url },
+      ...(body === undefined ? {} : { body: JSON.stringify(body) }), signal: AbortSignal.timeout(30_000) });
+    const result = await response.json();
+    expect(response.ok, JSON.stringify(result)).toBe(true);
+    return result;
+  };
+  try {
+    await server.stop();
+    const configPath = join(dataDir, "config.json");
+    const config = JSON.parse(readFileSync(configPath, "utf8"));
+    config.instances.opencodeGo = { driver: "opencodeGo", displayName: "Primary fixture",
+      config: { cli: fileURLToPath(new URL("./testing/fake-acp-cli.ts", import.meta.url)) },
+      environment: { FAKE_ACP_MODELS: primary.model, FAKE_ACP_RPC_APPEND_FILE: rpc,
+        FAKE_ACP_RPC_FAILURE_FILE: failure, FAKE_ACP_RPC_FAILURE_METHOD: "initialize", FAKE_ACP_RPC_FAILURE_GATE: failureGate } };
+    config.automaticRecovery = { enabled: true, backup };
+    config.threads = { maxConcurrentPerBot: 2 };
+    writeFileSync(configPath, JSON.stringify(config));
+    await server.start();
+    const { bots } = await api("GET", "/api/bots");
+    const chief = bots.find(bot => bot.chiefOfStaff);
+    if (chief) await api("PATCH", `/api/bots/${chief.id}`, { chiefOfStaff: false });
+    const { bot } = await api("POST", "/api/bots", { name: "Recovery restart" });
+    const { task } = await api("POST", `/api/bots/${bot.id}/tasks`, { title: "Ordinary recovery" });
+    const threadId = task.threadId;
+    const wrapper = join(dataDir, "recovery-claude.mjs");
+    writeFileSync(wrapper, ["#!/usr/bin/env node", 'import { basename } from "node:path";',
+      'process.env.FAKE_CLAUDE_MODE = "slow";', 'process.env.FAKE_CLAUDE_TOOL_CALLS = "[]";',
+      `if (basename(process.cwd()) === ${JSON.stringify(threadId)}) {`,
+      `process.env.FAKE_CLAUDE_SLOW_FINISH_GATE = ${JSON.stringify(backupGate)};`,
+      `process.env.FAKE_CLAUDE_PROMPTS = ${JSON.stringify(prompts)};`, "} else {",
+      `process.env.FAKE_CLAUDE_SLOW_FINISH_GATE = ${JSON.stringify(holderGate)};`, "delete process.env.FAKE_CLAUDE_PROMPTS;", "}",
+      "// The fake CLI captures environment at module initialization.",
+      `await import(${JSON.stringify(new URL("./testing/fake-claude-cli.ts", import.meta.url).href)});`].join("\n"), { mode: 0o700 });
+    await api("PATCH", "/api/instances/claude", { cli: wrapper });
+    await api("PATCH", `/api/bots/${bot.id}/tasks/${threadId}`, { modelSelection: primary });
+    writeFileSync(failure, JSON.stringify({ code: -32603, message: "Internal error", data: { details: "Upstream connection timed out" } }));
+    await api("POST", `/api/bots/${bot.id}/messages`, { threadId, text: "RECOVER_ORIGINAL_LINE" });
+    await expect.poll(() => lines(rpc).some(call => call.method === "initialize"), { timeout: 20_000 }).toBe(true);
+    const { routine } = await api("POST", "/api/routines", { name: "Capacity holder", prompt: "Hold the slot.", target: "bot", botId: bot.id, runOn: "maus", enabled: true, schedule: { type: "daily", time: "23:00" } });
+    await api("POST", `/api/routines/${routine.id}/run`);
+    const state = () => api("GET", "/api/bots?messages=0");
+    const current = async () => (await state()).bots.find(entry => entry.id === bot.id)!.tasks.find(entry => entry.threadId === threadId)!;
+    await expect.poll(async () => (await state()).bots.find(entry => entry.id === bot.id)!.tasks.some(entry => entry.threadId !== threadId && entry.busy), { timeout: 20_000 }).toBe(true);
+    await api("PATCH", "/api/config", { threads: { maxConcurrentPerBot: 1 } });
+    writeFileSync(failureGate, "");
+    const queued = async () => (await state()).botQueuedMessages[threadId] ?? [];
+    await expect.poll(async () => (await queued()).length, { timeout: 20_000 }).toBe(1);
+    expect(lines(prompts)).toHaveLength(0);
+    expect((await current()).modelSelection).toEqual(primary);
+    const messages = async () => (await api("GET", `/api/threads/${threadId}/messages?limit=100`)).messages;
+    expect((await messages()).filter(message => message.tool?.name?.startsWith("recovery:"))).toHaveLength(0);
+    const failovers = () => existsSync(join(dataDir, "limit-failovers.json")) ? readFileSync(join(dataDir, "limit-failovers.json"), "utf8") : null;
+    const beforeFailovers = failovers();
+    if (mode === "disabled") {
+      await api("PATCH", "/api/config", { automaticRecovery: { enabled: false, backup } });
+      writeFileSync(holderGate, "");
+    } else {
+      if (mode === "dispatching") {
+        writeFileSync(holderGate, "");
+        await expect.poll(() => lines(prompts).length, { timeout: 20_000 }).toBe(1);
+      }
+      await server.stop();
+      await server.start();
+      writeFileSync(holderGate, "");
+      if (mode === "pending") await expect.poll(() => lines(prompts).length, { timeout: 20_000 }).toBe(1);
+      writeFileSync(backupGate, "");
+    }
+    await expect.poll(async () => (await queued()).length, { timeout: 20_000 }).toBe(0);
+    await delay(1_000);
+    const page = await messages();
+    const users = page.filter(message => message.role === "user" && message.text === "RECOVER_ORIGINAL_LINE");
+    expect(users).toHaveLength(1);
+    expect(users[0].queueId).toBeUndefined();
+    if (mode === "dispatching") expect(readHandoffs(dataDir).filter(node => node.threadId === threadId && node.status === "source")).toHaveLength(0);
+    expect(lines(prompts)).toHaveLength(mode === "disabled" ? 0 : 1);
+    if (mode === "disabled") {
+      expect((await current()).modelSelection).toEqual(primary);
+      expect(page.filter(message => message.tool?.name?.startsWith("recovery:"))).toHaveLength(0);
+      expect(failovers()).toBe(beforeFailovers);
+    }
+    if (mode === "dispatching") expect(page.some(message => message.tool?.name?.includes("interrupted"))).toBe(true);
+    if (mode === "pending") await expect.poll(async () => (await messages()).some(message => message.turnSucceeded === true), { timeout: 20_000 }).toBe(true);
+  } finally {
+    writeFileSync(failureGate, ""); writeFileSync(holderGate, ""); writeFileSync(backupGate, "");
+    await server.close();
+    console.info(JSON.stringify({ mode, logPath: server.logPath }));
+  }
+}, 90_000);
