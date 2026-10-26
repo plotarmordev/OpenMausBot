@@ -12,6 +12,7 @@ import { MessageSearchWorker } from "./message-search-worker.ts";
 import { searchMessagesInDatabase, type SearchHit } from "./message-search-query.ts";
 import type { Notification, NotificationLogEntry } from "../shared/notification.ts";
 export type { SearchHit } from "./message-search-query.ts";
+import type { QueuedAutomaticRecovery } from "./index.ts";
 
 const DB_FILE = () => join(DATA_DIR, "messages.db");
 /** The rows the Today page reads, and among them the failed tool calls. JSON.stringify escapes every quote inside a
@@ -222,6 +223,7 @@ export interface FollowupPayload {
   trigger?: UsageTrigger;
   origin?: WorkOrigin;
   capacity?: "person";
+  recovery?: QueuedAutomaticRecovery;
   queuedAt?: number;
 }
 export type FollowupStatus = "pending" | "dispatching" | "interrupted" | "cancelled";

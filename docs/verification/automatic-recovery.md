@@ -13,6 +13,14 @@ OMB tries the backup in the same thread with the canonical conversation.
 The thread keeps the backup selection; bot defaults and sibling threads do not
 change. A visible activity line explains the switch.
 
+An ordinary recovery waits in the durable pending-message queue when the bot
+has no free thread slot. While waiting, the task still shows the failed
+attempt's model. The backup selection and recovery activity are committed only
+after admission; cancelling or superseding the queued recovery does not select
+the backup. A verified person-main recovery retains its immediate capacity
+exemption. Queue dispatch rechecks the original request and model selection,
+including the source selection of each step in an ordered fallback list.
+
 Direct bot threads, Chief and direct coordinated work use this path. Channels
 and drivers without the startup-proof contract do not. Credential-card
 continuations are excluded. This is not recovery from an accepted prompt that

@@ -6,6 +6,8 @@ import { expect, it } from "vitest";
 import { launchVerificationServer, runControlOmb, verificationServerEnvironment } from "../scripts/control-omb.ts";
 import { waitForExit } from "./testing/cleanup.ts";
 import { readHandoffs } from "./testing/handoff-rows.ts";
+import type { WireBot, WireTask, WireMessage } from "../shared/wire.ts";
+import { setTimeout as delay } from "node:timers/promises";
 
 const primary = { instanceId: "opencodeGo", model: "fixture/recovery" };
 const backup = { instanceId: "claude", model: "claude-sonnet-5" };
@@ -122,6 +124,88 @@ async function withRecoveryFixture(
     console.info(JSON.stringify({ logPath, evidencePath, fixtureRemoved: !existsSync(dataDir) }));
   }
 }
+
+it.each(["ordinary", "person-main"] as const)("recovers at full capacity for %s without a phantom backup", async (kind) => {
+  await withRecoveryFixture({ gated: true }, async ({ api, control, calls, backupPrompts, dataDir, gateFile, evidence }) => {
+    const { bot } = await control("new-bot", "--name", "Recovery capacity");
+    const threadId = kind === "person-main" ? bot.activeTaskId :
+      (await api("POST", `/api/bots/${bot.id}/tasks`, { title: "Ordinary recovery" })).task.threadId;
+    const holderGate = join(dataDir, "holder-release");
+    const wrapper = join(dataDir, "capacity-recovery-claude.mjs");
+    writeFileSync(wrapper, [
+      "#!/usr/bin/env node",
+      'import { basename } from "node:path";',
+      `if (basename(process.cwd()) !== ${JSON.stringify(threadId)}) {`,
+      'process.env.FAKE_CLAUDE_MODE = "slow";',
+      `process.env.FAKE_CLAUDE_SLOW_FINISH_GATE = ${JSON.stringify(holderGate)};`,
+      'delete process.env.FAKE_CLAUDE_PROMPTS;',
+      "}",
+      "// The fake CLI reads its environment at module initialization.",
+      `await import(${JSON.stringify(new URL("./testing/fake-claude-cli.ts", import.meta.url).href)});`,
+    ].join("\n"), { mode: 0o700 });
+    await api("PATCH", "/api/instances/claude", { cli: wrapper });
+    await api("PATCH", "/api/config", { threads: { maxConcurrentPerBot: kind === "ordinary" ? 2 : 1 } });
+    await api("PATCH", `/api/bots/${bot.id}/tasks/${threadId}`, { modelSelection: primary, approvalMode: "ask" });
+    const state = async () => (await api("GET", "/api/bots?messages=0")).bots.find((entry: WireBot) => entry.id === bot.id);
+    const task = async () => (await state()).tasks.find((entry: WireTask) => entry.threadId === threadId);
+    const send = async () => {
+      if (kind === "ordinary") return api("POST", `/api/bots/${bot.id}/messages`, { threadId, text: "RECOVER_AT_CAPACITY" }, 202);
+      const snapshot = await api("GET", `/api/threads/${threadId}/messages`);
+      return api("POST", `/api/bots/${bot.id}/messages/guarded`, {
+        threadId, text: "RECOVER_AT_CAPACITY", sendId: "person-recovery-capacity",
+        expectedActiveLeafId: snapshot.activeLeafId, expectedApprovalMode: "ask",
+        onBehalfOf: { name: "Capacity person", email: "capacity@example.test" },
+      }, 202);
+    };
+    if (kind === "ordinary") {
+      await send();
+      await expect.poll(() => calls().some(call => call.method === "initialize"), { timeout: 20_000 }).toBe(true);
+    }
+    const { routine } = await api("POST", "/api/routines", {
+      name: "Recovery capacity holder", prompt: "Hold the slot.", target: "bot", botId: bot.id, runOn: "maus", enabled: true,
+      schedule: { type: "daily", time: "23:00" },
+    });
+    try {
+      await api("POST", `/api/routines/${routine.id}/run`);
+      await expect.poll(async () => (await state()).tasks.some((entry: WireTask) => entry.threadId !== threadId && entry.busy), { timeout: 20_000 }).toBe(true);
+      await api("PATCH", "/api/config", { threads: { maxConcurrentPerBot: 1 } });
+      if (kind === "person-main") await send();
+      await expect.poll(() => calls().some(call => call.method === "initialize"), { timeout: 20_000 }).toBe(true);
+      writeFileSync(gateFile, "");
+      await expect.poll(() => calls().some(call => call.method === "initialize.error"), { timeout: 20_000 }).toBe(true);
+      if (kind === "ordinary") {
+        await expect.poll(async () => {
+          const snapshot = await api("GET", "/api/bots?messages=0");
+          const current = snapshot.bots.find((entry: WireBot) => entry.id === bot.id).tasks.find((entry: WireTask) => entry.threadId === threadId);
+          const { messages } = await api("GET", `/api/threads/${threadId}/messages?limit=100`);
+          return { model: current.modelSelection, prompts: backupPrompts().length,
+            queued: snapshot.botQueuedMessages[threadId]?.length ?? 0,
+            failed: messages.some((message: WireMessage) => message.turnSucceeded === false) };
+        }, { timeout: 10_000 }).toEqual({ model: primary, prompts: 0, queued: 1, failed: false });
+        writeFileSync(holderGate, "");
+      }
+      await expect.poll(backupPrompts, { timeout: 20_000 }).toHaveLength(1);
+      await expect.poll(async () => (await api("GET", `/api/threads/${threadId}/messages?limit=100`)).messages
+        .some((message: WireMessage) => message.text === "hello from fake claude" && message.turnSucceeded === true),
+      { timeout: 20_000 }).toBe(true);
+      expect(await task()).toMatchObject({ modelSelection: backup, busy: false });
+      const holderBusy = (await state()).tasks.some((entry: WireTask) => entry.threadId !== threadId && entry.busy);
+      if (kind === "person-main") {
+        expect(holderBusy).toBe(true);
+        expect(existsSync(holderGate)).toBe(false);
+        writeFileSync(holderGate, "");
+      }
+      await expect.poll(async () => (await state()).tasks.some((entry: WireTask) => entry.busy), { timeout: 20_000 }).toBe(false);
+      // The isolated server has its own clock; fake timers cannot advance its queue drains.
+      await delay(1_000);
+      expect(backupPrompts()).toHaveLength(1);
+      evidence.push({ kind, task: await task(), backupPrompts: backupPrompts() });
+    } finally {
+      writeFileSync(holderGate, "");
+      await api("DELETE", `/api/routines/${routine.id}`);
+    }
+  });
+}, 90_000);
 
 it("recovers once on the same thread with its history and permissions, leaving the bot default and sibling unchanged", async () => {
   await withRecoveryFixture({}, async ({ api, control, calls, backupPrompts, backupReceipt, evidence }) => {
