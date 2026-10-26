@@ -320,7 +320,7 @@ test("Stop lending is instant: the Cloud is told, running work is cancelled, and
   home.push({ action: "computer_call", tool_name: "click", arguments: {} });
   await delay(300);
   assert.equal((await readFile(driver.calls, "utf8")).trim(), "drag");
-  assert.deepEqual(summaries.at(-1), { lending: [], busy: null });
+  assert.deepEqual(summaries.at(-1), { lending: [], internetOnly: false, busy: null });
 });
 
 test("quitting the app pauses lending; it never switches it off, even mid-reconnect", async t => {

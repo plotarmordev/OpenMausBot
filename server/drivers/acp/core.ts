@@ -430,12 +430,12 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
           kill.unref?.();
         }
       };
-      // A session that ignores session/cancel goes on working. In a shared process only a confirmed session/close or the
-      // end of the process stops it, and ending the process ends the other sessions' turns too.
-      const endUncancelled = async (threadId: string, session: AcpSession): Promise<void> => {
+      // A session that ignores session/cancel goes on working, and EOF on stdin does not stop it either. Only a confirmed
+      // session/close or the end of its process stops it, and ending a shared process ends the other sessions' turns too.
+      const endUncancelled = async (threadId: string, session: AcpSession): Promise<boolean> => {
         const { host } = session;
         closeSession(threadId, "cancel-timeout");
-        if (host.key === null || (host.links.size && await session.closeConfirmed)) return;
+        if (host.links.size && await session.closeConfirmed) return true;
         for (const link of host.links) {
           const other = sessions.get(link.threadId);
           if (other?.host !== host) continue;
@@ -447,10 +447,10 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             settle(link.threadId, other, false, "exit_before_result");
           }
         }
-        if (!await killCliTree(host.child) && session.current) {
-          emit({ ...base(threadId, session.current.turnId), type: "runtime.error",
-            message: `${support.displayName} ignored Stop and its process could not be ended` });
-        }
+        if (await killCliTree(host.child)) return true;
+        if (session.current) emit({ ...base(threadId, session.current.turnId), type: "runtime.error",
+          message: `${support.displayName} ignored Stop and its process could not be ended` });
+        return false;
       };
       // A shared process holding closed sessions gives their memory back only by exiting: once none of its sessions has
       // run a turn for a while, it ends and each thread's next turn loads its session in a new one.
@@ -1213,7 +1213,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             if (current.interruptTimer) clearTimeout(current.interruptTimer);
             current.interruptTimer = setTimeout(() => {
               state.cancelling = true;
-              void endUncancelled(threadId, session).then(() => settle(threadId, session, true, "cancelled"));
+              void endUncancelled(threadId, session).then((ended) => settle(threadId, session, ended, ended ? "cancelled" : "stop_failed"));
             }, 5_000);
             current.interruptTimer.unref?.();
           } else {

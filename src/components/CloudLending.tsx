@@ -76,6 +76,12 @@ export function lendingLastUsedLine(snapshot: CloudLendingSnapshot | null): stri
   return last ? t("lending.lastUsed", { when: localizedRelativeTime(last.at, activeLocale()) }) : t("lending.neverUsed");
 }
 
+/** "Internet connection: on" once My Cloud's browsing goes through this computer, "connecting" until then. */
+export function lendingInternetKey(state: CloudLendingSnapshot["state"]): LocaleKey | null {
+  if (!state?.enabled || !state.internet) return null;
+  return state.link === "on" ? "lending.internetOn" : state.link === "connecting" ? "lending.internetConnecting" : null;
+}
+
 export function lendingStatusKey(snapshot: CloudLendingSnapshot | null, switchedOn: boolean): LocaleKey | null {
   const state = snapshot?.state;
   if (state?.enabled && state.problem === "access-off") return "lending.status.accessOff";
@@ -152,6 +158,7 @@ export function CloudLending({ bridge, moving = false }: { bridge: CloudLendingB
   if (!snapshot?.available) return null;
   const status = moving && !on && snapshot.state?.stopped?.reason !== "you" ? "lending.status.afterMove" : lendingStatusKey(snapshot, on);
   const updating = enabled && snapshot.state?.link === "unsupported";
+  const internetKey = lendingInternetKey(snapshot.state);
   const lent = enabled && snapshot.state?.connected && !snapshot.state.busy ? lentWhat(snapshot.state.folders, snapshot.state.screen, snapshot.state.internet === true && !updating, snapshot.state.terminal === true) : "";
   const stopped = on ? null : lendingStoppedLine(snapshot.state);
   const lastUsed = lendingLastUsedLine(snapshot);
@@ -165,6 +172,7 @@ export function CloudLending({ bridge, moving = false }: { bridge: CloudLendingB
       <Switch checked={on} disabled={working} aria-label={lendingTitle()} onClick={toggle} />
     </div>
     {status && <p role="status" className={`text-[13px] ${enabled && snapshot.state?.busy ? "font-medium text-ink" : "text-ink-secondary"}`}>{lent ? lendsLine(lent) : t(status)}</p>}
+    {internetKey && <p data-lending-internet={snapshot.state?.link} className="text-[12px] text-ink-secondary">{t(internetKey)}</p>}
     {updating && <p data-lending-internet="unsupported" className="text-[12px] text-ink-secondary">{t("lending.internetUnsupported")}</p>}
     {stopped && <p data-lending-stopped={snapshot.state?.stopped?.reason} className="text-[13px] text-ink-secondary">{stopped}</p>}
     {via && <p data-lending-via="access" className="text-[12px] text-ink-secondary">{via}</p>}

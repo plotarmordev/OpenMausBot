@@ -214,6 +214,7 @@ export function createBrief(deps: BriefDeps) {
         case "connection": return row(item.app, w.reconnecting(item.app), clip(item.text, 140));
         case "place": return row("", w.unreachable, w.chooseAnother);
         case "question": { const bot = deps.store.bot(item.botId)?.name; return row(bot ?? "", w.asked(bot ?? w.aBot), clip(item.text, 140)); }
+        case "message": return row(item.from, w.asked(item.from), clip(item.text, 140));
       }
     });
   }

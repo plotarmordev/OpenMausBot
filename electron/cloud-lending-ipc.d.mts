@@ -15,7 +15,7 @@ export interface PageLending {
 }
 export function pageLending(snapshot: unknown): PageLending;
 export interface LentFolder { id: string; path: string; name: string; write: boolean }
-export function defaultGrant(input: { kept?: { folders?: LentFolder[]; screen?: boolean }; usual: LentFolder[]; projects: LentFolder[]; screenAvailable?: boolean; screenReady?: boolean }): { folders: LentFolder[]; screen: boolean; internet: true };
+export function defaultGrant(input: { kept?: { folders?: LentFolder[]; screen?: boolean; internet?: boolean }; usual: LentFolder[]; projects: LentFolder[]; screenAvailable?: boolean; screenReady?: boolean }): { folders: LentFolder[]; screen: boolean; internet: boolean };
 export function existingFolders<T>(folders: unknown[], validate: (folders: unknown[]) => Promise<T[]>): Promise<T[]>;
 /** A refusal the page says plainly, never with Try again: `lending-refused:<code>` in the IPC error's message. */
 export declare const LENDING_REFUSED: string;

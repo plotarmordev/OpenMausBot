@@ -26,12 +26,15 @@ const CLIENT_CANCEL = [
   /^the\s+user\s+aborted\s+a\s+request\.?$/i,
 ];
 
-/** True when `text` is only a client abort, including the harness wrapper
- * around one (`provider returned a completion error: …`). */
-export function isClientCancellation(text: string): boolean {
+/** The abort sentence when `text` is only a client abort, including the
+ * harness wrapper around one (`provider returned a completion error: …`). */
+export function clientCancellation(text: string): string | null {
   const body = text.trim().replace(HARNESS_PREFIX, "").trim();
-  if (!body) return false;
-  return CLIENT_CANCEL.some((pattern) => pattern.test(body));
+  return body && CLIENT_CANCEL.some((pattern) => pattern.test(body)) ? body : null;
+}
+
+export function isClientCancellation(text: string): boolean {
+  return clientCancellation(text) !== null;
 }
 
 export type AssistantTranscript =

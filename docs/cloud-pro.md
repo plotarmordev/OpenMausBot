@@ -578,12 +578,13 @@ frames the web UI: the desktop app shows it in its own window.
 The Cloud is home: bots and chats live there. The person's Mac or PC is a computer
 the Cloud can borrow while it is awake: its folders, its screen and apps, and its
 home internet connection. The switch reads **Let my bots use this Mac** on a Mac,
-**this PC** on Windows and **this computer** on Linux. Lending is off until the
-person turns it on (or until the move to My Cloud turns it on with the default
-grant below), and it exists only between their own desktop app and their own Cloud
-home. Other users (desktop only, self-hosted, hosted team workspaces) keep
-computer sharing exactly as before: off unless a maintainer sets
-`features.sharedComputers` by hand.
+**this PC** on Windows and **this computer** on Linux. The internet connection is
+lent by default (see "The internet connection by default" below); folders, apps
+and screen and the terminal stay off until the person turns them on (or until the
+move to My Cloud lends the default grant below). Lending exists only between their
+own desktop app and their own Cloud home, never a Team Cloud. Other users (desktop
+only, self-hosted, hosted team workspaces) keep computer sharing exactly as before:
+off unless a maintainer sets `features.sharedComputers` by hand.
 
 ### What the person sees
 
@@ -675,6 +676,39 @@ connection shows **Shares: internet connection, …**, and while it is away
 **While it's away, Instagram, YouTube and Google sign-in open from My Cloud's own
 connection and may turn your bots away.**
 
+**The internet connection by default.** A desktop app signed in to the
+person's own My Cloud lends it this computer's internet connection by itself, on
+macOS, Windows and Linux: no popup, no click, and no OS permission, since it is
+only outbound connections the computer checks itself. Main decides from the
+grant it kept for My Cloud's saved entry (`internetByDefault` in
+`electron/computer-sharing.mjs`), each time the Cloud sign-in changes and at
+startup, and only while the sign-in is verified for that exact machine:
+
+- **No grant yet** (never decided): a new grant with the internet connection
+  only, no folders, no apps and screen, no terminal.
+- **A grant from before the internet connection could be chosen** (no
+  `internet` field): it lends the internet connection too; the grant itself,
+  its folders, screen and terminal, stay as they are.
+- **The internet connection unticked** (`internet: false`): it stays off.
+- **Lending the person turned off** (`stopped.reason "you"`, or an Off kept from
+  before the reason was): everything stays off, across restarts too.
+- **A sign-out, another account or a new machine stopped it**: the person never
+  chose that, so a grant of the internet connection alone comes back by itself
+  once signed in to My Cloud again. A grant that lent more (folders, apps and
+  screen, the terminal) stays off as before, its choices kept, so the switch
+  lends all of it again in one click.
+- **A Team Cloud**: nothing. Lending is personal; it follows only the person's
+  own My Cloud from the verified sign-in, and a Team Cloud refuses it anyway.
+
+The default calls nothing itself: the grant reaches My Cloud the way any grant
+does, so a sleeping Cloud is never woken for it, and once awake it registers with
+`internet: true` and opens the device link, again after an app restart, a Cloud
+restart (it registers again) or a wake from sleep. The **Internet connection**
+box under **Choose what's lent** shows it ticked, and the line under the switch
+reads **Internet connection: on** (**connecting…** until the link opens). The
+menu-bar item reads **Your bots can use this Mac's internet connection** while
+that is all that is lent; like any lending, it also opens the app at login.
+
 **The default grant at the move.** The move to My Cloud turns lending on by
 itself (`installCloudLending(...).lendByDefault({ projects })`): the internet
 connection, Desktop, Documents and Downloads read only, each moved bot's own
@@ -683,25 +717,57 @@ computer control already works here for this computer's own bots (on macOS:
 Accessibility and Screen Recording already granted, read from computer
 control's running state, never by asking macOS). It adds to what is lent
 already, never takes away, and never undoes the person's own Off: lending they
-turned off (`stopped.reason "you"`) stays off, across restarts too.
+turned off (`stopped.reason "you"`) stays off, across restarts too, and so does
+an internet connection they unticked.
 
-**Use my Mac** (`electron/use-my-computer.mjs`). When the move leaves this
-computer not fully lent (apps and screen still off because macOS hasn't granted
-them yet), main shows one popup of its own, once: **Let your bots use this
-Mac?** (this PC, this computer), one plain line, **Use my Mac** and **Not now**.
-It waits for a shown window and a few seconds with no typing, so a key meant for
-the page never answers it. **Use my Mac** lends every part at once (undoing even
-the person's own earlier Off); where apps and screen still need macOS, the same
-press starts computer control again, which asks macOS, then opens each
-permission still missing in System Settings, Accessibility then Screen
-Recording, and starts computer control again whenever the person comes back.
-Screen Recording often works only after OpenMausBot restarts: the choice is kept
-(`use-my-computer.json`), and apps and screen go on once computer control works.
-**Not now** is never asked again on its own. A computer that moved before this
-version gets the same popup once, on its first launch after it. When a bot
-needs the computer, it gives the person `[Use my Mac](openmausbot://use-my-computer)`;
-in the desktop app that opens the same popup (on My Cloud's page only from a
-click), and anywhere else it is plain text.
+**Use my Mac** (`electron/use-my-computer.mjs`). Every desktop app signed in to
+the person's own My Cloud is asked once per Cloud (and once per computer), in a
+popup of main's own: **Let your bots use this Mac?** (this PC, this computer),
+one plain sentence (**Your bots on My Cloud can then read your Desktop,
+Documents and Downloads and use your apps and screen, while this Mac is awake
+and OpenMausBot is open.**), **Use my Mac** (**Use my PC**) and **Not now**, in
+the language the app shows (the words are in `src/locales`, and main keeps its own
+copy in `electron/use-my-computer-words.mjs`, held equal by a test).
+
+- **Who is asked** (`popupDue`): a computer whose lending to that My Cloud does
+  not include every part yet, which is the internet connection, folders, and apps
+  and screen wherever computer control can work (the terminal is never part of
+  it: only this computer's own Settings turns it on). New and existing users
+  alike: one that shares only its internet connection by default is asked.
+- **Who is not**: anyone who turned lending off themselves (`stopped.reason
+  "you"`), anyone who answered the popup for this Cloud already (Use my Mac or
+  **Not now**, kept per Cloud in `use-my-computer.json`, or at a move before
+  answers were kept per Cloud), a computer that lends every part, and anyone
+  without an own My Cloud (signed out, or only a Team Cloud).
+- **When.** The page's notices queue (`src/components/AppNotices.tsx`, on this
+  computer's page or My Cloud's own page in the app) asks for it first, ahead of
+  every other card, once the app is connected and the welcome, the tour and
+  first-run setup are done, with no Settings, dialog, call, busy bot or update on
+  screen; nothing else from that queue shows while it is open, and only the
+  product-updates question may follow it in that launch. The page only says
+  when and in which language (`cloud-lending:due`, `cloud-lending:ask`): main
+  decides whether it is due and draws the popup itself, and it still waits for a
+  shown window and a few seconds with no typing, so a key meant for the page
+  never answers it.
+- **Use my Mac** lends every part at once (undoing even the person's own earlier
+  Off, from a bot's link). A permission computer control already has is used as
+  it is, with no question. Where apps and screen still need macOS, the same press
+  starts computer control again, which asks macOS for what it never asked, one
+  permission after another (Accessibility, then Screen Recording) as the person
+  allows each: nothing here opens System Settings. A permission macOS won't ask
+  for again, or Screen Recording that works only after OpenMausBot restarts,
+  waits: the choice is kept (`screenWanted`), and apps and screen go on by
+  themselves once computer control works.
+- **Not now** is never asked again for that Cloud. Lending can still be turned on
+  any time with the switch in **Settings → MausBot Cloud**.
+
+The move to My Cloud still offers it once, as before: when the move leaves the
+computer not fully lent and computer control already works here, it lends every
+part silently instead (the bots that moved could use them here already). When a
+bot needs the computer, it gives the person
+`[Use my Mac](openmausbot://use-my-computer)`; in the desktop app that opens the
+same popup whatever was answered before (on My Cloud's page only from a click),
+and anywhere else it is plain text.
 
 While lending is on, a menu-bar item shows it (**In use** while bots use this
 Mac: running something on it or browsing through it) with **Stop sharing**, and the

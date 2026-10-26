@@ -3,8 +3,9 @@ import { MAUS_COLORS, type MausColor } from "./mascot";
 import { isMentionBoundary, isMentionNameContinuation } from "../../shared/mention-boundary";
 import { personTagAt, personTagNames } from "../../shared/person-mention";
 
-export type MentionPeer = { name: string; hidden?: boolean; color?: MausColor };
-export type MentionRange = { start: number; end: number; color?: string; you?: true };
+/** A name the @ list offers: a bot's, or (`person`) a teammate's on a Team Cloud. */
+export type MentionPeer = { name: string; hidden?: boolean; color?: MausColor; person?: true };
+export type MentionRange = { start: number; end: number; color?: string; you?: true; person?: true };
 export type MentionPerson = { profileName?: string | null };
 
 export function sameMentionPerson(a?: MentionPerson, b?: MentionPerson): boolean {
@@ -56,7 +57,7 @@ export function mentionRanges(text: string, peers: readonly MentionPeer[], every
   const candidates = peers.filter((p) => !p.hidden && p.name.trim())
     .sort((a, b) => b.name.length - a.name.length);
   const personNames = person ? personTagNames(person.profileName) : [];
-  const botNames = candidates.map(({ name }) => name);
+  const botNames = candidates.filter((peer) => !peer.person).map(({ name }) => name);
   const ranges: MentionRange[] = [];
   let at = -1;
   while ((at = text.indexOf("@", at + 1)) !== -1) {
@@ -76,14 +77,14 @@ export function mentionRanges(text: string, peers: readonly MentionPeer[], every
     if (length === undefined) continue;
     // Only palette values enter CSS.
     const color = !all && peer?.color && Object.hasOwn(MAUS_COLORS, peer.color) ? MAUS_COLORS[peer.color] : undefined;
-    ranges.push({ start: at, end: at + length + 1, ...(color ? { color } : {}) });
+    ranges.push({ start: at, end: at + length + 1, ...(color ? { color } : {}), ...(!all && peer?.person ? { person: true as const } : {}) });
     at += length;
   }
   return ranges;
 }
 
-export function mentionClassName(range: Pick<MentionRange, "you">): string {
-  return range.you ? "mention-highlight mention-you" : "mention-highlight";
+export function mentionClassName(range: Pick<MentionRange, "you" | "person">): string {
+  return range.you ? "mention-highlight mention-you" : range.person ? "mention-highlight mention-person" : "mention-highlight";
 }
 
 type MarkdownNode = {

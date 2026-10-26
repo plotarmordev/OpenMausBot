@@ -91,6 +91,8 @@ function open(): DatabaseSync {
     );
     CREATE INDEX IF NOT EXISTS notification_log_at ON notification_log(at);
   `);
+  const notificationColumns = db.prepare("PRAGMA table_info(notification_log)").all() as Array<{ name: string }>;
+  if (!notificationColumns.some((column) => column.name === "for_person")) db.exec("ALTER TABLE notification_log ADD COLUMN for_person TEXT");
   ensureRecallIndex(db);
   ensureMemoryIndex(db);
   return db;
@@ -285,7 +287,7 @@ const NOTIFICATION_LOG_LIMIT = 500;
 
 const rowToNotificationLogEntry = (row: {
   id: string; at: number; kind: string; bot_id: string; bot_name: string; thread_id: string;
-  group_id: string | null; title: string; body: string; avatar_url: string | null; read: number;
+  group_id: string | null; title: string; body: string; avatar_url: string | null; read: number; for_person: string | null;
 }): NotificationLogEntry => ({
   id: row.id,
   at: row.at,
@@ -297,14 +299,15 @@ const rowToNotificationLogEntry = (row: {
   title: row.title,
   body: row.body,
   ...(row.avatar_url ? { avatarUrl: row.avatar_url } : {}),
+  ...(row.for_person ? { forPerson: row.for_person } : {}),
   read: row.read !== 0,
 });
 
 export function insertNotificationLog(entry: NotificationLogEntry): void {
   transaction((database) => {
     database.prepare(
-      "INSERT INTO notification_log(id, at, kind, bot_id, bot_name, thread_id, group_id, title, body, avatar_url, read) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)",
-    ).run(entry.id, entry.at, entry.kind, entry.botId, entry.botName, entry.threadId, entry.groupId ?? null, entry.title, entry.body, entry.avatarUrl ?? null);
+      "INSERT INTO notification_log(id, at, kind, bot_id, bot_name, thread_id, group_id, title, body, avatar_url, for_person, read) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)",
+    ).run(entry.id, entry.at, entry.kind, entry.botId, entry.botName, entry.threadId, entry.groupId ?? null, entry.title, entry.body, entry.avatarUrl ?? null, entry.forPerson ?? null);
     database.prepare(
       "DELETE FROM notification_log WHERE id NOT IN (SELECT id FROM notification_log ORDER BY at DESC, rowid DESC LIMIT ?)",
     ).run(NOTIFICATION_LOG_LIMIT);
@@ -324,7 +327,7 @@ export function logNotification(notification: Notification): NotificationLogEntr
 
 export function recentNotificationLog(limit = NOTIFICATION_LOG_LIMIT): NotificationLogEntry[] {
   const rows = db().prepare(
-    "SELECT id, at, kind, bot_id, bot_name, thread_id, group_id, title, body, avatar_url, read FROM notification_log ORDER BY at DESC, rowid DESC LIMIT ?",
+    "SELECT id, at, kind, bot_id, bot_name, thread_id, group_id, title, body, avatar_url, for_person, read FROM notification_log ORDER BY at DESC, rowid DESC LIMIT ?",
   ).all(limit) as Array<Parameters<typeof rowToNotificationLogEntry>[0]>;
   return rows.map(rowToNotificationLogEntry);
 }

@@ -101,6 +101,23 @@ it("the internet connection is a choice of its own: ticking it lends it, and unt
   expect(bridge.stop).toHaveBeenCalledOnce();
 });
 
+it("a computer that shares only its internet connection by default reads naturally: on, connecting until the link opens, and its switch ticked", async () => {
+  const internetOnly = (link: "on" | "connecting") => ({ ...lent, state: { ...lent.state!, folders: [], internet: true, link } });
+  await ready(internetOnly("connecting"));
+  expect(render().html).toContain("Your bots can use the internet connection on this computer.");
+  expect(render().html).toContain("Internet connection: connecting…");
+  await ready(internetOnly("on"));
+  expect(render().html).toContain("Internet connection: on");
+  expect(render().html).not.toContain("connecting…");
+  more();
+  const choice = render().nodes.find(node => node.type === "input" && (node.props as Record<string, unknown>)["data-lending-internet-choice"])!;
+  expect(choice.props.checked).toBe(true);
+  await ready({ ...lent, state: { ...lent.state!, internet: false } });
+  expect(render().html).not.toContain("Internet connection: ");
+  await ready({ ...off, state: { ...off.state!, internet: true, stopped: { reason: "you", at: 1 } } });
+  expect(render().html).not.toContain("Internet connection: ");
+});
+
 it("says so while My Cloud is too old to browse through this computer", async () => {
   await ready({ ...lent, state: { ...lent.state!, internet: true, link: "unsupported" } });
   expect(render().html).toContain("Your bots can use Plans (read only) on this computer.");

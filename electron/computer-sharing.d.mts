@@ -57,6 +57,8 @@ export interface CloudLendingBridge {
 }
 export type CloudLendingVerdict = { allow: true } | { pause: string } | { stop: "signed-out" | "account-changed" | "machine-changed" };
 export function cloudLendingVerdict(binding: { accountId: string; origin: string } | null | undefined, current: { status: string; accountId: string | null; origin: string | null } | null, env: { origin: string } | null | undefined): CloudLendingVerdict;
+/** Whether this computer starts lending My Cloud its internet connection by itself, from the record it kept for My Cloud. */
+export function internetByDefault(record: { enabled?: boolean; cloud?: unknown; internet?: boolean; stopped?: { reason?: string } } | null | undefined): boolean;
 export function isHomeFolder(target: string): Promise<boolean>;
 export function validateSharedFolders(folders: unknown): Promise<SharedFolder[]>;
 export function validSharedOperation(operation: unknown, computerId: string): boolean;
@@ -81,13 +83,15 @@ export function createComputerSharing(options: {
   now?: () => number;
   /** My Cloud's power gate: lending to it waits, calling nothing, while it sleeps. */
   power?: import("./cloud-power.mjs").CloudPowerGate;
-  /** `busy.action` is "internet" while My Cloud's browsing goes through this computer. */
-  onChange?: (summary: { lending: string[]; busy: { env: string; action: string } | null }) => void;
+  /** `busy.action` is "internet" while My Cloud's browsing goes through this computer; `internetOnly`: nothing else is lent. */
+  onChange?: (summary: { lending: string[]; internetOnly: boolean; busy: { env: string; action: string } | null }) => void;
   /** The device link's sign-in for My Cloud, as the poll's fetch carries it (its session cookie). */
   linkHeaders?: (env: Workspace) => Record<string, string> | Promise<Record<string, string>>;
   WebSocket?: typeof globalThis.WebSocket;
   /** This computer's own check on each connection, for tests: how it looks names up and connects. */
   egress?: Omit<NonNullable<Parameters<typeof import("./device-egress.mjs").createDeviceEgress>[0]>, "seenAs">;
+  /** The saved server that is the person's own My Cloud: it gets this computer's internet connection by default. */
+  myCloud?: () => Workspace | null;
 }): {
   state(id: string): SharingState;
   activity(id?: string, limit?: number): LendingActivityEntry[];

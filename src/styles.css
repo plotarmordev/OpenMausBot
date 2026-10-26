@@ -26,6 +26,9 @@
   box-decoration-break: clone;
   -webkit-box-decoration-break: clone;
 }
+.mention-highlight.mention-person {
+  text-decoration-style: dotted;
+}
 .mention-highlight.mention-you {
   --mention-color: var(--color-accent);
   color: var(--color-ink);

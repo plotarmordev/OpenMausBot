@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { mentionChoicesForQuery, mentionRanges, mentionRowDescription } from "./mentions";
+import { mentionChoicesForQuery, mentionClassName, mentionRanges, mentionRowDescription } from "./mentions";
 
 const peers = [{ name: "Atlas" }, { name: "New Bot" }, { name: "New Bot 2" }, { name: "調査担当" }, { name: "Hidden", hidden: true }];
 const matches = (text: string, everyone = false) => mentionRanges(text, peers, everyone).map(({ start, end }) => text.slice(start, end));
@@ -55,6 +55,19 @@ describe("the person's tag in display ranges", () => {
   });
   it("leaves @everyone as it was", () => {
     expect(ranges("@everyone then @you", peers, true)).toEqual([["@everyone", false], ["@you", true]]);
+  });
+});
+
+describe("a teammate's tag in display ranges", () => {
+  const roster = [...peers, { name: "Bob Stone", person: true as const }, { name: "Bob", person: true as const }];
+  it("marks a teammate as a person, never in a bot's colour, and the viewer's own name stays theirs", () => {
+    const text = "@Atlas and @Bob Stone, then @Bob, then @Sam";
+    expect(mentionRanges(text, roster, false, { profileName: "Sam" }).map(({ start, end, person, you }) => [text.slice(start, end), person ?? false, you ?? false]))
+      .toEqual([["@Atlas", false, false], ["@Bob Stone", true, false], ["@Bob", true, false], ["@Sam", false, true]]);
+    expect(mentionClassName({ person: true })).toBe("mention-highlight mention-person");
+  });
+  it("does not let a teammate's name take the viewer's own tag away", () => {
+    expect(mentionRanges("@Sam", [{ name: "Sam", person: true }], false, { profileName: "Sam" })).toEqual([{ start: 0, end: 4, you: true }]);
   });
 });
 

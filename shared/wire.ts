@@ -587,6 +587,10 @@ export interface WireMessage extends HelperIntroField {
   reaction?: string;
   /** comm chips: "Messaged @X", linking to the bot-bot channel. */
   comm?: { groupId: string; threadId?: string; withBotId: string; withName: string; withColor: string };
+  /** On a Team Cloud, a message a bot passed between people (message_person): "told" on the chip in the asking
+   * conversation names who got it, "from" on the line it delivered names who asked, "reply" on an answer that came
+   * back names who answered. */
+  relay?: { kind: "told" | "from" | "reply"; email: string; name: string };
   /** thread chips: "Opened thread #Title on @X". */
   threadRef?: { botId: string; threadId: string; title: string };
   /** A page the bot published to a public link (publish_page), or why it couldn't. `text` carries the link too. */

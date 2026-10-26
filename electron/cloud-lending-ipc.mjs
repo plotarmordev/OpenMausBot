@@ -115,15 +115,16 @@ async function editableFolders(paths, validate) {
 }
 
 /** The default grant, on top of what was lent before: the usual folders read only, each project folder with editing,
- * the internet connection, and apps and screen when they were lent before or computer control already works here for
- * this computer's own bots (`screenReady`: macOS granted Accessibility and Screen Recording). */
+ * the internet connection unless it was unticked (`kept.internet: false`), and apps and screen when they were lent
+ * before or computer control already works here for this computer's own bots (`screenReady`: macOS granted
+ * Accessibility and Screen Recording). */
 export function defaultGrant({ kept, usual, projects, screenAvailable, screenReady }) {
   const byPath = new Map();
   for (const folder of [...(kept?.folders ?? []), ...usual, ...projects]) {
     const known = byPath.get(folder.path);
     byPath.set(folder.path, known ? { ...known, write: known.write || folder.write } : folder);
   }
-  return { folders: [...byPath.values()].slice(0, 20), screen: screenAvailable === true && (kept?.screen === true || screenReady === true), internet: true };
+  return { folders: [...byPath.values()].slice(0, 20), screen: screenAvailable === true && (kept?.screen === true || screenReady === true), internet: kept?.internet !== false };
 }
 
 /**
@@ -195,14 +196,15 @@ export function installCloudLending({ ipcMain, localOnly, cloudPage, snapshot, e
       return { ...pageLending(current), screenReady: current.screenReady === true, ownOff: ownOff(current.state) };
     },
     /** At the move to My Cloud, and when the person chooses Use my Mac (`asked`): lends the default grant (defaultGrant)
-     * on top of what is lent. Without `asked` the person's own Off is never undone: lending they turned off stays off.
-     * Answers the page's view, or null when it stayed off. */
+     * on top of what is lent. Without `asked` the person's own Off is never undone: lending they turned off stays off,
+     * and so does an internet connection they unticked. Answers the page's view, or null when it stayed off. */
     async lendByDefault({ projects = [], asked = false } = {}) {
       const current = await snapshot();
       const kept = current.state;
       if (!current.available || (!asked && ownOff(kept))) return null;
       const lentBefore = kept?.folders?.length ? await existingFolders(kept.folders, validate) : [];
-      const grant = defaultGrant({ kept: { folders: lentBefore, screen: kept?.screen === true }, usual: await defaults(), projects: await editableFolders(projects, validate),
+      const internet = asked || kept?.enabled !== true || kept.internet === true;
+      const grant = defaultGrant({ kept: { folders: lentBefore, screen: kept?.screen === true, internet }, usual: await defaults(), projects: await editableFolders(projects, validate),
         screenAvailable: current.screenAvailable, screenReady: current.screenReady });
       await save(env(), grant);
       return pageLending(await snapshot());

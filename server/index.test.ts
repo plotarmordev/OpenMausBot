@@ -6494,6 +6494,11 @@ describe("harness HTTP API", () => {
         return await response.json() as { ok: boolean; text: string };
       };
       expect(await fill()).toEqual({ ok: false, text: "fill_login works in the built-in browser, and this conversation has none. Call request_sign_in instead." });
+      expect((await api("PATCH", `/api/bots/${bot.id}`, { computer: "local" })).status).toBe(200);
+      const onScreen = await fill();
+      expect(onScreen.ok).toBe(false);
+      expect(onScreen.text).toContain("it never types one on the screen of this computer");
+      expect(onScreen.text).toContain("Call request_sign_in so the person signs in on this computer.");
       expect((await api("PATCH", `/api/bots/${bot.id}`, { computer: "browser" })).status).toBe(200);
       const inBrowser = await fill();
       expect(inBrowser.ok).toBe(false);

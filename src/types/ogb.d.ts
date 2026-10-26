@@ -119,8 +119,15 @@ const __APP_VERSION__: string;
       /** "Let my bots use this Mac" (this PC, this computer), on My Cloud's own page in this app: its one switch and
        * what is lent (electron/cloud-lending-ipc.mjs). `open` shows this computer's own Settings, leaving the page. */
       cloudLending?: { open(): Promise<void>; state?(): Promise<import("../../electron/cloud-lending-ipc.mjs").PageLending>; set?(on: boolean): Promise<import("../../electron/cloud-lending-ipc.mjs").PageLending>; screen?(on: boolean): Promise<import("../../electron/cloud-lending-ipc.mjs").PageLending>;
-        /** A bot's Use my Mac link: this app's own popup, which turns on every part of Let my bots use this Mac. */
-        offer?(): Promise<void> };
+        /** A bot's Use my Mac link: this app's own popup, which turns on every part of Let my bots use this Mac, in
+         * `language` (the page's own). */
+        offer?(language?: string): Promise<void>;
+        /** Whether the Use my Mac popup is due on this computer for this Cloud: once per Cloud, and never after the person
+         * turned lending off or answered it. */
+        due?(): Promise<boolean>;
+        /** The page's notices found the moment: main shows its Use my Mac popup if it is still due, and resolves once it is
+         * answered or put off. */
+        ask?(language?: string): Promise<void> };
       /** Either page in this app: the one-time move's line (on its way, what arrived, coming home). */
       cloudSendPage?: import("../../electron/cloud-send.mjs").CloudSendPageBridge;
       /** Settings on the person's own Cloud: the plan, read only. */

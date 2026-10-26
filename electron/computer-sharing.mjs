@@ -118,6 +118,22 @@ export function cloudLendingVerdict(binding, current, env) {
   return { allow: true };
 }
 
+/** A grant to My Cloud lends the internet connection unless it was unticked: one kept without `internet` lends it too. */
+const lendsInternet = grant => Boolean(grant?.cloud) && grant.internet !== false;
+const internetOnly = grant => lendsInternet(grant) && !grant.folders?.length && grant.computer !== true && grant.terminal !== true;
+
+/** Whether this computer starts lending My Cloud its internet connection by itself, from what it kept for My Cloud
+ * (`record`): yes unless lending is on already or the person decided. Their Off (`stopped.reason` "you", or an Off
+ * kept without its reason) and an unticked internet connection are decisions. A sign-out, another account or a new
+ * machine stopping a grant of the internet connection alone is not; one that lent more stays off, so the switch lends
+ * all of it again in one click. */
+export function internetByDefault(record) {
+  if (!record) return true;
+  if (record.enabled === true || record.stopped?.reason === "you") return false;
+  if (!record.cloud) return true;
+  return typeof record.stopped?.reason === "string" && internetOnly(record);
+}
+
 class Paused extends Error {}
 
 const LENT_PLATFORMS = new Set(["darwin", "win32", "linux"]);
@@ -133,9 +149,10 @@ const BROWSE_NOTE_MS = 10 * 60_000;
 /** Outbound HTTPS only: no local listening port, and pairing cookies and the connector secret stay in Electron. */
 /** `reconnect(origin)`: signs this app back in to the person's own Cloud when its session there has ended, so lending
  * resumes by itself; at most every 15 minutes. `linkHeaders(env)`: the device link's sign-in, as the poll's fetch
- * carries it (the session cookie). */
+ * carries it (the session cookie). `myCloud()`: the saved server that is the person's own My Cloud, which gets this
+ * computer's internet connection by default (internetByDefault). */
 export function createComputerSharing({ file, fetch: fetchImpl, environments, cuaConnection, hostControl, screenLocked = () => false, protectedPaths = [], enabled = async () => false, home = os.homedir(), activityFile, cloud = () => null, onChange = () => {}, reconnect = null, now = Date.now, power = createCloudPowerGate(),
-  linkHeaders = () => ({}), WebSocket: linkSocket = globalThis.WebSocket, egress = {} }) {
+  linkHeaders = () => ({}), WebSocket: linkSocket = globalThis.WebSocket, egress = {}, myCloud = () => null }) {
   const protectedRoots = [path.dirname(file), ...protectedPaths.filter(entry => typeof entry === "string" && entry), ...personalSecretPaths(home)];
   const activity = createLendingActivity(activityFile ?? path.join(path.dirname(file), "lending-activity.jsonl"));
   let records = {};
@@ -155,8 +172,10 @@ export function createComputerSharing({ file, fetch: fetchImpl, environments, cu
   const changed = () => { if (!closed) try { onChange(summary()); } catch {} };
   const summary = () => {
     const browsing = [...inUse.keys()].find(id => linked.has(id));
+    const lending = environments().filter(env => records[env.id]?.cloud && records[env.id]?.enabled === true).map(env => env.id);
     return {
-      lending: environments().filter(env => records[env.id]?.cloud && records[env.id]?.enabled === true).map(env => env.id),
+      lending,
+      internetOnly: lending.length > 0 && lending.every(id => internetOnly(records[id])),
       busy: executing ?? (browsing ? { env: browsing, action: "internet" } : null),
     };
   };
@@ -321,12 +340,12 @@ export function createComputerSharing({ file, fetch: fetchImpl, environments, cu
             folders: folders.map(({ id, name, write }) => ({ id, name, write })), terminal: grant.terminal, computer: grant.computer,
             // So My Cloud's bots say "your PC" on Windows and "your Mac" only on a Mac; only a server that takes it gets it.
             ...(supportsDetails.has(env.id) && LENT_PLATFORMS.has(process.platform) ? { platform: process.platform } : {}),
-            ...(grant.cloud && supportsLink.has(env.id) ? { internet: grant.internet === true } : {}),
+            ...(grant.cloud && supportsLink.has(env.id) ? { internet: lendsInternet(grant) } : {}),
           }, signal, grant.secret);
           if (signal.aborted) break;
           status.set(env.id, { connected: true });
           changed();
-          if (grant.cloud && grant.internet === true && supportsLink.has(env.id)) live.link ??= keepLink(env, grant, signal).catch(() => {});
+          if (lendsInternet(grant) && supportsLink.has(env.id)) live.link ??= keepLink(env, grant, signal).catch(() => {});
           while (!signal.aborted) {
             await gate();
             awake();
@@ -418,9 +437,9 @@ export function createComputerSharing({ file, fetch: fetchImpl, environments, cu
   };
   /** Lent and connected, it says whether its internet connection is in use yet: "on", "connecting", or "unsupported" by
    * a Cloud too old for the device link. */
-  const internetState = (env, lent) => lent?.cloud && lent.internet === true && lent.enabled === true && status.get(env.id)?.connected
+  const internetState = (env, lent) => lendsInternet(lent) && lent.enabled === true && status.get(env.id)?.connected
     ? { internet: true, link: !supportsLink.has(env.id) ? "unsupported" : linked.has(env.id) ? "on" : "connecting" }
-    : { internet: lent?.cloud ? lent.internet === true : false };
+    : { internet: lendsInternet(lent) };
   const state = id => {
     const grant = records[id];
     return { enabled: grant?.enabled === true, folders: Array.isArray(grant?.folders) ? grant.folders : [], terminal: grant?.terminal === true, computer: grant?.computer === true, ...status.get(id) };
@@ -454,6 +473,22 @@ export function createComputerSharing({ file, fetch: fetchImpl, environments, cu
     (grant.cloud
       ? typeof grant.cloud.accountId === "string" && typeof grant.cloud.origin === "string" && (grant.environmentId === null || uuid(grant.environmentId))
       : uuid(grant.sessionId) && uuid(grant.environmentId));
+  const cloudGrant = (env, current, info, { folders = [], screen, internet, terminal }) => ({ ...info, id: randomUUID(), secret: randomBytes(32).toString("hex"), enabled: true, folders,
+    terminal: terminal === true, computer: screen === true, internet: internet === true, cloud: { accountId: current.accountId, origin: env.origin } });
+  const verifiedCloud = env => {
+    const current = cloud();
+    return current?.status === "connected" && current.accountId && current.origin === env.origin ? current : null;
+  };
+  /** Calls nothing itself: the grant reaches My Cloud the way any grant does, once it is awake. */
+  const lendInternetByDefault = () => {
+    const env = closed ? null : myCloud();
+    const current = env && verifiedCloud(env);
+    if (!current || !internetByDefault(records[env.id])) return;
+    const grant = cloudGrant(env, current, { sessionId: null, environmentId: null }, { internet: true });
+    try { store({ ...records, [env.id]: grant }); } catch { return; }
+    run(env, grant);
+    changed();
+  };
   return {
     state, identity,
     activity(id, limit) {
@@ -486,14 +521,13 @@ export function createComputerSharing({ file, fetch: fetchImpl, environments, cu
      * and its machine must be verified now. The internet connection alone is a grant too. */
     async saveCloud(env, input) {
       if (closed) throw new Error("Lending is unavailable while the app is closing.");
-      const current = cloud();
-      if (current?.status !== "connected" || !current.accountId || current.origin !== env.origin) throw Object.assign(new Error("Open My Cloud first."), { problem: "connect-first" });
+      const current = verifiedCloud(env);
+      if (!current) throw Object.assign(new Error("Open My Cloud first."), { problem: "connect-first" });
       const folders = await validateSharedFolders(input?.folders);
       if (!folders.length && input?.screen !== true && input?.internet !== true && input?.terminal !== true) throw new Error("Choose at least one folder, apps and screen, the internet connection, or the terminal.");
       let info = { sessionId: null, environmentId: null };
       try { info = await cloudIdentity(env); } catch (error) { if (error.problem !== "connect-first") throw error; }
-      const grant = { ...info, id: randomUUID(), secret: randomBytes(32).toString("hex"), enabled: true, folders, terminal: input.terminal === true, computer: input.screen === true,
-        internet: input.internet === true, cloud: { accountId: current.accountId, origin: env.origin } };
+      const grant = cloudGrant(env, current, info, { ...input, folders });
       disconnect(env, records[env.id]);
       store({ ...records, [env.id]: grant }); run(env, grant); changed();
       return cloudState(env);
@@ -513,6 +547,7 @@ export function createComputerSharing({ file, fetch: fetchImpl, environments, cu
         else if (maintainer && !maintainerOff) run(env, grant);
       }
       changed();
+      lendInternetByDefault();
     },
     cloudChanged() {
       if (closed) return;
@@ -524,6 +559,7 @@ export function createComputerSharing({ file, fetch: fetchImpl, environments, cu
         else if (verdict.pause) { if (running.has(env.id)) { disconnect(env, grant, true); status.set(env.id, { connected: false, problem: "paused" }); changed(); } }
         else if (!running.has(env.id) && validRecord(grant)) run(env, grant);
       }
+      lendInternetByDefault();
     },
     close() { closed = true; for (const id of running.keys()) stop(id); },
   };

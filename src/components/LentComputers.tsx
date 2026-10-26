@@ -51,7 +51,8 @@ export function pageLendingLine(lending: PageLending): string {
   const updating = lending.link === "unsupported";
   const what = lentWhat(lending.folders, lending.screen, lending.internet === true && !updating);
   if (updating) return what ? `${lendsLine(what)} ${t("lending.internetUnsupported")}` : t("lending.internetUnsupported");
-  return what ? lendsLine(what) : t("lending.status.lent");
+  const line = what ? lendsLine(what) : t("lending.status.lent");
+  return lending.internet && lending.link === "connecting" ? `${line} ${t("lending.internetConnecting")}` : line;
 }
 
 type PageLendingBridge = { state(): Promise<PageLending>; set(on: boolean): Promise<PageLending>; screen?(on: boolean): Promise<PageLending> };

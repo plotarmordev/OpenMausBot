@@ -352,8 +352,11 @@ const bridge = {
     screen: on => on !== true || isLocalPage || navigator.userActivation?.isActive === true
       ? ipcRenderer.invoke("cloud-lending:screen", on === true) : Promise.reject(new Error("Tick Apps and screen to lend them.")),
     // A bot's Use my Mac link: opens main's own popup, only from the person's click.
-    offer: () => isLocalPage || navigator.userActivation?.isActive === true
-      ? ipcRenderer.invoke("cloud-lending:offer") : Promise.reject(new Error("Press Use my Mac to share this computer.")),
+    offer: language => isLocalPage || navigator.userActivation?.isActive === true
+      ? ipcRenderer.invoke("cloud-lending:offer", String(language ?? "")) : Promise.reject(new Error("Press Use my Mac to share this computer.")),
+    // The page's notices find the moment for the Use my Mac popup; main decides whether it is due, once per Cloud.
+    due: () => ipcRenderer.invoke("cloud-lending:due"),
+    ask: language => ipcRenderer.invoke("cloud-lending:ask", String(language ?? "")),
   } : undefined,
   // Either page: the one-time move's line.
   cloudSendPage: process.argv.includes("--omb-company-desktop=1") ? {

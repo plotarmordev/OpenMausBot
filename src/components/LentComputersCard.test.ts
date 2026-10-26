@@ -89,6 +89,8 @@ it("says how lending is going in plain words", () => {
   expect(pageLendingLine({ ...lent, folders: [], screen: true, internet: false })).toBe("Your bots can use apps and screen on this computer.");
   expect(pageLendingLine({ ...lent, link: "unsupported" })).toBe("Your bots can use Desktop, Documents, and Downloads (read only) on this computer. My Cloud is updating. Your bots can use this computer's internet connection once it's done.");
   expect(pageLendingLine({ ...lent, folders: [], link: "unsupported" })).toBe("My Cloud is updating. Your bots can use this computer's internet connection once it's done.");
+  expect(pageLendingLine({ ...lent, folders: [], internet: true, link: "connecting" })).toBe("Your bots can use the internet connection on this computer. Internet connection: connecting…");
+  expect(pageLendingLine({ ...lent, folders: [], internet: true, link: "on" })).toBe("Your bots can use the internet connection on this computer.");
 });
 
 it("a refused folder says why plainly, with no Try again; only a failure trying again can fix says Try again", async () => {

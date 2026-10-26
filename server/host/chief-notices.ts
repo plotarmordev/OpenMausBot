@@ -1,7 +1,7 @@
 import { failedTurnTool } from "../../shared/failed-turn.ts";
 import { admit } from "../admission.ts";
 import { ESCALATIONS_THREAD_TITLE, EscalationLedger, escalationChip, escalationDeliverable, escalationText, type Escalation, type EscalationKind } from "../escalations.ts";
-import { chiefForBot, INCIDENTS_THREAD_TITLE, IncidentLedger, incidentChip, incidentContext, incidentText, type Incident, type IncidentKind } from "../incidents.ts";
+import { chiefForBot, INCIDENTS_THREAD_TITLE, IncidentLedger, incidentChip, incidentContext, incidentText, RETRY_BLOCKED, type Incident, type IncidentKind } from "../incidents.ts";
 import { buildNotification, type Notification } from "../notify.ts";
 import { redactSecretsInText } from "../redact.ts";
 import { queueSteeredMessage } from "../steer-queue.ts";
@@ -12,7 +12,7 @@ type PeerAsk = NonNullable<Message["peerAsk"]>;
 export type EscalationOutcome = "chief" | "person" | "muted" | "off" | "skipped" | "failed";
 
 export interface ChiefNoticeDeps {
-  store: Pick<Store, "bots" | "bot" | "tasks" | "taskByThread" | "groupByThread" | "createTask" | "appendMessage" | "messagesFor">;
+  store: Pick<Store, "bots" | "bot" | "tasks" | "taskByThread" | "groupByThread" | "createTask" | "appendMessage" | "messagesFor" | "activePath">;
   assignerOf(threadId: string): unknown;
   notify(notification: Notification | null): void;
   threadBusy(botId: string, threadId: string): boolean;
@@ -20,6 +20,10 @@ export interface ChiefNoticeDeps {
   groupTurnActive(botId: string): boolean;
   startTurn(botId: string, text: string, opts: { threadId: string; unattended: true; peerAsk: PeerAsk }): Promise<unknown>;
   escalationsEnabled(): boolean;
+  /** The thread's last run has ended but is still shutting down. */
+  threadSettling?(threadId: string): boolean;
+  /** The thread waits for a free slot and starts on its own. */
+  threadQueued?(botId: string, threadId: string): boolean;
   /** Security invariant: a read-and-draft run's prompt and reply carry mail and invite text, so its failures and
    * questions never reach a Chief as a notice. */
   quietThread?(botId: string, threadId: string): boolean;
@@ -39,6 +43,19 @@ export function createChiefNotices(deps: ChiefNoticeDeps) {
   const { store } = deps;
   const incidentLedger = new IncidentLedger();
   const escalationLedger = new EscalationLedger();
+
+  /** Why a teammate's stopped thread cannot be retried now, in words a Chief can act on, or null. */
+  function retryRefusal(botId: string, threadId: string): string | null {
+    const blocked = deps.threadBusy(botId, threadId) ? (deps.threadSettling?.(threadId) ? "settling" : "running")
+      : deps.threadQueued?.(botId, threadId) ? "queued" : null;
+    if (blocked) return RETRY_BLOCKED[blocked];
+    // A thread that finished a run since it was last reported has nothing to resume: resuming would redo finished work.
+    const reportedAt = incidentLedger.lastAt(threadId);
+    if (reportedAt !== undefined && store.activePath(threadId).some((line) => line.turnSucceeded === true && line.at > reportedAt)) {
+      return "that thread has finished a run since it was reported — there is nothing to retry; read what it did before deciding anything else";
+    }
+    return null;
+  }
 
   function incidentRefused(chief: BotRecord, incidentsThreadId: string, asks: ReadonlyArray<Message["peerAsk"]>, why: string): void {
     const refused = `the incident could not reach ${chief.name} — ${why}`;
@@ -162,5 +179,5 @@ export function createChiefNotices(deps: ChiefNoticeDeps) {
     }
   }
 
-  return { reportIncident, reportEscalation, incidentRefused, incidentLastAt: (threadId: string) => incidentLedger.lastAt(threadId) };
+  return { reportIncident, reportEscalation, incidentRefused, retryRefusal };
 }
