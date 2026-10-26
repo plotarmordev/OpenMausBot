@@ -12,8 +12,8 @@ const { LentComputersCard, lentComputerLines, pageLendingLine } = await import("
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 let host: HTMLDivElement;
 let root: Root;
-const off: PageLending = { available: true, on: false, status: null, folders: [], screen: false, screenAvailable: true, internet: false };
-const lent: PageLending = { available: true, on: true, status: "lent", folders: ["Desktop", "Documents", "Downloads"].map((name) => ({ name, write: false })), screen: false, screenAvailable: true, internet: true };
+const off: PageLending = { available: true, on: false, status: null, folders: [], screen: false, screenAvailable: true, internet: false, terminal: false };
+const lent: PageLending = { available: true, on: true, status: "lent", folders: ["Desktop", "Documents", "Downloads"].map((name) => ({ name, write: false })), screen: false, screenAvailable: true, internet: true, terminal: false };
 
 beforeEach(() => {
   setLocale("en");
@@ -65,6 +65,26 @@ it("on My Cloud's page, Apps and screen is a tick under the switch once lending 
   await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
   expect(screen).toHaveBeenCalledExactlyOnceWith(true);
   expect(host.querySelector<HTMLInputElement>('[data-lend-screen="on"] input')!.checked).toBe(true);
+});
+
+it("on My Cloud's page, the terminal is a tick under the switch once lending is on, and an older app without it shows none", async () => {
+  const terminal = vi.fn().mockResolvedValue({ ...lent, terminal: true });
+  (window as { ogb?: unknown }).ogb = { platform: "darwin", cloudLending: { open: vi.fn(), state: vi.fn().mockResolvedValue(lent), set: vi.fn(), screen: vi.fn(), terminal } };
+  await render();
+  const tick = host.querySelector<HTMLInputElement>('[data-lend-terminal="off"] input')!;
+  expect(host.textContent).toContain("Terminal");
+  expect(host.textContent).toContain("Bots can run any command on this computer as you");
+  await act(async () => tick.click());
+  await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
+  expect(terminal).toHaveBeenCalledExactlyOnceWith(true);
+  expect(host.querySelector<HTMLInputElement>('[data-lend-terminal="on"] input')!.checked).toBe(true);
+  expect(host.textContent).toContain("and terminal on this Mac");
+
+  await act(async () => root.unmount());
+  root = createRoot(host);
+  (window as { ogb?: unknown }).ogb = { platform: "darwin", cloudLending: { open: vi.fn(), state: vi.fn().mockResolvedValue(lent), set: vi.fn(), screen: vi.fn() } };
+  await render();
+  expect(host.querySelector("[data-lend-terminal]")).toBeNull();
 });
 
 it("says to set up computer control first where Apps and screen can't be lent yet", async () => {

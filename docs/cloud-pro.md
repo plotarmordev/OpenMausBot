@@ -614,9 +614,10 @@ with no confirmation. The switch and the chosen scopes are the consent.
   reaches anything those apps can, and the switch says so. It needs local
   computer control set up first.
 - **Terminal** (off by default): bots run commands on this computer as the person, on macOS, Linux and Windows, with no
-  limit on what a command can do. It is a separate checkbox in this computer's own Settings (never from My Cloud's page,
-  never in the default grant), it asks before turning on, and it is not kept when the switch is turned off. Every command is
-  listed under Activity.
+  limit on what a command can do. It is a separate checkbox in this computer's own Settings and, in the desktop app, under
+  the switch on My Cloud's page (never in the default grant). From My Cloud's page it takes a real click and a Yes in this
+  app's own dialog, like Apps and screen; changing Apps and screen keeps it as it is, and it is not kept when the switch
+  is turned off. Every command is listed under Activity.
 
 The switch can be turned on before the first **Open My Cloud**; lending
 starts once this Mac is signed in to the Cloud. Lending runs while the app is
@@ -902,13 +903,17 @@ On the Cloud home (`server/shared-computers.ts`, `server/index.ts`):
   substitutes its own files for an offline Mac.
 - Only turns that provably act for the owner may use the lent Mac
   (`server/cloud-lending.ts`): a conversation the owner started from one of
-  their own devices (a live session with admin scope), a scheduled run of a
+  their own devices (a live session with admin scope), a room member's turn
+  answering the owner's own line in that room (the run that line started,
+  members it mentions included: `requestMessageId` on the room's turn
+  operation, checked per turn generation), a scheduled run of a
   routine the owner wrote or last rewrote from one of those devices, or a run
   of it the owner started by hand. Never a webhook-started run (its payload
   comes from outside), a guest's conversation or routine (a device paired
-  with chat-only access), a routine someone else rewrote, a room, a turn a
-  teammate handed a bot (`coordinate_bots`), a local process on the Cloud, or anything the
-  harness cannot trace. A conversation qualifies only while the owner opened
+  with chat-only access), a routine someone else rewrote, a room's goal run or
+  any room turn no line of the owner's started, a turn a
+  teammate handed a bot (`coordinate_bots`), a local process on the Cloud, a
+  team Cloud's room, or anything the harness cannot trace. A conversation qualifies only while the owner opened
   it and it holds nobody else's words, anywhere in it, before or during the
   turn: one line from a guest, a teammate bot or a local process (sent,
   queued, steered or handed in, or history imported with a move), one card
@@ -917,9 +922,15 @@ On the Cloud home (`server/shared-computers.ts`, `server/index.ts`):
   writes into the bot's Updates conversation), takes that conversation out
   of lending for good, because a resumed session carries everything said in
   it. A conversation a guest opened (and
-  named) is never the owner's, whoever writes in it. The bot is told "Someone else wrote in this
-  conversation, so it can't use your Mac. Start a new conversation to use it."
-  and the lending switch says the same. The owner's own edits count as theirs,
+  named) is never the owner's, whoever writes in it. Whenever a computer is lent but a turn can't use it,
+  `list_shared_computers` answers why in `unavailable` and `say` (`cloudLendingRefusalText` in
+  `server/cloud-lending.ts`), and a refused `shared_computer` call answers the same, so the bot says the reason instead
+  of offering Use my Mac: lines from before My Cloud carried the owner's name, someone else's words ("Someone else
+  wrote in this conversation, so it can't use your Mac. Start a new conversation to use it."; in a room, "Start a new
+  thread in this group chat to use it."), a changed memory, a room turn no line of the owner's started, or any other
+  turn that isn't provably the owner's. A move marks the lines and answers the owner wrote in a room as theirs, as in
+  a bot conversation (`stampOwner`, `stampHeld`); a room moved before that keeps naming nobody, so a new thread in it
+  is the way to use the Mac there. The owner's own edits count as theirs,
   and the harness's own automatic card settlements do not count. A
   routine stops being the owner's once anyone else edits it in any way (its
   instructions, schedule, results destination or whether it is on); the

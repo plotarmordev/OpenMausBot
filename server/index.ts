@@ -18,7 +18,7 @@ import { RoomContextTracker, roomResetNote } from "./room-context.ts";
 import { createRoomTranscript, GROUP_CONTEXT_MESSAGES } from "./host/room-transcript.ts";
 import { createRoomSessions } from "./host/room-sessions.ts";
 import { LentComputers, provenRequestPerson, SharedComputers, sharedComputerOperation } from "./shared-computers.ts"; import { lentScreenResult } from "./lent-screen-guidance.ts"; import { DeviceLinks } from "./device-links.ts";
-import { cloudHomeLendingRefusal, createCloudRoutineAuthors, ownerOnlyConversation, type CloudLendingTurn } from "./cloud-lending.ts"; import { assertRoomFolder } from "./room-folder.ts"; import { cloudConnectedAppsBrokerUrl, startCloudHomeConnectedApps, stopCloudHomeConnectedApps } from "./cloud-connected-apps.ts"; import { createTeamConnectionsHost } from "./host/team-connections-host.ts"; import { createTeamConnectionRoutes } from "./routes/team-connections.ts";
+import { cloudHomeLendingRefusal, createCloudRoutineAuthors, ownerOnlyConversation } from "./cloud-lending.ts"; import { assertRoomFolder } from "./room-folder.ts"; import { cloudConnectedAppsBrokerUrl, startCloudHomeConnectedApps, stopCloudHomeConnectedApps } from "./cloud-connected-apps.ts"; import { createTeamConnectionsHost } from "./host/team-connections-host.ts"; import { createCloudLendingTurns } from "./host/cloud-lending-turns.ts"; import { createTeamConnectionRoutes } from "./routes/team-connections.ts";
 import { botMemoryFiles, createLendingMemory } from "./lending-memory.ts";
 import { SharedComputerControl } from "./shared-computer-control.ts";
 import { createCoordinator, type ComposedTurn, type CoordinateBotsCall, type Coordinator, type HandoffOpener, type HandoffOptions, type HandoffView, type HostTurnResult } from "./coordinator.ts";
@@ -895,55 +895,6 @@ function sharedComputerPrincipal(capability: Pick<InternalCapability, "botId" | 
   if (CLOUD_HOME) return cloudLendingRefusal(capability) === null ? CLOUD_HOME_LENDER : null;
   return provenRequestPerson(directRequestOwners.get(capability.threadId), capability.generation,
     (messageId) => linePersonKey(store.messagesFor(capability.threadId).find((message) => message.id === messageId)));
-}
-
-function cloudLendingTurn(capability: Pick<InternalCapability, "botId" | "threadId" | "generation">): CloudLendingTurn {
-  return {
-    request: directRequestOwners.get(capability.threadId),
-    generation: capability.generation,
-    thread: store.messagesFor(capability.threadId),
-    starters: cloudThreadStarters(capability.threadId),
-    reportsFromOthers: store.messagesFor(capability.threadId).some(cloudReportFromOthers),
-    ownerPerson: cloudProvenOwnerPerson,
-    cardAnswerer: cloudCardAnswerer,
-    routineRun: () => {
-      const run = activeRoutineRunForThread(capability.threadId);
-      if (!run || run.threadId !== capability.threadId || store.taskByThread(capability.botId, capability.threadId)?.routineRunId !== run.id) return null;
-      return {
-        triggerSource: run.triggerSource ?? (run.manual ? "manual" : "schedule"),
-        ownerStarted: ownerStartedRoutineRuns.has(run.id),
-        ownerAuthored: cloudRoutineRunIsOwners(run, capability.botId, capability.threadId),
-      };
-    },
-  };
-}
-
-const LENDING_SOMEONE_ELSE = "Someone else wrote in this conversation, so it can't use your computer. Start a new conversation to use it.";
-const LENDING_MEMORY_CHANGED = "This bot's memory was changed in a conversation you didn't write. Review it in Memory to use your computer again.";
-
-function cloudLendingRefusal(capability: Pick<InternalCapability, "botId" | "threadId" | "generation">): "unproven" | "not-owner" | "someone-else" | "memory-changed" | null {
-  const refusal = cloudHomeLendingRefusal(cloudLendingTurn(capability));
-  if (refusal) return refusal;
-  return lendingMemory?.reconcile(capability.botId, foreignTurnRunning(capability.botId), { cached: true }).changedBySomeoneElse ? "memory-changed" : null;
-}
-
-function cloudThreadStarters(threadId: string): (string | undefined)[] {
-  const room = store.groupByThread(threadId);
-  return [threadStarters.get(threadId), ...(room && room.threadId !== threadId ? [threadStarters.get(room.threadId)] : [])];
-}
-
-/** On a Cloud home a turn that may use the lent Mac reads only the owner's own conversations. */
-function cloudLendingView(capability: Pick<InternalCapability, "botId" | "threadId" | "generation">): boolean {
-  return CLOUD_HOME !== null && cloudHomeLendingRefusal(cloudLendingTurn(capability)) === null;
-}
-
-function cloudReportFromOthers(line: Message): boolean {
-  if (line.webhookPost) return true;
-  const routineId = line.automation?.routineId ?? (line.kind === "routine.run" ? line.routineRun?.routineId : undefined);
-  if (!routineId) return false;
-  // An outside event's run belongs to no routine, so its words are never the owner's.
-  const routine = routines?.listRoutines().find((candidate) => candidate.id === routineId);
-  return !routine || cloudRoutineAuthors?.authored(routine.id, routine) !== true;
 }
 
 /** The only conversations that may feed a bot's memory, daily log, recall or brief; dropped whenever a session is revoked. */
@@ -2951,6 +2902,11 @@ const store = new Store(
   (instanceId) => registry.cliTarget(instanceId)?.driverKind,
   () => appLanguage() ?? Intl.DateTimeFormat().resolvedOptions().locale,
 );
+const { cloudLendingTurn, cloudLendingRefusalNotice, cloudLendingRefusal, cloudThreadStarters, cloudLendingView, cloudReportFromOthers, roomTurnStarted, roomTurnEnded } = createCloudLendingTurns({
+  store, cloudHome: CLOUD_HOME !== null, directRequest: (threadId) => directRequestOwners.get(threadId), threadStarter: (threadId) => threadStarters.get(threadId),
+  ownerPerson: cloudProvenOwnerPerson, cardAnswerer: cloudCardAnswerer, activeRoutineRun: activeRoutineRunForThread, ownerStartedRun: (runId) => ownerStartedRoutineRuns.has(runId),
+  routineRunIsOwners: cloudRoutineRunIsOwners, routines: () => routines, routineAuthors: cloudRoutineAuthors, lentPlatform: () => sharedComputers.known(CLOUD_HOME_LENDER)[0]?.platform,
+  memoryChangedBySomeoneElse: (botId) => lendingMemory?.reconcile(botId, foreignTurnRunning(botId), { cached: true }).changedBySomeoneElse === true });
 const { stopThreadForPerson, stopOnTypedCommand, noteTeammatesLeftRunning } = createPersonStop({
   store, routines: () => routines, handoffs: () => handoffs, interruptDirectThread, clearUnattended,
   stopGoal: (threadId) => oneOnOneGoals.stop(threadId),
@@ -3674,6 +3630,8 @@ type GroupTurnOperation = {
   providerHandshakePending: boolean;
   queuedQueueIds?: string[];
   line?: RoomRoundLine;
+  /** The person's room line this run answers: its member turns, mentions included, act for whoever wrote it. */
+  requestMessageId?: string;
   goalRun?: LiveGoalRun;
 };
 
@@ -4337,6 +4295,7 @@ function beginGroupTurnOperation(
 
 function finishGroupTurnOperation(groupId: string, operation: GroupTurnOperation) {
   roomMemberLock.releaseThread(operation.threadId);
+  roomTurnEnded(operation);
   if (operation.goalRun && !operation.goalRun.finished) {
     finishGroupGoalRun(groupId, operation, "failed", "The team run ended before the lead reported an outcome.");
   }
@@ -10075,9 +10034,12 @@ async function runClaimedGroupMemberTurn(
     return true;
   }
   const internalGeneration = beginInternalCapabilityGeneration(threadId);
+  if (operation) roomTurnStarted(internalGeneration, operation);
   if (roomGuestConfined) guestDrivenTurns.set(threadId, internalGeneration);
-  // A room turn is never provably the owner's alone.
-  if (CLOUD_HOME) noteForeignTurn(bot.id, threadId, internalGeneration);
+  // Only a personal Cloud's owner answering their own line in a room they alone wrote in is theirs.
+  if (CLOUD_HOME && (!CLOUD_PERSONAL || cloudHomeLendingRefusal(cloudLendingTurn({ botId: bot.id, threadId, generation: internalGeneration })) !== null)) {
+    noteForeignTurn(bot.id, threadId, internalGeneration);
+  }
   const resourceOwner: TurnOwner = { threadId, generation: internalGeneration };
   turnResourceOwners.set(threadId, resourceOwner);
   let roomClaimFailure: RoomClaimEnd | undefined;
@@ -11263,6 +11225,10 @@ function startGroupTurn(
     threadId,
     goalCoordinator || autoRoute ? [] : responders.map((responder) => responder.id),
   );
+  // Only a person's own chat line; cloudHomeLendingRefusal still proves it is the owner's.
+  if (!goalCoordinator && message.role === "user" && !message.via && (!options.trigger || options.trigger.kind === "user" || options.trigger.kind === "owner")) {
+    operation.requestMessageId = message.id;
+  }
   const routing = autoRoute
     ? decideRoomResponder(decider, roomRoutingInput(group.name, text, routableMembers, historyBeforeSend, userNameFor(group.threadId), options.sender), {
         signal: operation.cancellation.signal,
@@ -13721,9 +13687,9 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
       // Off: a 404 like a route that never existed. On: a turn sees only the computers of the person it provably acts for.
       if (method === "GET" && path === "/api/internal/shared-computers" && lendingEnabled()) {
         const principal = sharedComputerPrincipal(internalCapability);
-        const why = CLOUD_HOME && !principal && sharedComputers.status(CLOUD_HOME_LENDER).length > 0 ? cloudLendingRefusal(internalCapability) : null;
-        const notice = why === "someone-else" ? { unavailable: LENDING_SOMEONE_ELSE } : why === "memory-changed" ? { unavailable: LENDING_MEMORY_CHANGED } : {};
-        return json(res, 200, { computers: sharedComputers.list(principal), ...sharedComputers.away(principal), ...sharedComputers.screenNotLent(principal), ...notice });
+        // `say` too: the bot says it instead of offering Use my Mac, which can't help while the computer is lent already.
+        const why = CLOUD_HOME && !principal && sharedComputers.status(CLOUD_HOME_LENDER).length > 0 ? cloudLendingRefusalNotice(internalCapability) : null;
+        return json(res, 200, { computers: sharedComputers.list(principal), ...sharedComputers.away(principal), ...sharedComputers.screenNotLent(principal), ...(why ? { unavailable: why, say: why } : {}) });
       }
       if (method === "POST" && path === "/api/internal/shared-computers" && lendingEnabled()) {
         const parsed = sharedComputerOperation.safeParse(await readInternalBody());
@@ -13734,10 +13700,8 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
           return json(res, 403, { error: "This bot has no computer. Change its Computer setting to use a shared computer's apps and screen." });
         }
         const principal = sharedComputerPrincipal(internalCapability);
-        const why = CLOUD_HOME && !principal ? cloudLendingRefusal(internalCapability) : null;
-        if (why === "someone-else" || why === "memory-changed") {
-          return json(res, 403, { error: why === "someone-else" ? LENDING_SOMEONE_ELSE : LENDING_MEMORY_CHANGED });
-        }
+        const why = CLOUD_HOME && !principal ? cloudLendingRefusalNotice(internalCapability) : null;
+        if (why) return json(res, 403, { error: why });
         return json(res, 200, { result: lentScreenResult(parsed.data, await sharedComputers.request(parsed.data, principal, () => lendingEnabled() && internalCapabilityIsActive(internalCapability))) });
       }
       if (method === "GET" && path === "/api/internal/agents") {

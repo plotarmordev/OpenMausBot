@@ -2767,7 +2767,7 @@ const useMyMac = installCloudLending({ ipcMain, localOnly: localWorkspaceOnly, s
   cloudPage: (channel, handler) => (event, ...args) => { if (!cloudPageAsking(event)) throw new Error(`${channel} is only available in this app's window`); return handler(event, ...args); },
   chooseFolder: () => lendingDialogs.chooseFolder("Choose a folder or drive My Cloud can use"),
   defaults: () => usualFolders(usualFolderPaths(name => app.getPath(name), os.homedir()), validateSharedFolders), validate: validateSharedFolders,
-  confirmScreen: lendingDialogs.confirmScreen });
+  confirmScreen: lendingDialogs.confirmScreen, confirmTerminal: lendingDialogs.confirmTerminal });
 const cloudSync = installCloudFiles({
   app, ipcMain, dialog, shell, powerMonitor, localWorkspaceOnly, localDataDir: desktopDataDir(),
   fetch: (...args) => session.defaultSession.fetch(...args),

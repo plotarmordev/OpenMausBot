@@ -10,6 +10,8 @@ export interface PageLending {
   screenAvailable: boolean;
   /** Its internet connection, for the bots' browsers on My Cloud. */
   internet: boolean;
+  /** The terminal: bots run any command here as the person. */
+  terminal: boolean;
   /** Whether My Cloud's browsing goes through it yet. */
   link?: "on" | "connecting" | "unsupported";
 }
@@ -37,4 +39,6 @@ export function installCloudLending(deps: Record<string, unknown>): {
   lendByDefault(input?: { projects?: string[]; asked?: boolean }): Promise<PageLending | null>;
   /** Apps and screen on top of what is lent; null while lending is off or computer control does not work yet. */
   lendScreen(): Promise<PageLending | null>;
+  /** The terminal on or off on top of what is lent; turning it on asks in main's own dialog first. */
+  lendTerminal(on: boolean): Promise<PageLending>;
 };

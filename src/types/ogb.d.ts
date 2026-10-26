@@ -118,7 +118,7 @@ const __APP_VERSION__: string;
       cloudAccount?: import("../../electron/cloud-account.mjs").CloudAccountBridge;
       /** "Let my bots use this Mac" (this PC, this computer), on My Cloud's own page in this app: its one switch and
        * what is lent (electron/cloud-lending-ipc.mjs). `open` shows this computer's own Settings, leaving the page. */
-      cloudLending?: { open(): Promise<void>; state?(): Promise<import("../../electron/cloud-lending-ipc.mjs").PageLending>; set?(on: boolean): Promise<import("../../electron/cloud-lending-ipc.mjs").PageLending>; screen?(on: boolean): Promise<import("../../electron/cloud-lending-ipc.mjs").PageLending>;
+      cloudLending?: { open(): Promise<void>; state?(): Promise<import("../../electron/cloud-lending-ipc.mjs").PageLending>; set?(on: boolean): Promise<import("../../electron/cloud-lending-ipc.mjs").PageLending>; screen?(on: boolean): Promise<import("../../electron/cloud-lending-ipc.mjs").PageLending>; terminal?(on: boolean): Promise<import("../../electron/cloud-lending-ipc.mjs").PageLending>;
         /** A bot's Use my Mac link: this app's own popup, which turns on every part of Let my bots use this Mac, in
          * `language` (the page's own). */
         offer?(language?: string): Promise<void>;

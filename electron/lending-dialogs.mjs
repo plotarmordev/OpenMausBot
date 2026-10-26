@@ -75,5 +75,16 @@ export function createLendingDialogs({ dialog, window, validate, isHome = async 
       });
       return response === 0;
     },
+    /** The terminal asked for from My Cloud's page: false when there is no window to ask in. */
+    async confirmTerminal() {
+      const parent = window();
+      if (!parent || parent.isDestroyed()) return false;
+      const { response } = await dialog.showMessageBox(parent, {
+        type: "warning", message: "Let My Cloud's bots run commands on this computer as you?",
+        detail: "There is no limit on what a command can do: they can read, change or delete anything you can, and install software. Only continue if you trust them with this computer. It turns off again whenever lending is turned off.",
+        buttons: ["Allow the terminal", "Cancel"], defaultId: 1, cancelId: 1,
+      });
+      return response === 0;
+    },
   };
 }
