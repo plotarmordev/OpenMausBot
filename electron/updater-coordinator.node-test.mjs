@@ -847,3 +847,81 @@ test("elevated install: a thrown error or a failed relaunch is reported, not lef
   assert.equal(relaunch.h.getState().status, "error");
   assert.equal(relaunch.h.getState().message, "cannot relaunch");
 });
+
+test("repeated silent check failures surface a retryable notice instead of staying idle forever", async () => {
+  const { updater, coordinator, getState } = harness();
+  updater.checkForUpdates = () => Promise.reject(new Error("getaddrinfo ENOTFOUND github.com"));
+
+  await coordinator.check();
+  await coordinator.check();
+  assert.equal(getState().status, "idle");
+  await coordinator.check();
+
+  assert.equal(getState().status, "error");
+  assert.match(getState().message, /Couldn't check for updates/);
+  assert.notEqual(getState().retryable, false);
+});
+
+test("a successful check resets the silent failure count", async () => {
+  const { updater, coordinator, getState } = harness();
+  updater.checkForUpdates = () => Promise.reject(new Error("offline"));
+  await coordinator.check();
+  await coordinator.check();
+  updater.checkForUpdates = async () => updater.emit("update-not-available");
+  await coordinator.check();
+  updater.checkForUpdates = () => Promise.reject(new Error("offline"));
+  await coordinator.check();
+  await coordinator.check();
+
+  assert.equal(getState().status, "idle");
+});
+
+test("a manual retry after the notice clears it and checks again", async () => {
+  const { updater, coordinator, getState } = harness();
+  updater.checkForUpdates = () => Promise.reject(new Error("offline"));
+  for (let i = 0; i < 3; i++) await coordinator.check();
+  assert.equal(getState().status, "error");
+
+  updater.checkForUpdates = async () => updater.emit("update-not-available");
+  await coordinator.check(true);
+
+  assert.equal(getState().status, "idle");
+});
+
+test("after the notice, the hourly check keeps going: reaching the feed clears it, and a release found is downloaded", async () => {
+  const h = harness();
+  h.updater.checkForUpdates = () => Promise.reject(new Error("offline"));
+  for (let i = 0; i < 3; i++) await h.coordinator.check();
+  assert.equal(h.getState().status, "error");
+
+  // a quiet hourly check that reaches the feed clears the notice by itself
+  let checks = 0;
+  h.updater.checkForUpdates = async () => {
+    checks += 1;
+    h.updater.emit("checking-for-update");
+    h.updater.emit("update-not-available");
+  };
+  await h.coordinator.check();
+  assert.equal(checks, 1);
+  assert.equal(h.getState().status, "idle");
+
+  // and once the notice is back, a release found by an hourly check still downloads
+  h.updater.checkForUpdates = () => Promise.reject(new Error("offline"));
+  for (let i = 0; i < 3; i++) await h.coordinator.check();
+  assert.equal(h.getState().status, "error");
+  await downloadInto(h);
+  assert.equal(h.getState().status, "downloaded");
+  assert.equal(h.getState().version, "2.0.0");
+});
+
+test("the check-failure notice never covers a staged update: hourly re-checks that fail stay silent", async () => {
+  const h = harness();
+  await downloadInto(h);
+  const staged = h.getState();
+  h.updater.checkForUpdates = () => {
+    h.updater.emit("error", new Error("offline"));
+    return Promise.reject(new Error("offline"));
+  };
+  for (let i = 0; i < 4; i++) await h.coordinator.check();
+  assert.deepEqual(h.getState(), staged);
+});

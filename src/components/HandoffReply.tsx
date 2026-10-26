@@ -2,10 +2,22 @@ import { ChevronRight } from "lucide-react";
 import type { ReactNode } from "react";
 import type { Bot, Message } from "@/state/store";
 import { handoffResult } from "@/lib/handoff-result";
+import { t } from "@/lib/i18n";
 import { BotAvatar } from "./Avatar";
 
 export function HandoffReply({ message, children }: { message: Message; children: ReactNode }) {
   const result = handoffResult(message);
+  const doneWhen = message.doneWhen?.trim();
+  if (doneWhen) {
+    return (
+      <div className="flex flex-col items-start gap-1">
+        {children}
+        <p data-handoff-done-when className="max-w-[min(38rem,100%)] truncate px-3 text-[12px] text-ink-secondary" title={doneWhen}>
+          {t("chat.handoffDoneWhen", { criteria: doneWhen })}
+        </p>
+      </div>
+    );
+  }
   if (!result) return <div className="flex justify-start">{children}</div>;
   return (
     <div className="flex flex-col items-start gap-1" data-handoff-reply={message.roomRequest?.id}>

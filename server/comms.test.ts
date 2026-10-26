@@ -581,6 +581,7 @@ describe("routine comms e2e on the job runtime (fake ACP fleet)", () => {
       const sent = chip(askerBot.messages, "Sent to Helper");
       expect(sent).toBeTruthy();
       expect(sent.tool.output).toBe("followup");
+      expect(sent.doneWhen).toBe("the export opens in Numbers");
       expect(sent.threadRef).toMatchObject({ botId: helper.id, threadId: work.threadId });
       const replied = chip(askerBot.messages, "Helper replied");
       expect(replied.from?.botId).toBe(helper.id);

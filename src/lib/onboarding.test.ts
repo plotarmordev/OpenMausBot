@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   aiChoices,
   beatWidth,
@@ -6,7 +6,7 @@ import {
   cloudBeatPossible,
   cloudBeatWanted,
   cloudSignInDue,
-  flowDotsShown,
+  flowProgress,
   companyModelCount,
   completionPatch,
   EMPTY_ONBOARDING,
@@ -20,11 +20,14 @@ import {
   ONBOARDING_CLOUD_HINT,
   organisationSignIn,
   previousBeat,
+  resumeBeat,
   showWelcome,
   welcomeOnScreen,
   welcomeDue,
   welcomeViewer,
   WELCOME_VERSION,
+  markWelcomeFinished,
+  welcomeFinishedThisLaunch,
 } from "./onboarding";
 
 const done = { completedAt: "2026-09-09T10:00:00.000Z", version: WELCOME_VERSION, reelSeen: false, hintsSeen: [] };
@@ -185,89 +188,98 @@ describe("persistence patches", () => {
 });
 
 describe("beat machine", () => {
-  it("lists beats for the desktop app with the reel off", () => {
-    expect(beatsFor({ dictation: true, reel: false })).toEqual(["hello", "engines", "permissions", "phone", "bot"]);
-  });
+  const every = () => {
+    const all: Array<Parameters<typeof beatsFor>[0]> = [];
+    for (const dictation of [true, false]) for (const hosted of [true, false]) for (const aiReady of [true, false])
+      for (const setupImport of [true, false]) for (const cloud of [true, false]) all.push({ dictation, hosted, aiReady, setupImport, cloud });
+    return all;
+  };
 
-  it("leaves out the AI step when an AI already works, whatever else is on", () => {
-    expect(beatsFor({ dictation: true, reel: false, aiReady: true })).toEqual(["hello", "permissions", "phone", "bot"]);
-    expect(beatsFor({ dictation: true, reel: true, setupImport: true, cloud: true, aiReady: true }))
-      .toEqual(["hello", "reel", "import", "permissions", "phone", "cloud", "bot"]);
-    expect(beatsFor({ dictation: true, reel: false, aiReady: false })).toContain("engines");
-  });
-
-  it("drops the permissions beat where there is no microphone to ask for", () => {
-    expect(beatsFor({ dictation: false, reel: false })).toEqual(["hello", "engines", "phone", "bot"]);
-  });
-
-  it("slots the reel after hello when enabled", () => {
-    expect(beatsFor({ dictation: false, reel: true })).toEqual(["hello", "reel", "engines", "phone", "bot"]);
-  });
-
-  it("always ends on the bot beat", () => {
-    for (const dictation of [true, false]) {
-      for (const reel of [true, false]) {
-        expect(beatsFor({ dictation, reel }).at(-1)).toBe("bot");
-        expect(beatsFor({ dictation, reel, hosted: true }).at(-1)).toBe("bot");
-      }
+  it("never shows the feature reel, the phone step or the first-bot step, whatever else is on", () => {
+    for (const options of every()) {
+      const beats: string[] = beatsFor(options);
+      for (const gone of ["reel", "phone", "bot"]) expect(beats, JSON.stringify(options)).not.toContain(gone);
+      expect(beats[0], JSON.stringify(options)).toBe("hello");
+      expect(new Set(beats).size).toBe(beats.length);
     }
   });
 
-  it("gives a hosted workspace a greeting and the bot, nothing about this computer", () => {
-    expect(beatsFor({ dictation: true, reel: true, hosted: true })).toEqual(["hello", "bot"]);
-    expect(beatsFor({ dictation: true, reel: true, hosted: false })).toEqual(["hello", "reel", "engines", "permissions", "phone", "bot"]);
+  it("greets first, then asks to connect an AI when none works", () => {
+    expect(beatsFor({ dictation: false })).toEqual(["hello", "engines"]);
+    expect(beatsFor({ dictation: true })).toEqual(["hello", "engines", "permissions"]);
+  });
+
+  it("leaves out the AI step when an AI already works, whatever else is on", () => {
+    expect(beatsFor({ dictation: false, aiReady: true })).toEqual(["hello"]);
+    expect(beatsFor({ dictation: true, aiReady: true })).toEqual(["hello", "permissions"]);
+    expect(beatsFor({ dictation: true, setupImport: true, cloud: true, aiReady: true })).toEqual(["hello", "import", "permissions", "cloud"]);
+    expect(beatsFor({ dictation: true, aiReady: false })).toContain("engines");
+  });
+
+  it("drops the permissions beat where there is no microphone to ask for", () => {
+    expect(beatsFor({ dictation: false, setupImport: true, cloud: true })).toEqual(["hello", "engines", "import", "cloud"]);
+  });
+
+  it("gives a hosted workspace only the greeting, nothing about this computer", () => {
+    for (const options of every().filter((o) => o.hosted)) expect(beatsFor(options)).toEqual(["hello"]);
   });
 
   it("puts the import step right after the engines, only when this computer has something to bring in", () => {
-    expect(beatsFor({ dictation: true, reel: false, setupImport: true })).toEqual(["hello", "engines", "import", "permissions", "phone", "bot"]);
-    expect(beatsFor({ dictation: false, reel: true, setupImport: true })).toEqual(["hello", "reel", "engines", "import", "phone", "bot"]);
-    expect(beatsFor({ dictation: true, reel: false, setupImport: false })).toEqual(beatsFor({ dictation: true, reel: false }));
-    expect(beatsFor({ dictation: true, reel: true, hosted: true, setupImport: true })).toEqual(["hello", "bot"]);
-    expect(nextBeat(beatsFor({ dictation: true, reel: false, setupImport: true }), "engines")).toBe("import");
-    expect(flowDotsShown("import")).toBe(true);
+    expect(beatsFor({ dictation: true, setupImport: true })).toEqual(["hello", "engines", "import", "permissions"]);
+    expect(beatsFor({ dictation: true, setupImport: false })).toEqual(beatsFor({ dictation: true }));
+    expect(nextBeat(beatsFor({ dictation: true, setupImport: true }), "engines")).toBe("import");
     expect(beatWidth("import")).toBeGreaterThan(beatWidth("hello"));
   });
 
-  it("with both, the import step follows the engines and the Cloud step comes just before the first bot", () => {
-    expect(beatsFor({ dictation: true, reel: true, setupImport: true, cloud: true }))
-      .toEqual(["hello", "reel", "engines", "import", "permissions", "phone", "cloud", "bot"]);
-    expect(beatsFor({ dictation: false, reel: false, setupImport: true, cloud: true })).toEqual(["hello", "engines", "import", "phone", "cloud", "bot"]);
-    expect(beatsFor({ dictation: true, reel: true, hosted: true, setupImport: true, cloud: true })).toEqual(["hello", "bot"]);
-  });
-
   it("walks forward and back and stops at the ends", () => {
-    const beats = beatsFor({ dictation: true, reel: false });
+    const beats = beatsFor({ dictation: true });
     expect(nextBeat(beats, "hello")).toBe("engines");
-    expect(nextBeat(beats, "bot")).toBeNull();
+    expect(nextBeat(beats, "permissions")).toBeNull();
     expect(previousBeat(beats, "engines")).toBe("hello");
     expect(previousBeat(beats, "hello")).toBeNull();
-    expect(nextBeat(beats, "reel")).toBeNull();
+    expect(nextBeat(beats, "cloud")).toBeNull();
+  });
+
+  it("moves on from a step that left the list to the next one still offered, so it never ends the welcome early", () => {
+    expect(nextBeat(["hello", "permissions", "cloud"], "engines")).toBe("permissions");
+    expect(nextBeat(["hello", "cloud"], "import")).toBe("cloud");
+    expect(previousBeat(["hello", "permissions"], "engines")).toBe("hello");
+    expect(nextBeat(["hello"], "engines"), "nothing after it: the welcome is done").toBeNull();
+    expect(previousBeat(["engines", "permissions"], "hello")).toBeNull();
   });
 
   it("gives the engines beat the widest card", () => {
     expect(beatWidth("engines")).toBeGreaterThan(beatWidth("hello"));
-    expect(beatWidth("bot")).toBeGreaterThan(beatWidth("hello"));
+    expect(beatWidth("cloud")).toBeGreaterThan(beatWidth("hello"));
   });
 
-  it("shows one row of dots at a time: the reel's own scene dots replace the flow's", () => {
-    expect(flowDotsShown("reel")).toBe(false);
-    for (const beat of beatsFor({ dictation: true, reel: true }).filter((id) => id !== "reel")) {
-      expect(flowDotsShown(beat)).toBe(true);
+  it("counts every step once, so the dots and the counter always agree", () => {
+    for (const options of every()) {
+      const beats = beatsFor(options);
+      beats.forEach((beat, index) => expect(flowProgress(beats, beat)).toEqual({ current: index + 1, total: beats.length }));
     }
+    expect(flowProgress(["hello", "engines"], "cloud"), "a step that left the list never reads as Step 0").toEqual({ current: 1, total: 2 });
+  });
+
+  it("resumes a saved step, or the nearest earlier step still offered when it is not offered yet", () => {
+    const beats = beatsFor({ dictation: true });
+    expect(resumeBeat(beats, "permissions")).toBe("permissions");
+    expect(resumeBeat(beats, "import"), "the import step joins once this computer has been looked at").toBe("engines");
+    expect(resumeBeat(beatsFor({ dictation: false, aiReady: true }), "cloud")).toBe("hello");
+    expect(resumeBeat(beats, undefined)).toBe("hello");
+    expect(resumeBeat(beats, "reel" as never), "a step from an older welcome").toBe("hello");
   });
 });
 
 describe("the welcome's MausBot Cloud beat", () => {
-  it("comes after the phone and before the first bot, only when the Cloud can be bought here", () => {
-    expect(beatsFor({ dictation: true, reel: true, cloud: true })).toEqual(["hello", "reel", "engines", "permissions", "phone", "cloud", "bot"]);
-    expect(beatsFor({ dictation: false, reel: false, cloud: true })).toEqual(["hello", "engines", "phone", "cloud", "bot"]);
-    expect(beatsFor({ dictation: true, reel: true, cloud: false })).not.toContain("cloud");
-    expect(beatsFor({ dictation: true, reel: true })).not.toContain("cloud");
-    expect(beatsFor({ dictation: true, reel: true, hosted: true, cloud: true }), "never to a hosted workspace").toEqual(["hello", "bot"]);
-    for (const dictation of [true, false]) for (const reel of [true, false]) expect(beatsFor({ dictation, reel, cloud: true }).at(-1)).toBe("bot");
-    const beats = beatsFor({ dictation: false, reel: false, cloud: true });
-    expect([nextBeat(beats, "phone"), nextBeat(beats, "cloud"), previousBeat(beats, "bot")]).toEqual(["cloud", "bot", "cloud"]);
-    expect(beatWidth("cloud")).toBeGreaterThan(beatWidth("hello")); expect(flowDotsShown("cloud")).toBe(true);
+  it("comes last, only when the Cloud can be bought here", () => {
+    expect(beatsFor({ dictation: true, cloud: true })).toEqual(["hello", "engines", "permissions", "cloud"]);
+    expect(beatsFor({ dictation: false, cloud: true })).toEqual(["hello", "engines", "cloud"]);
+    expect(beatsFor({ dictation: true, cloud: false })).not.toContain("cloud");
+    expect(beatsFor({ dictation: true })).not.toContain("cloud");
+    expect(beatsFor({ dictation: true, hosted: true, cloud: true }), "never to a hosted workspace").toEqual(["hello"]);
+    const beats = beatsFor({ dictation: false, cloud: true });
+    expect([nextBeat(beats, "engines"), nextBeat(beats, "cloud"), previousBeat(beats, "cloud")]).toEqual(["cloud", null, "engines"]);
   });
 
   it("is wanted only on this computer's own page with the Cloud bridge, unbranded, for an account that may buy, with the Admin's offer loaded", () => {
@@ -303,5 +315,14 @@ describe("the welcome's MausBot Cloud beat", () => {
     expect(welcomeOnScreen(), "a second hide of the same mount changes nothing").toBe(true);
     second();
     expect(welcomeOnScreen()).toBe(false);
+  });
+});
+
+describe("welcomeFinishedThisLaunch", () => {
+  afterEach(() => vi.unstubAllGlobals());
+  it("remembers in memory that the welcome finished when browser storage is blocked", () => {
+    vi.stubGlobal("sessionStorage", { getItem: () => { throw new Error("blocked"); }, setItem: () => { throw new Error("blocked"); } });
+    expect(() => markWelcomeFinished()).not.toThrow();
+    expect(welcomeFinishedThisLaunch()).toBe(true);
   });
 });

@@ -30,6 +30,9 @@ export function isNewerVersion(candidate, base) {
   return a.pre.localeCompare(b.pre, "en", { numeric: true }) > 0;
 }
 
+/** Three consecutive hourly failures: the app has gone about three hours without seeing the release feed. */
+export const QUIET_FAILURES_BEFORE_NOTICE = 3;
+
 // `elevatedInstall` (Ubuntu .deb, electron/elevated-install.mjs) resolves { ok } or { ok: false, reason, detail }; `relaunch` reopens the app after it.
 // Anything but a closed prompt or a checksum failure falls back to `handOffInstall`.
 export function createUpdaterCoordinator(
@@ -50,6 +53,9 @@ export function createUpdaterCoordinator(
   // The downloaded or handed-off update the person has not acted on: { version, patch } (patch restores its card). Hourly checks look for a newer one.
   let staged = null;
   const routedErrors = new WeakSet();
+  // Hourly checks fail quietly one at a time (offline laptop, a feed still uploading), but a feed that stays
+  // unreachable must not leave the app on an old version with no sign of it.
+  let quietFailures = 0;
 
   const routeError = (manual, error) => {
     if (recoveryRequired) return;
@@ -82,6 +88,12 @@ export function createUpdaterCoordinator(
       return;
     }
     if (!shown) {
+      quietFailures += 1;
+      if (quietFailures >= QUIET_FAILURES_BEFORE_NOTICE) {
+        // The notice does not own the state: hourly checks go on, and the first one that reaches the feed clears it.
+        setState({ status: "error", message: `Couldn't check for updates. ${updateErrorMessage(error)}` });
+        return;
+      }
       setState({ status: "idle" });
       return;
     }
@@ -101,6 +113,7 @@ export function createUpdaterCoordinator(
     if (checkOwnsState()) setState({ status: "checking" });
   });
   updater.on("update-available", (info) => {
+    quietFailures = 0;
     if (checkOperation?.recheck && !downloadOperation && !installOperation && !recoveryRequired && staged && isNewerVersion(info?.version, staged.version)) {
       download(Boolean(checkOperation.manual), {
         version: info?.version,
@@ -120,6 +133,7 @@ export function createUpdaterCoordinator(
     }
   });
   updater.on("update-not-available", () => {
+    quietFailures = 0;
     if (checkOwnsState()) setState({ status: "idle" });
   });
   // macOS native staging (quitAndInstall) reports failure only through this event; quitAndInstall returns void.

@@ -37,4 +37,17 @@ describe("HandoffChip", () => {
       expect(markup).not.toContain("data-handoff-reply");
     }
   });
+
+  it("puts the hand-off's done-when on one muted line under the sent chip", () => {
+    const sent: Message = { ...row("request"), roomRequest: undefined, tool: { name: "Sent to Mira", ok: true }, doneWhen: "the export opens in Numbers" };
+    const markup = render(sent);
+    expect(markup).toContain("Sent to Mira");
+    expect(markup).toContain("data-handoff-done-when");
+    expect(markup).toContain("Done when: the export opens in Numbers");
+  });
+
+  it("adds no done-when line when the hand-off set none", () => {
+    const sent: Message = { ...row("request"), roomRequest: undefined, tool: { name: "Sent to Mira", ok: true } };
+    expect(render(sent)).not.toContain("data-handoff-done-when");
+  });
 });

@@ -301,7 +301,7 @@ function ReplayAppTourButton() {
 function ReplayTourRow() {
   const { dispatch } = useStore();
   return (
-    <SettingRow title={t("settings.welcome.title")} subtitle={t("settings.welcome.subtitle")}>
+    <SettingRow title={t("settings.welcome.title")} subtitle={t("settings.welcome.subtitleShort")}>
       <div className="flex flex-wrap justify-end gap-2">
         <ReplayAppTourButton />
         <button

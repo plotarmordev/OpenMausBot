@@ -103,7 +103,7 @@ export function useDesktopNotices(desktop: DesktopNoticesBridge | undefined): De
 const CLICKS: ReadonlySet<CloudProPopupAction> = new Set(["upgrade", "manage", "see_plans"]);
 
 export function reportCloudProPopup(action: CloudProPopupAction, who: Who, page: CloudProPopupPage) {
-  if (who.email && CLICKS.has(action) && analyticsChoiceKnown()) identifyEmail(who.email, { submitted: false });
+  if (who.email && CLICKS.has(action) && analyticsChoiceKnown()) identifyEmail(who.email);
   track("cloud_pro_popup", { action, plan: who.plan, signed_in: who.signedIn, page });
 }
 

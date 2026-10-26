@@ -91,9 +91,10 @@ let currentMode: string | null = modes[0] ?? null;
 let currentFast: string | null = null;
 const taskIdFile = process.env.FAKE_ACP_TASKID_FILE ?? "";
 const peerIdOf = (list: string): string => /id: ([\w-]+)/.exec(list)?.[1] ?? "";
-function handoffCall(message: string, options: { consult?: boolean; reason?: string } = {}): { name: string; args: (list: string) => object } {
+function handoffCall(message: string, options: { consult?: boolean; reason?: string; doneWhen?: string } = {}): { name: string; args: (list: string) => object } {
   const reason = options.reason ? { reason: options.reason } : {};
-  return { name: "coordinate_bots", args: (list) => ({ bot_ids: [peerIdOf(list)], message, ...(options.consult ? { consult: true } : {}), ...reason }) };
+  const doneWhen = options.doneWhen ? { done_when: options.doneWhen } : {};
+  return { name: "coordinate_bots", args: (list) => ({ bot_ids: [peerIdOf(list)], message, ...(options.consult ? { consult: true } : {}), ...reason, ...doneWhen }) };
 }
 const handoffIdOf = (reply: string): string => /"requestId":"([\w-]+)"/.exec(reply)?.[1] ?? "";
 const statusCall = (id: string): { name: string; args: () => object } => ({ name: "assignment_status", args: () => ({ id }) });
@@ -1159,7 +1160,7 @@ function handle(msg: any) {
       if (mode === "delegate-peer" && agentsMcp) {
         void driveMcp(agentsMcp, [
           { name: "list_bots", args: () => ({}) },
-          handoffCall("delegated task", { reason: "followup" }),
+          handoffCall("delegated task", { reason: "followup", doneWhen: "the export opens in Numbers" }),
         ])
           .then((reply) => {
             out({ jsonrpc: "2.0", method: "session/update", params: { update: { sessionUpdate: "agent_message_chunk", content: { text: `delegated: ${reply}` } } } });
