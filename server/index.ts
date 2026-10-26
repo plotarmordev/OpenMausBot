@@ -241,7 +241,7 @@ import { createOneOnOneGoals } from "./host/one-on-one-goals.ts";
 
 import { BUILT_IN_DRIVERS } from "./drivers/builtIn.ts";
 import { openCodeProviderKeysAllowed, setOpenCodeProviderKeyPolicy } from "./drivers/acp/opencode-go.ts";
-import { readMessageText, recallMessages, recentMessages, closeMessageSearch, closeMessageDb, chatFollowups, cancelledChatFollowup, settleChatFollowups, threadsReferencing, logNotification, lastRowAt } from "./message-db.ts";
+import { readMessageText, recallMessages, recentMessages, closeMessageSearch, closeMessageDb, chatFollowups, hasNewerQueuedInput, cancelledChatFollowup, settleChatFollowups, threadsReferencing, logNotification, lastRowAt } from "./message-db.ts";
 import { briefCrossingLabel, claimRecallCrossings, recallCrossingLabel } from "./recall-disclosure.ts";
 import { parseSince, parseUntil, recentWork, recentWorkPrompt, turnOutcomeLine } from "./recent-work.ts";
 import { chiefEscalationsEnabled, NEEDS_INPUT_GATE, peerApprovalGate, RAISED_GATE } from "./escalations.ts";
@@ -7412,9 +7412,11 @@ function drainQueuedSendsNow() {
       const callbacks = queuedRecoveryCallbacks.get(queueId);
       const current = store.projectBotForTask(botId, threadId);
       const checked = current && checkedTaskModelSwitch(current, recovery.selection, false, false, true);
+      const latestInput = store.activePath(threadId).findLast(m => m.role === "user" && m.kind === "text");
       const stale = cfg.automaticRecovery?.enabled !== true || !current || !store.taskByThread(botId, threadId)?.cwd ||
         directRequestOwners.get(threadId)?.stopped ||
-        store.activePath(threadId).findLast(m => m.role === "user" && m.kind === "text")?.id !== recovery.recoveryUserMessageId ||
+        latestInput?.id !== recovery.recoveryUserMessageId || latestInput?.requestCancelled ||
+        hasNewerQueuedInput("bot", botId, threadId, queueId) ||
         JSON.stringify(current.modelSelection) !== JSON.stringify(recovery.from) ||
         !registry.get(recovery.selection.instanceId)?.enabled || !checked?.ok;
       const fail = (message: string) => {

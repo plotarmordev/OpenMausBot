@@ -20,8 +20,11 @@ after admission; cancelling or superseding the queued recovery does not select
 the backup. A verified person-main recovery retains its immediate capacity
 exemption. Queue dispatch rechecks the global enable flag, original request,
 provider eligibility and model selection, including the source selection of
-each step in an ordered fallback list. Disabling recovery while it waits settles
-the item without selecting the backup or recording a recovery switch.
+each step in an ordered fallback list. Dispatch also checks the original line's
+persisted cancellation and newer pending input in the durable queue. Stop remains
+effective across restart; a newer queued message supersedes recovery without
+being replayed or reordered. Disabling recovery while it waits settles the item
+without selecting the backup or recording a recovery switch.
 
 A pending recovery survives restart and dispatches once when admitted. A recovery
 already dispatching at shutdown is interrupted, not replayed: restart retains
