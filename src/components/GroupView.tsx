@@ -1,4 +1,5 @@
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { isFormattedReply } from "@/lib/formatted-reply";
 import { activeLocale, t } from "@/lib/i18n";
 import { useShowThreads } from "@/lib/thread-preferences";
 import { useReactor } from "@/lib/cloud-guest";
@@ -190,7 +191,7 @@ function RoomTextMessage({
   const replyGroup = useMemo(() => !user && botText.trim() ? replyAttachmentGroup(botText, m.attachments) : null, [user, botText, m.attachments]);
   return (
     <div {...{ [MESSAGE_ROW]: "" }} className={cn("group flex w-full flex-col", user ? "items-end" : "items-start")}>
-      {speaker && <div className="mb-0.5 px-1 text-[11.5px] font-medium text-ink-secondary">{speaker}</div>}
+      {speaker && <div className="mb-0.5 px-1 text-[12px] font-medium text-ink-secondary">{speaker}</div>}
       <div className={cn("flex w-full items-end gap-1.5", user ? "justify-end" : "justify-start")}>
         {user && (
           <MessageActions side="user" menu={userMessageMenu({ messageId: m.id, pin })}>
@@ -205,7 +206,9 @@ function RoomTextMessage({
             !user && emerging && "turn-answer",
             !user && !m.text?.trim() && !m.replyToId && m.attachments?.length
               ? "text-ink"
-              : cn(user ? "chat-text whitespace-pre-wrap bg-bubble-user px-4 py-2.5 text-ink" : "bg-card px-4 py-2.5 text-ink", simple && SIMPLE_BUBBLE),
+              : !user && isFormattedReply(m.text ?? "")
+                ? "w-full max-w-[min(var(--chat-prose-max),var(--chat-card-pct))] px-1 text-ink"
+                : cn(user ? "chat-text whitespace-pre-wrap bg-bubble-user px-4 py-2.5 text-ink" : "bg-card px-4 py-2.5 text-ink", simple && SIMPLE_BUBBLE),
           )}
           title={new Date(m.at).toLocaleString()}
         >
@@ -248,12 +251,12 @@ function RoomTextMessage({
                 <div className="mt-1 text-[11px] text-ink-secondary">Sent through the API, not typed here</div>
               )}
               {collapsible && (
-                <button type="button" onClick={() => setExpanded(true)} className="mt-1 text-[12.5px] text-ink-secondary hover:text-ink">
+                <button type="button" onClick={() => setExpanded(true)} className="mt-1 text-[13px] text-ink-secondary hover:text-ink">
                   {t("chat.showFull")}
                 </button>
               )}
               {expanded && (
-                <button type="button" onClick={() => setExpanded(false)} className="mt-1 text-[12.5px] text-ink-secondary hover:text-ink">
+                <button type="button" onClick={() => setExpanded(false)} className="mt-1 text-[13px] text-ink-secondary hover:text-ink">
                   {t("chat.showLess")}
                 </button>
               )}
@@ -711,14 +714,14 @@ function RoomSetup({ group, members }: { group: Group; members: Bot[] }) {
     <section
       data-testid="room-setup"
       aria-labelledby="room-setup-title"
-      className="relative z-20 w-full overflow-visible rounded-3xl border border-hairline/50 bg-card shadow-xl shadow-black/10"
+      className="relative z-20 w-full overflow-visible rounded-2xl border border-hairline/50 bg-card shadow-xl shadow-black/10"
     >
       <div className="rounded-t-3xl border-b border-hairline/40 bg-panel/70 px-5 py-5 sm:px-7">
         <div className="flex items-start gap-3">
           <span className="flex size-9 shrink-0 items-center justify-center rounded-xl bg-accent text-sm font-bold text-white">1</span>
           <div>
             <h1 id="room-setup-title" className="text-xl font-semibold tracking-tight text-ink">{t("room.setup.title", { name: group.name })}</h1>
-            <p className="mt-1 max-w-[560px] text-[13.5px] leading-relaxed text-ink-secondary">
+            <p className="mt-1 max-w-[560px] text-[14px] leading-relaxed text-ink-secondary">
               {t("room.setup.detail")}
             </p>
           </div>
@@ -739,7 +742,7 @@ function RoomSetup({ group, members }: { group: Group; members: Bot[] }) {
               value={folder}
               onChange={(event) => setFolder(event.target.value)}
               placeholder={t("room.folder.own")}
-              className="min-w-0 flex-1 rounded-xl border border-hairline/50 bg-inset px-3 py-2.5 font-mono text-[12.5px] text-ink placeholder:text-ink-secondary focus:border-accent focus:outline-none"
+              className="min-w-0 flex-1 rounded-xl border border-hairline/50 bg-inset px-3 py-2.5 font-mono text-[13px] text-ink placeholder:text-ink-secondary focus:border-accent focus:outline-none"
             />
             {window.ogb?.pickFolder && (
               <button
@@ -785,7 +788,7 @@ function RoomSetup({ group, members }: { group: Group; members: Bot[] }) {
                 </span>
                 {jevOn ? t("room.responder.autoOption") : t("room.responder.autoOptionOff")}
               </span>
-              <span className="ml-6 mt-2 text-[11.5px] text-ink-secondary">
+              <span className="ml-6 mt-2 text-[12px] text-ink-secondary">
                 {jevOn ? t("room.setup.autoDetail") : t("room.setup.autoDetailOff")}
               </span>
             </button>
@@ -827,7 +830,7 @@ function RoomSetup({ group, members }: { group: Group; members: Bot[] }) {
                     className={cn("shrink-0 text-ink-secondary transition-transform", leadPickerOpen && "rotate-180")}
                   />
                 </span>
-                <span className="ml-6 mt-2 truncate text-[11.5px] text-ink-secondary">
+                <span className="ml-6 mt-2 truncate text-[12px] text-ink-secondary">
                   {selectedLead?.name ?? t("room.behavior.chooseTeammate")}
                 </span>
               </button>
@@ -838,8 +841,8 @@ function RoomSetup({ group, members }: { group: Group; members: Bot[] }) {
                   className={cn("absolute left-0 top-full z-30 mt-2 w-72 max-w-[calc(100vw-3rem)] overflow-hidden rounded-2xl border border-hairline/60 bg-panel shadow-2xl shadow-black/20", leadMotion.className)} {...leadMotion.exitProps}
                 >
                   <div className="border-b border-hairline/40 px-3 py-2.5">
-                    <div className="text-[12.5px] font-semibold text-ink">{t("room.behavior.chooseLead")}</div>
-                    <div className="mt-0.5 text-[11.5px] text-ink-secondary">{t("room.behavior.chooseLeadDetail")}</div>
+                    <div className="text-[13px] font-semibold text-ink">{t("room.behavior.chooseLead")}</div>
+                    <div className="mt-0.5 text-[12px] text-ink-secondary">{t("room.behavior.chooseLeadDetail")}</div>
                   </div>
                   <div className="max-h-48 overflow-y-auto p-1.5">
                     {members.map((member) => {
@@ -905,7 +908,7 @@ function RoomSetup({ group, members }: { group: Group; members: Bot[] }) {
                 </span>
                 {t("room.responder.everyoneOption")}
               </span>
-              <span className="ml-6 mt-2 text-[11.5px] text-ink-secondary">{t("room.setup.allMembers")}</span>
+              <span className="ml-6 mt-2 text-[12px] text-ink-secondary">{t("room.setup.allMembers")}</span>
             </button>
 
             <button
@@ -935,7 +938,7 @@ function RoomSetup({ group, members }: { group: Group; members: Bot[] }) {
                 </span>
                 {t("room.responder.mentionsOption")}
               </span>
-              <span className="ml-6 mt-2 text-[11.5px] text-ink-secondary">{t("room.setup.onlyMentioned")}</span>
+              <span className="ml-6 mt-2 text-[12px] text-ink-secondary">{t("room.setup.onlyMentioned")}</span>
             </button>
           </div>
         </fieldset>
@@ -952,7 +955,7 @@ function RoomSetup({ group, members }: { group: Group; members: Bot[] }) {
           />
         </label>
 
-        {error && <div role="alert" className="rounded-xl border border-danger/30 bg-danger/10 px-3 py-2 text-[12.5px] text-danger">{error}</div>}
+        {error && <div role="alert" className="rounded-xl border border-danger/30 bg-danger/10 px-3 py-2 text-[13px] text-danger">{error}</div>}
         <div className="flex flex-col-reverse gap-2 sm:flex-row sm:items-center sm:justify-between">
           <button
             type="button"
@@ -1294,7 +1297,7 @@ export function GroupView({ group }: { group: Group }) {
             title={t("room.bulletin.title")}
           >
             <Pin size={12} className="shrink-0 text-ink-secondary" />
-            <span dir="auto" className={cn("truncate text-[12.5px]", group.bulletin ? "text-ink-secondary" : "text-ink-tertiary")}>
+            <span dir="auto" className={cn("truncate text-[13px]", group.bulletin ? "text-ink-secondary" : "text-ink-tertiary")}>
               {group.bulletin.split("\n")[0] || (remoteClient ? t("room.bulletin.none") : t("room.bulletin.add"))}
             </span>
           </button>
@@ -1323,8 +1326,8 @@ export function GroupView({ group }: { group: Group }) {
                 className="flex min-w-0 flex-1 items-baseline gap-2 text-left"
                 title={t("chat.pinnedJump")}
               >
-                <span className="shrink-0 text-[11.5px] font-medium text-accent">{sender}</span>
-                <span dir="auto" className="truncate text-[12.5px] text-ink-secondary">{text}</span>
+                <span className="shrink-0 text-[12px] font-medium text-accent">{sender}</span>
+                <span dir="auto" className="truncate text-[13px] text-ink-secondary">{text}</span>
               </button>
               <button
                 onClick={() => dispatch({ type: "patchGroup", groupId: group.id, patch: { pinnedMessageId: "" } })}
@@ -1402,7 +1405,7 @@ export function GroupView({ group }: { group: Group }) {
             <div className="flex justify-center">
               <button
                 onClick={showLater}
-                className="rounded-full border border-hairline/40 bg-panel px-3 py-1 text-[12.5px] text-ink-secondary hover:bg-raised hover:text-ink"
+                className="rounded-full border border-hairline/40 bg-panel px-3 py-1 text-[13px] text-ink-secondary hover:bg-raised hover:text-ink"
               >
                 {t("chat.showLater", { count: laterCount })}
               </button>

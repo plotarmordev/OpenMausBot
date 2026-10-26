@@ -94,6 +94,27 @@ describe("UpdateBanner", () => {
     expect(html).not.toContain("Restart to update");
   });
 
+  it("says why the automatic install did not run before the hand-off steps", () => {
+    const html = render({
+      status: "handed-off", version: "0.2.0", installMode: "restart", terminalOpened: true,
+      message: "This session could not ask for administrator rights.",
+      command: "sudo apt-get install -y '/tmp/x.deb'",
+    });
+    expect(html).toContain("This session could not ask for administrator rights.");
+    expect(html).toContain("paste it in the terminal that opened");
+    // a plain hand-off has nothing extra to explain
+    expect(render({ status: "handed-off", version: "0.2.0", installMode: "handoff", terminalOpened: true, command: "x" }))
+      .toContain("Command copied");
+  });
+
+  it("a .deb that installs itself offers the restart, with the password step explained while it runs", () => {
+    const ready = render({ status: "downloaded", version: "0.2.0", installMode: "restart" });
+    expect(ready).toContain("Restart to update");
+    expect(ready).not.toContain("terminal");
+    const running = render({ status: "installing", version: "0.2.0", installMode: "restart", message: "Installing the update. Enter your password if asked." });
+    expect(running).toContain("Enter your password if asked.");
+  });
+
   it("shows the failure cause as well as the required restart without offering a retry", () => {
     const html = render({ status: "error", retryable: false,
       message: "Not enough disk space to prepare the update. Free some space, then try again. Quit and reopen OpenMausBot before trying the update again.",

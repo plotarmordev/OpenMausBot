@@ -31,7 +31,7 @@ export function FeatureReel({ onNext, setMascot }: BeatProps) {
       </div>
       <div key={id} className="animate-rise mt-4" style={staggerIndex(1)}>
         <h2 className="text-[17px] font-semibold text-ink">{t(copyKey(id, "title"))}</h2>
-        <p className="mt-1 text-[13.5px] leading-relaxed text-ink-secondary">{t(copyKey(id, "body"))}</p>
+        <p className="mt-1 text-[14px] leading-relaxed text-ink-secondary">{t(copyKey(id, "body"))}</p>
       </div>
 
       <div className="mt-4 flex justify-center">

@@ -186,7 +186,7 @@ it("lets the member who owns a bot hand it over, and nobody else but an Admin", 
 
 let bobsChief: Bot;
 
-it("gives each person a Chief of Staff of their own that coordinates only the bots that report to them", async () => {
+it("gives each person a Chief of Staff of their own whose team is the bots that report to them, while it can reach every bot", async () => {
   const adasChief = await create(ada, { name: "Ada's Chief", reportsTo: ADA.email });
   bobsChief = await create(ada, { name: "Bob's Chief", reportsTo: BOB.email });
   for (const chief of [adasChief, bobsChief]) expect((await team.as(ada, "PATCH", `/api/bots/${chief.id}`, { chiefOfStaff: true })).status).toBe(200);
@@ -206,15 +206,25 @@ it("gives each person a Chief of Staff of their own that coordinates only the bo
     await expect.poll(() => busy(chief.id), { timeout: 20_000 }).toBe(false);
     return JSON.parse(readFileSync(join(team.home, "dump.json"), "utf8")).systemPrompt as string;
   };
-  const adas = await prompt(ada, adasChief);
-  expect(adas).toContain("You are Ada's assistant and Chief of Staff");
-  expect(adas).toContain("Tech Lead");
-  expect(adas).not.toMatch(/\bFox\b|\bOwl\b/);
-  const bobs = await prompt(bob, bobsChief);
-  expect(bobs).toContain("You are Bob's assistant and Chief of Staff");
-  expect(bobs).toMatch(/\bFox\b/);
-  expect(bobs).toMatch(/\bOwl\b/);
-  expect(bobs).not.toContain("Tech Lead");
+  // Each Chief's own team, then everyone else it can reach.
+  const split = (text: string, person: string) => {
+    const [, mine = "", others = ""] = text.split(new RegExp(`Bots that report to ${person} \\(your team\\):|Other bots you can reach \\(they report to someone else\\):`));
+    return { mine, others };
+  };
+  const adasPrompt = await prompt(ada, adasChief);
+  expect(adasPrompt).toContain("You are Ada's assistant and Chief of Staff");
+  const adas = split(adasPrompt, "Ada");
+  expect(adas.mine).toContain("Tech Lead");
+  expect(adas.mine).not.toMatch(/\bFox\b|\bOwl\b/);
+  expect(adas.others).toMatch(/\bFox\b/);
+  expect(adas.others).toMatch(/\bOwl\b/);
+  const bobsPrompt = await prompt(bob, bobsChief);
+  expect(bobsPrompt).toContain("You are Bob's assistant and Chief of Staff");
+  const bobs = split(bobsPrompt, "Bob");
+  expect(bobs.mine).toMatch(/\bFox\b/);
+  expect(bobs.mine).toMatch(/\bOwl\b/);
+  expect(bobs.mine).not.toContain("Tech Lead");
+  expect(bobs.others).toContain("Tech Lead");
 }, hostTimeout(90_000));
 
 it("keeps a member's private chat theirs: its asks reach only them, never the bot's owner, an Admin, or the owner's brief", async () => {

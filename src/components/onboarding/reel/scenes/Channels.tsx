@@ -141,7 +141,7 @@ export function Channels({ playing, onCue, onEnded, label }: SceneProps) {
                 <MausAvatar color="blue" state={replied ? "writing" : "working"} size={26} animated={!still} trackPointer={false} />
               </div>
               <div className="min-w-0">
-                <div className="mb-0.5 text-[10.5px] font-medium text-ink-secondary">Researcher</div>
+                <div className="mb-0.5 text-[11px] font-medium text-ink-secondary">Researcher</div>
                 {thinking ? (
                   <div className="inline-flex items-center gap-1 rounded-2xl rounded-tl-md bg-card px-3 py-2.5">
                     {[0, 1, 2].map((i) => (
@@ -164,8 +164,8 @@ export function Channels({ playing, onCue, onEnded, label }: SceneProps) {
                 <div key={m.name} className={cn("flex items-center gap-2 rounded-lg px-2 py-1", i === 0 ? "bg-accent/10" : "")}>
                   <MausAvatar color={m.color} state="happy" size={20} animated={false} trackPointer={false} />
                   <span className="min-w-0 flex-1">
-                    <span className="block truncate text-[11.5px] font-medium text-ink">{m.name}</span>
-                    <span className="block truncate text-[9.5px] text-ink-secondary">{m.title}</span>
+                    <span className="block truncate text-[12px] font-medium text-ink">{m.name}</span>
+                    <span className="block truncate text-[10px] text-ink-secondary">{m.title}</span>
                   </span>
                 </div>
               ))}

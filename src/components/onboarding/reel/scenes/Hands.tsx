@@ -78,7 +78,7 @@ export function Hands({ playing, onCue, onEnded, label }: SceneProps) {
           </div>
           <div className="flex flex-1 flex-col justify-end gap-2 px-3 pb-2.5">
             <div className="flex justify-end">
-              <div className="max-w-[200px] rounded-2xl rounded-br-md bg-bubble-user px-3 py-2 text-[11.5px] leading-snug text-ink shadow-md shadow-black/15">{ASK}</div>
+              <div className="max-w-[200px] rounded-2xl rounded-br-md bg-bubble-user px-3 py-2 text-[12px] leading-snug text-ink shadow-md shadow-black/15">{ASK}</div>
             </div>
             {awake && (
               <div className="animate-rise flex items-start gap-2">
@@ -89,14 +89,14 @@ export function Hands({ playing, onCue, onEnded, label }: SceneProps) {
                     {done ? "clicked Book" : clicked ? "clicking Book…" : "using the computer"}
                   </div>
                   {replied && (
-                    <div className="animate-spot-in mt-1.5 max-w-[210px] rounded-2xl rounded-tl-md border border-hairline/40 bg-card px-3 py-2 text-[11.5px] leading-relaxed text-ink shadow-[0_10px_30px_-12px_rgba(0,0,0,0.55)]">
+                    <div className="animate-spot-in mt-1.5 max-w-[210px] rounded-2xl rounded-tl-md border border-hairline/40 bg-card px-3 py-2 text-[12px] leading-relaxed text-ink shadow-[0_10px_30px_-12px_rgba(0,0,0,0.55)]">
                       {REPLY}
                     </div>
                   )}
                 </div>
               </div>
             )}
-            <div className="mt-1 h-7 rounded-lg border border-hairline/40 bg-inset px-2.5 text-[10.5px] leading-7 text-ink-secondary">Message Maus</div>
+            <div className="mt-1 h-7 rounded-lg border border-hairline/40 bg-inset px-2.5 text-[11px] leading-7 text-ink-secondary">Message Maus</div>
           </div>
         </div>
 
@@ -130,7 +130,7 @@ export function Hands({ playing, onCue, onEnded, label }: SceneProps) {
                   <span className="size-1.5 rounded-full bg-[#ff5f57]" />
                   <span className="size-1.5 rounded-full bg-[#febc2e]" />
                   <span className="size-1.5 rounded-full bg-[#28c840]" />
-                  <span className="ml-1 flex-1 rounded-sm bg-white px-1 text-[5.5px] leading-[9px] text-[#5f6368]">clinic.example/book</span>
+                  <span className="ml-1 flex-1 rounded-sm bg-white px-1 text-[6px] leading-[9px] text-[#5f6368]">clinic.example/book</span>
                 </div>
                 <div className="p-2">
                   <div className="text-[7px] font-semibold text-[#202124]">Book an appointment</div>
@@ -143,7 +143,7 @@ export function Hands({ playing, onCue, onEnded, label }: SceneProps) {
                   </div>
                   <div
                     className={cn(
-                      "mt-1.5 flex h-4 w-[52px] items-center justify-center rounded-sm text-[6.5px] font-semibold text-white transition-[background-color,transform] duration-200",
+                      "mt-1.5 flex h-4 w-[52px] items-center justify-center rounded-sm text-[7px] font-semibold text-white transition-[background-color,transform] duration-200",
                       done ? "bg-[#1e8e3e]" : "bg-[#1a73e8]",
                       clicked && !done && "scale-95",
                     )}
@@ -170,7 +170,7 @@ export function Hands({ playing, onCue, onEnded, label }: SceneProps) {
           </div>
 
           <div className="mx-2.5 mt-2 flex items-center justify-between">
-            <div className="flex items-center gap-1.5 text-[9.5px] text-ink-secondary">
+            <div className="flex items-center gap-1.5 text-[10px] text-ink-secondary">
               <span className="size-1.5 rounded-full bg-success" />
               Cloud screen connected
             </div>

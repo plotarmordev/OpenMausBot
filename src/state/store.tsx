@@ -21,6 +21,8 @@ import { isNotificationFeedAction, reduceNotificationFeed, type NotificationFeed
 import { bumpThreadUpdatedAt, mergeTaskStamps, rewindThreadUpdatedAt } from "./thread-stamps";
 import { botOpensTo, openBot, openNotificationTarget, visibleNotificationThread } from "./thread-navigation";
 import { patchGroupTask } from "./thread-edits";
+import { optimisticMessageId, optimisticUserMessage } from "./optimistic-send";
+import { patchedGroups, roomAnswers, snapshotPatch } from "./room-frames";
 import { savedStateAction, type SavedOwner, type SavedSnapshot } from "./saved-state";
 export { awayFromMainThread, botOpensTo, openBot, openBotThread, openNotificationTarget, openThread, visibleNotificationThread, type ThreadTarget } from "./thread-navigation";
 import type { TurnDigest } from "../../shared/digest";
@@ -79,6 +81,7 @@ export interface OptionCardData extends Pick<WireOptionCard, "fixedOptions" | "w
   answered?: string;
   answeredText?: string;
   answeredBy?: CardAnswerer;
+  pendingAnswer?: string;
   dismissed?: boolean;
   requestId?: string;
   tool?: string;
@@ -706,6 +709,12 @@ export type Action =
   | { type: "markRoutineRunSeen"; runId: string }
   | { type: "markAllRoutineRunsSeen" }
   | { type: "groupPatched"; group: Partial<Group> & { id: string } }
+  | {
+      type: "groupSnapshot";
+      group: Partial<Group> & { id: string };
+      since: AppState["transcriptGeneration"];
+      heldAtStart: readonly Message[];
+    }
   | { type: "groupDeleted"; groupId: string }
   | { type: "createGroup"; memberIds: string[]; name?: string; section?: string }
   | {
@@ -746,7 +755,7 @@ export type Action =
       sendId?: string;
       replyToId?: string;
       threadId?: string;
-      dataContext?: import("../../shared/data-context").DataContext; pointed?: import("../../shared/app-frame/point").PointedElement[];
+      dataContext?: import("../../shared/data-context").DataContext; pointed?: import("../../shared/app-frame/point").PointedElement[]; mode?: "chat" | "goal";
       onError?: () => void;
     }
   | { type: "pendingQueued"; threadId: string; queueId: string; text: string; reason?: SteerQueueReason }
@@ -761,6 +770,7 @@ export type Action =
   | { type: "loadOlderMessages"; threadId: string }
   | { type: "olderMessages"; threadId: string; generation: number; messages: Message[]; hasMore: boolean }
   | { type: "answerCard"; botId: string; messageId: string; answer: string; threadId?: string; groupId?: string }
+  | { type: "answerCardFailed"; botId: string; messageId: string; answer: string; groupId?: string }
   | { type: "dismissCard"; botId: string; messageId: string; threadId?: string; groupId?: string }
   | {
       type: "decideRequest";
@@ -913,28 +923,6 @@ function dismissOnboardingCard(state: AppState, botId: string): AppState {
   const bot = state.bots.find((candidate) => candidate.id === botId);
   const quiz = bot ? openOnboardingCard(bot) : undefined;
   return quiz ? patchCard(state, botId, quiz.id, { dismissed: true }) : state;
-}
-
-const optimisticMessageId = (sendId: string): string => `optimistic-${sendId}`;
-
-function optimisticUserMessage(
-  text: string,
-  sendId: string,
-  replyToId?: string,
-  parentId?: string | null,
-  channelMode?: "chat" | "goal",
-): Message {
-  return {
-    id: optimisticMessageId(sendId),
-    role: "user",
-    kind: "text",
-    text,
-    at: Date.now(),
-    parentId: parentId ?? null,
-    replyToId,
-    sendId,
-    channelMode,
-  };
 }
 
 export const CLOUD_LINK_SETTINGS = { type: "toggleAppSettings", open: true, section: "cloudAccount", cloudLink: true } as const satisfies Action;
@@ -1100,23 +1088,11 @@ export function reducer(state: AppState, action: Action): AppState {
     }
     case "groupPatched": {
       const fenced = action.group.messages ? bumpTranscriptGeneration(state, action.group.threadId) : state;
-      const exists = fenced.groups.some((g) => g.id === action.group.id);
-      const groups = exists
-        ? fenced.groups.map((g) => (g.id === action.group.id ? {
-            ...g, ...action.group,
-            section: typeof action.group.threadId === "string" || Object.hasOwn(action.group, "section") ? action.group.section : g.section,
-            description: Object.hasOwn(action.group, "description")
-              ? (action.group.description ?? undefined)
-              : g.description,
-            tasks: action.group.tasks ? mergeTaskStamps(g.tasks, action.group.tasks) : g.tasks,
-            turnTimeoutMinutes: Object.hasOwn(action.group, "turnTimeoutMinutes")
-              ? (action.group.turnTimeoutMinutes ?? undefined)
-              : g.turnTimeoutMinutes,
-            messages: action.group.messages ?? g.messages,
-            hasMore: action.group.messages ? Boolean(action.group.hasMore) : g.hasMore,
-          } : g))
-        : [{ ...(action.group.description === null ? { ...action.group, description: undefined } : action.group) as Group, messages: action.group.messages ?? [] }, ...fenced.groups];
-      return { ...fenced, groups };
+      return { ...fenced, groups: patchedGroups(state.groups, action.group) };
+    }
+    case "groupSnapshot": {
+      const group = snapshotPatch(state, action);
+      return group ? reducer(state, { type: "groupPatched", group }) : state;
     }
     case "groupDeleted": {
       const groups = state.groups.filter((g) => g.id !== action.groupId);
@@ -1168,17 +1144,34 @@ export function reducer(state: AppState, action: Action): AppState {
       );
     }
     case "answerCard": {
-      if (action.groupId) return patchGroupCard(state, action.groupId, action.messageId, { answered: action.answer });
+      if (action.groupId) {
+        const card = state.groups.find((group) => group.id === action.groupId)?.messages.find((message) => message.id === action.messageId)?.card;
+        return patchGroupCard(state, action.groupId, action.messageId, {
+          answered: action.answer,
+          ...(card?.requestId ? { pendingAnswer: action.answer } : {}),
+        });
+      }
       const bot = state.bots.find((candidate) => candidate.id === action.botId);
       const card = bot?.messages.find((message) => message.id === action.messageId)?.card;
       return withMascotMotion(
         patchCard(state, action.botId, action.messageId, {
           answered: action.answer,
-          ...(card?.requestId ? {} : { dismissed: true }),
+          ...(card?.requestId ? { pendingAnswer: action.answer } : { dismissed: true }),
         }),
         action.botId,
         "working",
       );
+    }
+    case "answerCardFailed": {
+      const host = action.groupId
+        ? state.groups.find((group) => group.id === action.groupId)
+        : state.bots.find((bot) => bot.id === action.botId);
+      const card = host?.messages.find((message) => message.id === action.messageId)?.card;
+      if (card?.pendingAnswer !== action.answer) return state;
+      const reopened = { answered: undefined, pendingAnswer: undefined };
+      return action.groupId
+        ? patchGroupCard(state, action.groupId, action.messageId, reopened)
+        : patchCard(state, action.botId, action.messageId, reopened);
     }
     case "dismissCard":
       if (action.groupId) return patchGroupCard(state, action.groupId, action.messageId, { dismissed: true });
@@ -1642,10 +1635,10 @@ export function reducer(state: AppState, action: Action): AppState {
         keepThreadModels: _keepThreadModels, threadId: _threadId,
         computer,
         connectorTools,
-        connectorScopes, phoneApps,
+        connectorScopes, phoneApps, peers,
         ...rest
       } = action.patch;
-      const botPatch: Partial<Bot> = { ...rest, ...(phoneApps !== undefined && { phoneApps: phoneApps ?? undefined }) };
+      const botPatch: Partial<Bot> = { ...rest, ...(phoneApps !== undefined && { phoneApps: phoneApps ?? undefined }), ...(peers !== undefined && { peers: peers ?? undefined }) };
       if (computer === null) botPatch.computer = undefined;
       else if (computer !== undefined) botPatch.computer = computer;
       if (connectorTools === null) botPatch.connectorTools = undefined;
@@ -2244,6 +2237,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const dispatch = useMemo(() => {
     const navigation = new Map<string, number>();
     let selectionRevision = 0;
+    const roomAnswer = roomAnswers(() => stateRef.current, rawDispatch);
     const olderPagesInFlight = new Set<string>();
     let creatingBot = false;
     const showError = (e: unknown) => {
@@ -2542,7 +2536,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           void waitForExecutionSettings(botBeforeSend ? [botBeforeSend] : [], threadId)
             .then(() => api(`/api/bots/${action.botId}/messages`, {
                 method: "POST",
-                body: JSON.stringify({ text: action.text, replyToId: action.replyToId, threadId, sendId, ...(action.dataContext ? { dataContext: action.dataContext } : {}), ...(action.pointed?.length ? { pointed: action.pointed } : {}) }),
+                body: JSON.stringify({ text: action.text, replyToId: action.replyToId, threadId, sendId, ...(action.dataContext ? { dataContext: action.dataContext } : {}), ...(action.pointed?.length ? { pointed: action.pointed } : {}), ...(action.mode === "goal" ? { mode: "goal" } : {}) }),
               }))
             .then((body) => {
               if (body?.message && typeof body.threadId === "string") {
@@ -2671,7 +2665,12 @@ export function StoreProvider({ children }: { children: ReactNode }) {
                 body: JSON.stringify({ text: action.answer, threadId: action.threadId }),
               });
             })
-            .catch(showError);
+            .catch((error) => {
+              if (card?.requestId && host) {
+                rawDispatch({ type: "answerCardFailed", botId: action.botId, messageId: action.messageId, answer: action.answer, groupId: action.groupId });
+              }
+              showError(error);
+            });
           break;
         }
         case "dismissCard": {
@@ -2967,12 +2966,12 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           break;
         case "newGroupTask":
           api<{ group?: Partial<Group> & { id: string } }>(`/api/groups/${action.groupId}/tasks`, { method: "POST", body: "{}" })
-            .then((r) => r?.group && dispatch({ type: "groupPatched", group: r.group }))
+            .then(roomAnswer(action.groupId, true))
             .catch(showError);
           break;
         case "switchGroupTask":
           api<{ group?: Partial<Group> & { id: string } }>(`/api/groups/${action.groupId}/tasks/${action.threadId}?messages=${MESSAGE_PAGE_SIZE}`, { method: "POST" })
-            .then((r) => r?.group && dispatch({ type: "groupPatched", group: r.group }))
+            .then(roomAnswer(action.groupId, true))
             .catch(showError);
           break;
         case "renameGroupTask":
@@ -2995,7 +2994,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           break;
         case "deleteGroupTask":
           api<{ group?: Partial<Group> & { id: string } }>(`/api/groups/${action.groupId}/tasks/${action.threadId}`, { method: "DELETE" })
-            .then((r) => r?.group && dispatch({ type: "groupPatched", group: r.group }))
+            .then(roomAnswer(action.groupId, false))
             .catch(showError);
           break;
         case "setGroupHold":
@@ -3003,7 +3002,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
             method: "POST",
             body: JSON.stringify({ botId: action.botId, held: action.held }),
           })
-            .then((r) => r?.group && dispatch({ type: "groupPatched", group: r.group }))
+            .then(roomAnswer(action.groupId, false))
             .catch(showError);
           break;
         case "interruptGroup":

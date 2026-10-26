@@ -936,10 +936,10 @@ const MARKDOWN_COMPONENTS: Components = {
     return <ol dir={blockDirection(node)} className="list-decimal space-y-1 ps-5">{children}</ol>;
   },
   h1({ node, children }: BlockProps) {
-    return <div dir={blockDirection(node)} className="mt-2 text-[16px] font-semibold">{children}</div>;
+    return <div dir={blockDirection(node)} className="mt-3 text-[18px] font-semibold">{children}</div>;
   },
   h2({ node, children }: BlockProps) {
-    return <div dir={blockDirection(node)} className="mt-2 text-[15.5px] font-semibold">{children}</div>;
+    return <div dir={blockDirection(node)} className="mt-2 text-[16px] font-semibold">{children}</div>;
   },
   h3({ node, children }: BlockProps) {
     return <div dir={blockDirection(node)} className="mt-1.5 font-semibold">{children}</div>;
@@ -951,7 +951,7 @@ const MARKDOWN_COMPONENTS: Components = {
     return <div dir={blockDirection(node)} className="mt-1.5 text-[14px] font-semibold">{children}</div>;
   },
   h6({ node, children }: BlockProps) {
-    return <div dir={blockDirection(node)} className="mt-1.5 text-[13.5px] font-semibold text-ink-secondary">{children}</div>;
+    return <div dir={blockDirection(node)} className="mt-1.5 text-[14px] font-semibold text-ink-secondary">{children}</div>;
   },
   blockquote({ node, children }: BlockProps) {
     return (

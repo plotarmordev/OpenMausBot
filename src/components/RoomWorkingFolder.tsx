@@ -43,7 +43,7 @@ export function RoomWorkingFolder({ group }: { group: Group }) {
       <div className="mt-0.5 text-[13px] text-ink-secondary">{t("room.folder.detail")}</div>
       {locked ? (
         <div className="mt-3">
-          <div className="truncate rounded-lg border border-hairline/40 bg-inset px-3 py-2 font-mono text-[12.5px] text-ink" title={shownCwd}>
+          <div className="truncate rounded-lg border border-hairline/40 bg-inset px-3 py-2 font-mono text-[13px] text-ink" title={shownCwd}>
             {shownCwd ? shortPath(shownCwd, home) : <span className="text-ink-secondary">{t("room.folder.own")}</span>}
           </div>
           <div className="mt-2 text-[12px] text-ink-secondary">
@@ -52,7 +52,7 @@ export function RoomWorkingFolder({ group }: { group: Group }) {
         </div>
       ) : canPick ? (
         <div className="mt-3 flex items-center gap-2">
-          <div className="min-w-0 flex-1 truncate rounded-lg border border-hairline/40 bg-inset px-3 py-2 font-mono text-[12.5px] text-ink" title={group.cwd}>
+          <div className="min-w-0 flex-1 truncate rounded-lg border border-hairline/40 bg-inset px-3 py-2 font-mono text-[13px] text-ink" title={group.cwd}>
             {group.cwd ? shortPath(group.cwd, home) : <span className="text-ink-secondary">{t("room.folder.own")}</span>}
           </div>
           <button onClick={() => void pick()} disabled={saving} className="flex shrink-0 items-center gap-1.5 rounded-lg bg-raised px-3 py-2 text-[13px] text-ink hover:bg-raised-hover disabled:opacity-50">
@@ -73,7 +73,7 @@ export function RoomWorkingFolder({ group }: { group: Group }) {
           }}
         >
           <input
-            className="w-full rounded-lg border border-hairline/40 bg-inset px-3 py-2.5 font-mono text-[12.5px] text-ink placeholder:text-ink-secondary focus:outline-none"
+            className="w-full rounded-lg border border-hairline/40 bg-inset px-3 py-2.5 font-mono text-[13px] text-ink placeholder:text-ink-secondary focus:outline-none"
             placeholder={t("room.folder.placeholder")}
             value={draft ?? group.cwd ?? ""}
             onChange={(e) => setDraft(e.target.value)}
@@ -105,7 +105,7 @@ export function RoomWorkingFolderChip({ group, onToggle }: { group: Group; onTog
   return (
     <button
       onClick={onToggle}
-      className="flex max-w-[180px] items-center gap-1.5 rounded-full border border-hairline/40 bg-raised/60 px-2.5 py-1 text-[12.5px] text-ink-secondary hover:bg-raised hover:text-ink"
+      className="flex max-w-[180px] items-center gap-1.5 rounded-full border border-hairline/40 bg-raised/60 px-2.5 py-1 text-[13px] text-ink-secondary hover:bg-raised hover:text-ink"
       title={t("chat.workingFolder", { folder })}
     >
       <Folder size={12} />

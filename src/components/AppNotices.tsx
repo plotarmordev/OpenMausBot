@@ -27,7 +27,7 @@ import { UpdatesConsentDialog, updatesConsentBridge, useUpdatesConsent } from ".
 
 function StarCard({ onDismiss }: { onDismiss: () => void }) {
   return <NoticeCard titleId="github-star-title" notice="github-star" icon={Star} title={t("star.title")} onDismiss={onDismiss}>
-    <p className="mb-3 mt-1 text-[12.5px] text-ink-secondary">{t("star.body")}</p>
+    <p className="mb-3 mt-1 text-[13px] text-ink-secondary">{t("star.body")}</p>
     <div className="flex flex-wrap items-center gap-3">
       <LinkButton url={APP_REPOSITORY} label={t("star.button")} onOpened={onDismiss} />
       <NotNowButton onClick={onDismiss} />
@@ -37,7 +37,7 @@ function StarCard({ onDismiss }: { onDismiss: () => void }) {
 
 function ProductHuntCard({ onDone }: { onDone: (action: "upvote" | "not_now" | "close") => void }) {
   return <NoticeCard titleId="product-hunt-title" notice="product-hunt" icon={Rocket} title={t("productHunt.title")} onDismiss={() => onDone("close")}>
-    <p className="mb-3 mt-1 text-[12.5px] text-ink-secondary">{t("productHunt.body")}</p>
+    <p className="mb-3 mt-1 text-[13px] text-ink-secondary">{t("productHunt.body")}</p>
     <div className="flex flex-wrap items-center gap-3">
       <LinkButton url={PRODUCT_HUNT_URL} label={t("productHunt.button")} onOpened={() => onDone("upvote")} />
       <NotNowButton onClick={() => onDone("not_now")} />

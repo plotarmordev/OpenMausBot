@@ -983,26 +983,21 @@ describe("ACP turns (fake CLI)", () => {
     expect(usage).toMatchObject({ input: 10, output: 5 });
   });
 
-  /** The fake hardcodes its usage, so these tests splice the wanted usage into the session/prompt result
-   *  in flight, at the root or under _meta. */
-  const stubPromptResultUsage = (usage: Record<string, unknown>, at: "root" | "meta") => {
+  /** The fake hardcodes its prompt result, so these tests rewrite the session/prompt result in flight. */
+  const splicePromptResult = (rewrite: (result: Record<string, unknown>) => Record<string, unknown>) => {
     const spawn = procs.spawnCli;
     vi.spyOn(procs, "spawnCli").mockImplementation((...args) => {
       const child = spawn(...args);
       const stdout = child.stdout;
-      const spliceUsage = (message: any) => {
-        if (message?.result && typeof message.result === "object" && "stopReason" in message.result) {
-          message.result = at === "root"
-            ? { ...message.result, usage: { ...usage }, _meta: {} }
-            : { ...message.result, _meta: { ...message.result._meta, ...usage } };
-        }
+      const splice = (message: any) => {
+        if (message?.result && typeof message.result === "object" && "stopReason" in message.result) message.result = rewrite(message.result);
         return message;
       };
       const rewriteChunk = (chunk: string) =>
         chunk.split("\n").map((line) => {
           if (!line.includes("stopReason")) return line;
           try {
-            return JSON.stringify(spliceUsage(JSON.parse(line)));
+            return JSON.stringify(splice(JSON.parse(line)));
           } catch {
             return line; // not a complete wire message: pass it through untouched
           }
@@ -1013,6 +1008,30 @@ describe("ACP turns (fake CLI)", () => {
       return child;
     });
   };
+
+  /** The usage at the root of the result or under _meta. */
+  const stubPromptResultUsage = (usage: Record<string, unknown>, at: "root" | "meta") =>
+    splicePromptResult((result) => at === "root"
+      ? { ...result, usage: { ...usage }, _meta: {} }
+      : { ...result, _meta: { ...(result._meta as Record<string, unknown> | undefined), ...usage } });
+
+  it("fails a refused turn in plain words that keep ACP's stop reason", async () => {
+    splicePromptResult((result) => ({ ...result, stopReason: "refusal" }));
+    await create();
+    await instance.adapter.sendTurn({ threadId: "t-refusal", text: "go" });
+    expect(await recorder.until((e) => e.type === "turn.completed")).toMatchObject({ ok: false, stopReason: "refusal" });
+    const error = recorder.events.find((e) => e.type === "runtime.error") as { message: string } | undefined;
+    expect(error?.message).toContain("Grok refused to go on with this request (stop reason: refusal).");
+  });
+
+  it("fails a max_tokens turn in plain words that advise continuing", async () => {
+    splicePromptResult((result) => ({ ...result, stopReason: "max_tokens" }));
+    await create();
+    await instance.adapter.sendTurn({ threadId: "t-max-tokens", text: "go" });
+    expect(await recorder.until((e) => e.type === "turn.completed")).toMatchObject({ ok: false, stopReason: "max_tokens" });
+    const error = recorder.events.find((e) => e.type === "runtime.error") as { message: string } | undefined;
+    expect(error?.message).toContain("Grok's reply reached its maximum length before it finished (stop reason: max_tokens). Ask it to continue, or ask for a shorter answer.");
+  });
 
   it("folds opencode cache reads into input and names them", async () => {
     stubPromptResultUsage(

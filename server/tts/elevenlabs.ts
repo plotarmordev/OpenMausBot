@@ -47,6 +47,7 @@ export async function verifyKey(key: string): Promise<VerifyResult> {
   try {
     const res = await fetch(`${elevenLabsProviderApi()}/voices`, {
       headers: { "xi-api-key": key },
+      redirect: "error",
       signal: AbortSignal.timeout(20_000),
     });
     if (res.ok) return { ok: true };
@@ -59,6 +60,7 @@ export async function verifyKey(key: string): Promise<VerifyResult> {
 async function getJson(key: string, url: string, what: string): Promise<any> {
   const res = await fetch(url, {
     headers: { "xi-api-key": key },
+    redirect: "error",
     signal: AbortSignal.timeout(20_000),
   });
   const body = await safeJson(res);
@@ -126,6 +128,7 @@ export async function addSharedVoice(key: string, api: string, publicOwnerId: st
     headers: { "xi-api-key": key, "content-type": "application/json" },
     body: JSON.stringify({ new_name: name }),
     signal: AbortSignal.timeout(20_000),
+    redirect: "error",
   });
   const body = await safeJson(res);
   if (!res.ok) throw new Error(message(res.status, "adding that voice", body));
@@ -157,6 +160,7 @@ export function synthesize(text: string, voiceId: string, key: string, api: stri
         method: "POST",
         headers: { "xi-api-key": key, "content-type": "application/json", accept: "audio/mpeg" },
         body: JSON.stringify({ text, model_id: MODEL }),
+        redirect: "error",
         signal: AbortSignal.timeout(60_000),
       });
       if (!res.ok) throw new Error(message(res.status, "speaking", await safeJson(res)));

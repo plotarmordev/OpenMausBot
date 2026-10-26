@@ -735,7 +735,7 @@ export function SettingsModal() {
                   {t("settings.connections.ready")}
                 </div>
               ) : null}
-              <div className="text-[11.5px] font-medium uppercase tracking-wide text-ink-secondary">{t("keys.providers.title")}</div>
+              <div className="text-[12px] font-medium uppercase tracking-wide text-ink-secondary">{t("keys.providers.title")}</div>
               <p className="-mt-3 text-[12px] leading-relaxed text-ink-secondary">{t("keys.providers.subtitle")}</p>
               <ApiKeyRow section="openai" testProvider="openai" />
               <ApiKeyRow section="anthropic" testProvider="anthropic" />
@@ -748,12 +748,12 @@ export function SettingsModal() {
               <ApiKeyRow section="meta" testProvider="meta" />
               <ApiKeyRow section="deepseek" />
               <OtherOpenAiCompatServers />
-              <div className="pt-2 text-[11.5px] font-medium uppercase tracking-wide text-ink-secondary">{t("keys.integrations.title")}</div>
+              <div className="pt-2 text-[12px] font-medium uppercase tracking-wide text-ink-secondary">{t("keys.integrations.title")}</div>
               <ApiKeyRow section="treg" testProvider="treg" /><ApiKeyRow section="box" />
               <VpsConnection />
               <ApiKeyRow section="opencodeGo" />
               {state.config?.cloudHome !== true && (
-                <p className="-mt-2 text-[11.5px] leading-relaxed text-ink-secondary">
+                <p className="-mt-2 text-[12px] leading-relaxed text-ink-secondary">
                   {t("keys.opencode.providersHint").split("{command}").flatMap((part, index) =>
                     index === 0 ? [part] : [<code key={index} className="font-mono">opencode auth login</code>, part])}
                 </p>
@@ -825,7 +825,7 @@ export function SettingsModal() {
         aria-modal="true"
         aria-labelledby="app-settings-title"
         tabIndex={-1}
-        className="glass-surface glass-popup animate-pop-in relative flex overflow-hidden rounded-[24px] outline-none"
+        className="glass-surface glass-popup animate-pop-in relative flex overflow-hidden rounded-2xl outline-none"
       >
         <span id="app-settings-title" className="sr-only">{t("settings.title")}</span>
         <nav className="glass-rail hidden min-h-0 w-[200px] shrink-0 flex-col gap-1 overflow-y-auto border-r border-hairline/30 p-3 sm:flex">
@@ -850,7 +850,7 @@ export function SettingsModal() {
             />
           </div>
           {(advanced ? visibleSections.length === 0 : visiblePages.length === 0) && (
-            <div className="px-2.5 py-4 text-[12.5px] leading-relaxed text-ink-secondary">
+            <div className="px-2.5 py-4 text-[13px] leading-relaxed text-ink-secondary">
               {t("settings.noMatch", { query: query.trim() })}
             </div>
           )}

@@ -13,6 +13,8 @@ export interface PersonStopDeps {
   handoffs(): Pick<Handoffs, "stoppedByPerson">;
   interruptDirectThread(botId: string, threadId: string): Promise<void>;
   clearUnattended(threadId: string): void;
+  /** Ends a goal running in this one-on-one chat, so the interrupted turn is its last. */
+  stopGoal(threadId: string): void;
 }
 
 export interface TypedStop {
@@ -38,6 +40,7 @@ export function createPersonStop(deps: PersonStopDeps) {
       return;
     }
     deps.handoffs().stoppedByPerson(threadId);
+    deps.stopGoal(threadId);
     await deps.interruptDirectThread(botId, threadId);
   }
 

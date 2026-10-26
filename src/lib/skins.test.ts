@@ -53,8 +53,9 @@ describe("skins", () => {
     expect(PRIOR_INSTALL_SKIN).toBe("midnight");
   });
 
-  it("gives Meadow's dark bubble its own inverted context", () => {
-    expect(css).toMatch(/@scope \(\[data-skin="meadow"\]\) to \(\[data-skin\]\)\s*\{\s*\.bg-bubble-user\s*\{/);
+  it("keeps Meadow's own bubble light, in the page's ink", () => {
+    expect(css).not.toMatch(/@scope \(\[data-skin="meadow"\]\) to \(\[data-skin\]\)\s*\{\s*\.bg-bubble-user\s*\{/);
+    expect(css).toMatch(/\[data-skin="meadow"\] \{[^}]*--color-bubble-user-ink: #0f1a13;/);
   });
 
   it("adds Pop after Meadow with its own inverted bubble and sticker scope", () => {

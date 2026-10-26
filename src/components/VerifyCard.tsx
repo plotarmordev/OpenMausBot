@@ -76,9 +76,9 @@ export function VerifyCard({
                 <StatusIcon status={step.status} />
                 <span className="shrink-0 text-[13px] font-medium">{step.label}</span>
                 {step.verified && (
-                  <span className="shrink-0 text-[10.5px] uppercase tracking-wide text-success">{t("chat.verify.verifiedTag")}</span>
+                  <span className="shrink-0 text-[11px] uppercase tracking-wide text-success">{t("chat.verify.verifiedTag")}</span>
                 )}
-                <code className="min-w-0 flex-1 truncate font-mono text-[11.5px] text-ink-secondary" title={step.command}>
+                <code className="min-w-0 flex-1 truncate font-mono text-[12px] text-ink-secondary" title={step.command}>
                   {step.command}
                 </code>
               </li>

@@ -284,6 +284,8 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
     approval: ReturnType<typeof createChatToolApproval>;
     /** Mid-turn input parked by adapter.steer, spliced in at the next round, never mid-tool-batch. */
     asides: string[];
+    /** Set once the turn stops taking rounds: a later steer goes to the next turn instead. */
+    ending: boolean;
   }>();
   const reasoningReplayRejected = new Set<string>();
   const delivered = new Map<string, DeliveredUserMessage[]>();
@@ -584,7 +586,7 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
     });
     let resolveDone!: () => void;
     const done = new Promise<void>((resolve) => { resolveDone = resolve; });
-    const turnEntry = { abort, turnId, done, approval, asides: [] as string[] };
+    const turnEntry = { abort, turnId, done, approval, asides: [] as string[], ending: false };
     active.set(turn.threadId, turnEntry);
     emit({ ...base(turn.threadId, turnId), type: "turn.started" });
     emit({ ...base(turn.threadId, turnId), type: "session.started", sessionId: null, model });
@@ -739,6 +741,10 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
               messages.push({ role: "assistant", content: completion.text }, { role: "user", content: NUDGE_ANNOUNCED_ACTION });
               continue;
             }
+            if (turnEntry.asides.length) {
+              messages.push({ role: "assistant", content: reply });
+              continue;
+            }
             ok = true;
             break;
           }
@@ -843,6 +849,7 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
         stopReason = abort.signal.aborted ? "interrupted" : stopReason ?? "error";
         failure = safeText(asError(value).message).slice(0, 2_000);
       } finally {
+        turnEntry.ending = true;
         approval.close();
         let cleanupFailed = false;
         try { await tools?.close(); }
@@ -921,7 +928,7 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
         active.get(threadId)?.approval.answer(requestId, decision.behavior, decision.message, decision.always) ?? "unavailable",
       steer: async (threadId, text) => {
         const running = active.get(threadId);
-        if (!running) return "refused";
+        if (!running || running.ending) return "refused";
         running.asides.push(text);
         return "steered";
       },

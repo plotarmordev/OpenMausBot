@@ -15,8 +15,8 @@ import { hostedWorkspaceConfigured } from "../enterprise.ts";
 import { cloudHomeConfigured } from "../cloud-home.ts";
 import { serverVersion } from "../environment.ts";
 import { ChatGptPlanAuthController } from "./chatgpt-plan-auth.ts";
-import { cliVersionReader, describeSpawnFailure, execCli, killCliTree, spawnCli, waitForExit } from "../procs.ts";
-import { codexLaunch, codexLaunchesStarting, codexLaunchSlot, codexRpcTimeoutMs, keepStopping, RELAUNCH_EXIT_WAIT_MS, spawnHoldingSlot, tryCodexLaunchSlot } from "./codex-process.ts";
+import { captureCliTree, cliVersionReader, describeSpawnFailure, execCli, killCliTree, spawnCli, waitForExit } from "../procs.ts";
+import { codexLaunch, codexLaunchesStarting, codexLaunchSlot, codexRpcTimeoutMs, keepStopping, RELAUNCH_EXIT_WAIT_MS, spawnHoldingSlot, tomlInlineTable, tryCodexLaunchSlot } from "./codex-process.ts";
 import { isReservedMcpEnvEntry } from "../mcp-registry.ts";
 
 import type {
@@ -183,11 +183,6 @@ function noteRenamedMcpServer(name: string, mountName: string): void {
   if (renamedMcpServers.has(name)) return;
   renamedMcpServers.add(name);
   console.error(`codex: MCP server ${JSON.stringify(name)} is also declared in Codex's own config.toml — mounted as ${JSON.stringify(mountName)} for this bot so the two do not merge`);
-}
-
-/** JSON string quoting is valid TOML basic-string quoting. */
-function tomlInlineTable(entries: Record<string, string>): string {
-  return `{ ${Object.entries(entries).map(([key, value]) => `${JSON.stringify(key)} = ${JSON.stringify(value)}`).join(", ")} }`;
 }
 
 interface CodexApprovalParams {
@@ -918,6 +913,7 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
       // "codex exited null (signal SIGTERM) before turn/completed".
       let interruptRequested = false;
       const stop = async () => {
+        captureCliTree(child);
         stopRequested = true;
         stopSignal.abort();
         if (!state.settled && !interruptRequested && codexThreadId && codexTurnId &&

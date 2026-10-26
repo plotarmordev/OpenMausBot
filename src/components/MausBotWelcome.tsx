@@ -125,7 +125,7 @@ export function MausBotWelcomeCard({ bot, onClose }: { bot: Bot; onClose: () => 
           event.preventDefault();
           if (editing && panelRef.current?.contains(event.target as Node)) { setEditing(false); pictureRef.current?.focus(); } else onClose();
         }}
-        className="animate-pop-in w-full max-w-[460px] rounded-3xl border border-hairline/50 bg-panel px-6 pb-5 pt-5 shadow-2xl"
+        className="animate-pop-in w-full max-w-[460px] rounded-2xl border border-hairline/50 bg-panel px-6 pb-5 pt-5 shadow-2xl"
       >
         <div className="flex flex-col items-center text-center">
           <button
@@ -149,7 +149,7 @@ export function MausBotWelcomeCard({ bot, onClose }: { bot: Bot; onClose: () => 
             </span>
           </button>
           <h2 id="mausbot-welcome-title" className="mt-3 text-[20px] font-semibold text-ink">{t("mausbotWelcome.title", { name })}</h2>
-          <ul className="mt-3 space-y-1.5 text-left text-[13.5px] leading-snug text-ink-secondary">
+          <ul className="mt-3 space-y-1.5 text-left text-[14px] leading-snug text-ink-secondary">
             {([[Sparkles, "mausbotWelcome.line.helper"], [BookOpen, "mausbotWelcome.line.knows"], [Wand2, "mausbotWelcome.line.setup"], [Crown, "mausbotWelcome.line.powers"]] as const).map(([Icon, key]) => (
               <li key={key} className="flex items-start gap-2.5"><Icon size={15} className="mt-0.5 shrink-0 text-ink-tertiary" aria-hidden="true" />{t(key)}</li>
             ))}

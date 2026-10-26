@@ -74,7 +74,7 @@ interface SetupStore {
 interface Options {
   store: SetupStore;
   teams(): string[];
-  canAccessTeam(from: BotRecord, target?: string): boolean;
+  hasTeamAuthority(from: BotRecord, target?: string): boolean;
   canPersist(botId: string, threadId: string): { ok: true } | { ok: false; status: number; error: string };
   validateModel(selection: ModelSelection, current?: BotRecord): string | null;
   targetBusy(botId: string, sourceThreadId?: string): boolean;
@@ -144,7 +144,7 @@ export class TeamSetupRequestService {
     const existingTeams = new Set(this.options.teams().map(section));
     if (new Set([...(chief.managedSections ?? []), ...request.newTeams]).size > 100) throw new TeamSetupError("A Chief may coordinate at most 100 additional teams", 409);
     for (const name of request.newTeams) if (existingTeams.has(name)) throw new TeamSetupError(`Team ${JSON.stringify(name)} now exists. Review a new proposal.`, 409);
-    const allowed = (name?: string) => request.newTeams.includes(section(name)) || this.options.canAccessTeam(chief, name);
+    const allowed = (name?: string) => request.newTeams.includes(section(name)) || this.options.hasTeamAuthority(chief, name);
     const targets = new Set<string>();
     const projected = this.options.store.bots.map((bot) => ({ id: bot.id, name: bot.name, section: section(bot.section), chiefOfStaff: bot.chiefOfStaff, hidden: bot.hidden, createdBy: bot.createdBy, reportsTo: bot.reportsTo }));
     for (const operation of request.operations) {
@@ -155,7 +155,7 @@ export class TeamSetupRequestService {
         if (target) throw new TeamSetupError("A proposed bot already exists. Review a new proposal.", 409);
         if (!operation.fields.name?.trim() || !operation.fields.title?.trim() || !operation.fields.soul?.trim() || !operation.fields.modelSelection) throw new TeamSetupError("Each new bot needs a name, title, soul instructions, and exact model selection");
       } else {
-        if (!target || target.hidden || !this.options.canAccessTeam(chief, target.section) || (target.id !== chief.id && Array.isArray(chief.peers) && !chief.peers.includes(target.id))) throw new TeamSetupError("A target bot is outside this Chief's authorized team and peer scope", 403);
+        if (!target || target.hidden || !this.options.hasTeamAuthority(chief, target.section) || (target.id !== chief.id && Array.isArray(chief.peers) && !chief.peers.includes(target.id))) throw new TeamSetupError("A target bot is outside this Chief's authorized team and peer scope", 403);
         if (teamSetupRevision(target, operation.fields) !== operation.expectedRevision) throw new TeamSetupError(`@${target.name} changed. This setup was cancelled; review a new proposal.`, 409);
         const sourceThreadId = immediate && target.id === chief.id ? request.threadId : undefined;
         if (this.options.targetBusy(target.id, sourceThreadId) && (confirming || target.id !== chief.id)) throw new TeamSetupError(`Stop @${target.name}'s work before changing its setup`, 409);
@@ -180,7 +180,7 @@ export class TeamSetupRequestService {
     }
     if (request.deletion) {
       const target = this.options.store.bot(request.deletion.botId);
-      if (!target || target.hidden || target.id === chief.id || !this.options.canAccessTeam(chief, target.section) || (Array.isArray(chief.peers) && !chief.peers.includes(target.id))) throw new TeamSetupError("This deletion target is no longer an authorized teammate", 403);
+      if (!target || target.hidden || target.id === chief.id || !this.options.hasTeamAuthority(chief, target.section) || (Array.isArray(chief.peers) && !chief.peers.includes(target.id))) throw new TeamSetupError("This deletion target is no longer an authorized teammate", 403);
       if (target.defaultBot) throw new TeamSetupError(defaultBotRefusal(target.name), 409);
       if (teamSetupRevision(target) !== request.deletion.expectedRevision || this.options.targetBusy(target.id)) throw new TeamSetupError("The deletion target changed or is working. Review a new deletion proposal.", 409);
     }

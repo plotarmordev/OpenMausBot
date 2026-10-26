@@ -86,13 +86,13 @@ export function ComputerTab({ bot, derived, onOpen }: { bot: Bot; derived: Deriv
 
   return (
     <div data-panel-tabpanel="computer">
-      <div className="relative mt-[18px] flex aspect-[16/10] max-w-full flex-col items-center justify-center gap-2 overflow-hidden rounded-[14px] border border-ink/[0.06] bg-inset">
+      <div className="relative mt-[18px] flex aspect-[16/10] max-w-full flex-col items-center justify-center gap-2 overflow-hidden rounded-xl border border-ink/[0.06] bg-inset">
         {screenSrc ? (
           <img src={screenSrc} alt={t("computer.screenOf", { name: bot.name })} className="absolute inset-0 size-full object-cover" />
         ) : (
           <>
             <span className="opacity-55"><BotAvatar bot={bot} size={52} animated={false} /></span>
-            <span className="max-w-[80%] text-center text-[12.5px] text-ink-secondary">{t(bot.busy ? "botPanel.screen.working" : "botPanel.screen.idle")}</span>
+            <span className="max-w-[80%] text-center text-[13px] text-ink-secondary">{t(bot.busy ? "botPanel.screen.working" : "botPanel.screen.idle")}</span>
           </>
         )}
         <button

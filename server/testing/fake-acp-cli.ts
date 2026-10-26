@@ -49,6 +49,8 @@
 //   FAKE_ACP_HANG_ON  a prompt whose text holds this hangs as in mode hang; others answer
 //   FAKE_ACP_CURSOR_FAST=1  a `fast` select ("true") once initialize declares _meta.parameterizedModelPicker, as Cursor CLI 2026.10.19; =stuck acknowledges set_config_option but keeps "true"
 //   FAKE_ACP_SESSION_CLOSE=1  initialize advertises sessionCapabilities.close (OpenCode 1.19); session/close answers {}
+//     after FAKE_ACP_SESSION_CLOSE_MS; =error advertises it and answers every session/close with an error
+//   FAKE_ACP_IGNORE_CANCEL=1  session/cancel is ignored: a hanging prompt keeps running
 //   FAKE_ACP_TOOL_LIMIT  session/prompt lists the session's MCP tools and refuses, as OpenCode Zen does, past this many;
 //     under it the reply is "tools: <server>=<count>,…"
 import { AsyncLocalStorage } from "node:async_hooks";
@@ -596,7 +598,7 @@ function handle(msg: any) {
       const agentName = process.env.FAKE_ACP_AGENT_NAME;
       const acceptsImages = process.env.FAKE_ACP_IMAGE_CAPABILITY === "1";
       const mcpTransports = (process.env.FAKE_ACP_MCP_TRANSPORTS ?? "").split(",").map((entry) => entry.trim()).filter(Boolean);
-      const closesSessions = process.env.FAKE_ACP_SESSION_CLOSE === "1";
+      const closesSessions = ["1", "error"].includes(process.env.FAKE_ACP_SESSION_CLOSE ?? "");
       if (["1", "stuck"].includes(process.env.FAKE_ACP_CURSOR_FAST ?? "") && msg.params?.clientCapabilities?._meta?.parameterizedModelPicker === true) {
         currentFast = "true";
       }
@@ -665,7 +667,9 @@ function handle(msg: any) {
       break;
     }
     case "session/close":
-      result(msg.id, {});
+      if (process.env.FAKE_ACP_SESSION_CLOSE === "error") out({ jsonrpc: "2.0", id: msg.id, error: { code: -32603, message: "close failed" } });
+      else if (process.env.FAKE_ACP_SESSION_CLOSE_MS) setTimeout(() => result(msg.id, {}), Number(process.env.FAKE_ACP_SESSION_CLOSE_MS));
+      else result(msg.id, {});
       break;
     case "session/load": {
       if (process.env.FAKE_ACP_LOAD_ERROR) {
@@ -1310,7 +1314,7 @@ function handle(msg: any) {
       break;
     }
     case "session/cancel":
-      if (hangingPromptId !== null) {
+      if (hangingPromptId !== null && process.env.FAKE_ACP_IGNORE_CANCEL !== "1") {
         result(hangingPromptId, { stopReason: "cancelled", _meta: {} });
         if (hangKeepAlive) clearInterval(hangKeepAlive);
         hangingPromptId = null;

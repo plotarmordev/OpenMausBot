@@ -58,11 +58,12 @@ import { acpSessionOperationKey, acpShellRequest, answersAlone, permissionLaunch
 import { openQuestionRequest, questionRequestFor, type AcpQuestionRequest } from "./question-requests.ts";
 import { commandSummary, toolDetailPreview } from "../../tool-summary.ts";
 import { acpToolEndEvents } from "./tool-items.ts";
-import { AcpHost, type AcpLink } from "./host.ts";
+import { AcpHost } from "./host.ts";
+import type { AcpAskFinish, AcpSession, AcpTurn } from "./turn-state.ts";
 import { recoveryPromptFor } from "../../resume-recovery.ts";
 import { engineIdleMs, sessionIdlePolicy } from "../session-idle.ts";
 import { classifyError } from "../retry.ts";
-import { engineFailureKind, engineFailureMessage } from "../engine-errors.ts";
+import { engineFailureKind, engineFailureMessage, stopCause } from "../engine-errors.ts";
 import { narrowsNativeTools, parseToolScope } from "../../../shared/tool-scope.ts";
 import { acpMcpServers, type AcpMcpServer } from "../turn-mcp.ts"; import { acpToolProgress } from "../tool-progress.ts";
 import { learnedToolCountLimit, mcpToolBudget, retryUnderToolLimit } from "../../tool-count-limit.ts"; import { instanceEnvNames } from "../../bot-box/env.ts";
@@ -80,60 +81,6 @@ export interface AcpConfig {
   cli: string;
   fullAuto: boolean;
   workspace?: string;
-}
-
-type AcpAskFinish = (
-  behavior: string,
-  source?: "user" | "timeout" | "system",
-  message?: string,
-  always?: boolean,
-) => RequestOutcome;
-
-interface AcpTurn {
-  turnId: string;
-  turn: SendTurnInput;
-  turnConfig: AcpConfig;
-  controlsHost: boolean;
-  state: {
-    settled: boolean; promptSent: boolean; text: string; textMessageId: string | null; producedItem: boolean; startupActivity: boolean; stopped: boolean;
-    usagePeak: number | null;
-    usageLast: number | null;
-    usageCompacted: boolean;
-  };
-  acknowledge: () => void;
-  asks: Map<string, AcpAskFinish>;
-  /** Tool calls started and not yet finished: a tool such as `sleep` sends nothing while it runs. */
-  runningTools: Set<string>;
-  unkeyedToolIds: string[];
-  endedToolIds: Set<string>;
-  interruptTimer: ReturnType<typeof setTimeout> | null;
-  stopQuietWatch: (() => void) | null;
-  flushAssistantText: () => void;
-  receiveModelVariants: (result: any) => void;
-}
-
-interface AcpSession {
-  child: ReturnType<typeof spawnCli>;
-  host: AcpHost;
-  acp: AcpLink;
-  launch: { command: string; args?: string[] };
-  env: Record<string, string | undefined>;
-  cwd: string;
-  contractKey: string;
-  /** mcpServers the native session was built with. They ride session/new and session/load, not argv,
-   *  and bearer tokens rotate every turn, so a change re-establishes the session on the same child. */
-  sessionKey: string | null;
-  sessionId: string | null;
-  sessionConfigResult: any;
-  initResult: any;
-  authenticated: boolean;
-  idleTimer: ReturnType<typeof setTimeout> | null;
-  closing: boolean;
-  dead: boolean;
-  readonly stderr: string;
-  current: AcpTurn | null;
-  fallbackNotice?: string;
-  launchModel?: string;
 }
 
 /** Per-CLI specifics plugged into the shared ACP runtime. */
@@ -466,7 +413,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
           host.retired += 1;
           recycleWhenIdle(host);
           if (sessionId && host.initResult?.agentCapabilities?.sessionCapabilities?.close) {
-            void host.request(null, "session/close", { sessionId }, 30_000).catch(() => undefined);
+            session.closeConfirmed = host.request(null, "session/close", { sessionId }, why === "cancel-timeout" ? 5_000 : 30_000).then(() => true, () => false);
           }
           return;
         }
@@ -481,6 +428,28 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             void killCliTree(session.child);
           }, 5_000);
           kill.unref?.();
+        }
+      };
+      // A session that ignores session/cancel goes on working. In a shared process only a confirmed session/close or the
+      // end of the process stops it, and ending the process ends the other sessions' turns too.
+      const endUncancelled = async (threadId: string, session: AcpSession): Promise<void> => {
+        const { host } = session;
+        closeSession(threadId, "cancel-timeout");
+        if (host.key === null || (host.links.size && await session.closeConfirmed)) return;
+        for (const link of host.links) {
+          const other = sessions.get(link.threadId);
+          if (other?.host !== host) continue;
+          const running = other.current;
+          closeSession(link.threadId, "cancel-timeout");
+          if (running) {
+            emit({ ...base(link.threadId, running.turnId), type: "runtime.error",
+              message: `${support.displayName} was restarted because a session sharing its process ignored Stop` });
+            settle(link.threadId, other, false, "exit_before_result");
+          }
+        }
+        if (!await killCliTree(host.child) && session.current) {
+          emit({ ...base(threadId, session.current.turnId), type: "runtime.error",
+            message: `${support.displayName} ignored Stop and its process could not be ended` });
         }
       };
       // A shared process holding closed sessions gives their memory back only by exiting: once none of its sessions has
@@ -1040,13 +1009,14 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
           error: (e) => {
             session.dead = true;
             const current = session.current;
-            if (!current) return;
+            if (!current || current.state.cancelling) return;
             emit({ ...base(threadId, current.turnId), type: "runtime.error", ...describeSpawnFailure(e, launch.command, cwd) });
             settle(threadId, session, false, "spawn_error");
           },
           exit: (code) => {
             session.dead = true;
             const current = session.current;
+            if (current?.state.cancelling) return;
             if (current) {
               emit({
                 ...base(threadId, current.turnId),
@@ -1189,7 +1159,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         ): Promise<any> =>
           session.acp.request(method, params, timeoutMs, receive, idleMs, idleMessage);
 
-        const state: AcpTurn["state"] = { settled: false, promptSent: false, text: "", textMessageId: null, producedItem: false, startupActivity: false, stopped: false, usagePeak: null, usageLast: null, usageCompacted: false };
+        const state: AcpTurn["state"] = { settled: false, promptSent: false, text: "", textMessageId: null, producedItem: false, startupActivity: false, stopped: false, usagePeak: null, usageLast: null, usageCompacted: false, cancelling: false };
         let acknowledge = () => {};
         let rejectStartup = (_error: TurnNotStartedError) => {};
         const startupAck = turn.startupRecovery ? new Promise<{ turnId: string }>((resolve, reject) => {
@@ -1242,8 +1212,8 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             session.acp.send({ jsonrpc: "2.0", method: "session/cancel", params: { sessionId: session.sessionId } });
             if (current.interruptTimer) clearTimeout(current.interruptTimer);
             current.interruptTimer = setTimeout(() => {
-              closeSession(threadId, "cancel-timeout");
-              settle(threadId, session, true, "cancelled");
+              state.cancelling = true;
+              void endUncancelled(threadId, session).then(() => settle(threadId, session, true, "cancelled"));
             }, 5_000);
             current.interruptTimer.unref?.();
           } else {
@@ -1582,7 +1552,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
                 ? result.error
                 : typeof result?.message === "string" && result.message
                   ? result.message
-                  : `Model turn failed: ${reason ?? "unknown error"}`;
+                  : stopCause(reason, support.displayName) ?? `${support.displayName} stopped without saying why.`;
               emit({
                 ...base(threadId, turnId),
                 type: "runtime.error",
@@ -1594,7 +1564,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             if (pendingSplitReceipt && state.promptSent && state.usageCompacted) {
               deletePromptSplitReceipt(DRIVER_KIND, pendingSplitReceipt.key);
             }
-            if (!state.settled) {
+            if (!state.settled && !state.cancelling) {
               const untouched = retryOf === undefined && !state.producedItem && !state.text && !current.runningTools.size && !asks.size && !state.stopped && !session.closing;
               if (untouched && retryUnderToolLimit(e, { key: toolLimitKey, model: resolvedModel, engine: DRIVER_KIND, retry: () => {
                 state.settled = true; session.current = null; active.delete(threadId); current.stopQuietWatch?.();

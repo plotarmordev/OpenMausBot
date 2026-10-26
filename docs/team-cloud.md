@@ -207,9 +207,10 @@ else's, the main chat is named instead, without the other's messages, and its un
 Search, SSE (live and replayed), attachments, notifications, usage traces, routine runs, the activity and decision rows
 (kept as when, bot, tool and outcome, without their words), a bot's activity, synced folders and a team backup go
 through the same check, a deleted private chat included. Incidents and escalations from a private chat go to its person,
-never into a Chief's thread; a conversation a bot opens from a shared chat is the team's, never the last speaker's;
-`retry_thread`, `close_thread` and `session_read` reach only what the turn may read; and team memory is never published
-from a private chat. Then the memory system prompt
+never into a Chief's thread; work handed on from a private chat runs in a thread of that same person's, and nothing
+from a private chat is handed into a room or posted in one; a conversation a bot opens from a shared chat is the
+team's, never the last speaker's; `retry_thread`, `close_thread` and `session_read` reach only what the turn may read;
+and team memory is never published from a private chat. Then the memory system prompt
 (the turn's layer, plus the team's notes read-only), recall (`buildRecall.memoryIds`: the layer and the team's), recent
 work, `session_search` (memory of the layer and the team's; conversations the turn may read), memory writes
 (`/api/internal/memory`, `/memory/log`, the turn-outcome line, capture), "About the user", and the bot box, which puts the
@@ -289,15 +290,26 @@ the feed) and in their brief. The card itself stays in its conversation, where e
 says "Asking Ada". Everyone can still chat with every shared bot: routing decides only whose inbox a bot's own asks reach.
 
 **One Chief of Staff per person.** A crowned bot that someone owns is that person's Chief; a team has at most one per
-person (crowning a second hands the role over, and moving a Chief to someone who has one is refused). It coordinates
-exactly the bots that person owns, in every department, and only those bots reach it: its roster, `coordinate_bots`,
-incidents and escalations (into a notices chat of the person's own; a notice from someone else's private chat goes to
-that person instead). Each person with a Chief gets a brief of their own (`server/host/team-briefs.ts`): one card a day
-in their private chat with their Chief listing their Needs you and the runs routed to them, opened on their first
-arrival of the day. Without a Chief, the same asks wait in their Needs you. A crowned bot nobody owns stays its
-department's Chief, as on any other server.
+person (crowning a second hands the role over, and moving a Chief to someone who has one is refused). Its authority is
+exactly the bots that person owns, in every department: they are its team in its roster, their incidents and
+escalations come to it (into a notices chat of the person's own; a notice from someone else's private chat goes to
+that person instead), and it retries their threads and changes their setup. Each person with a Chief gets a brief of
+their own (`server/host/team-briefs.ts`): one card a day in their private chat with their Chief listing their Needs you
+and the runs routed to them, opened on their first arrival of the day. Without a Chief, the same asks wait in their
+Needs you. A crowned bot nobody owns stays its department's Chief, as on any other server.
+
+**Every bot reaches every bot.** Departments are folders, not walls. Any bot can ask, hand work to or @mention any
+other bot on the team, in any department, someone's Chief included, with nothing to set up (`canReach` in
+`server/peer-roster.ts`). Each bot's roster lists them all, its own department first; a Chief's lists its own team
+first and everyone else as reachable. Reaching a bot gives no authority over it: supervision, incidents, escalations,
+the brief, setup changes and automations follow ownership and departments as above (`hasAuthority`, `canManage`).
+Only three things narrow reach: a bot's own peers list (a person can open it again in the bot's settings, under
+Permissions), archived bots, and the audience rule below (a bot shared with different people). A turn in someone's
+private chat may ask any bot, and the work it hands on stays in that person's audience; it never hands work into a room
+or posts in one.
 
 On a My Cloud and on a desktop no bot has an owner: nothing is routed, and one Chief per department holds as before.
+Every bot still reaches every bot there.
 
 ## What is not closed here
 

@@ -120,6 +120,7 @@ import { EmptyChat } from "./ChatEmptyState";
 import { PinnedBanner } from "./ChatPinnedBanner";
 import { highlightCitationSource } from "@/lib/citations-dom";
 import { useCanWriteIn, useReactor } from "@/lib/cloud-guest";
+import { isFormattedReply } from "@/lib/formatted-reply";
 import { otherSpeaker } from "@/lib/own-profile";
 import { latestFailure, latestReply, type TranscriptSnapshot } from "@/lib/transcript-announcer";
 import { pendingApprovals } from "./PendingApproval";
@@ -207,7 +208,7 @@ export function ErrorRow({
   const usageUrl = action ? null : message.includes("subscription_sharing_usage_limit_exceeded") ? CHATGPT_USAGE_URL : codexUsageLimitReached(message) ? CODEX_USAGE_URL : null;
   return (
     <div className="flex justify-start">
-      <div className="w-fit max-w-[min(var(--chat-bubble-max),var(--chat-bubble-pct))] rounded-xl border border-danger/30 bg-danger/10 px-3.5 py-2.5 text-[13.5px] text-danger">
+      <div className="w-fit max-w-[min(var(--chat-bubble-max),var(--chat-bubble-pct))] rounded-xl border border-danger/30 bg-danger/10 px-3.5 py-2.5 text-[14px] text-danger">
         <div className="flex items-start gap-2">
           <AlertTriangle size={15} className="mt-0.5 shrink-0" />
           <span className="min-w-0 break-words">{headline}</span>
@@ -220,7 +221,7 @@ export function ErrorRow({
         ) : claudeUpdateInstance ? (
           <ClaudeUpdatePrompt instance={claudeUpdateInstance} onRetry={onRetry} />
         ) : isProviderSafetyBlock(message) ? (
-          <p className="mt-2 text-[12.5px] leading-relaxed text-ink-secondary">
+          <p className="mt-2 text-[13px] leading-relaxed text-ink-secondary">
             {PROVIDER_SAFETY_GUIDANCE}{" "}
             <a href={PROVIDER_SAFETY_HELP_URL} target="_blank" rel="noreferrer" className="underline">About provider safety checks</a>
           </p>
@@ -439,6 +440,7 @@ const Bubble = memo(function Bubble({
   );
   const reply = useReplySegments(conversational && !user && !peer && !viewRaw && !replyTarget && message.kind === "text", text, message.at, openedAt);
   const split = reply.segments.length > 1;
+  const formatted = !user && !split && isFormattedReply(text);
   const webhookView = user ? webhookMessageView(text) : null;
   const cited = user && !webhookView ? splitTranscriptCitations(text) : null;
   const attachments = user && !webhookView ? splitTranscriptAttachments(cited?.display ?? text) : null;
@@ -471,7 +473,7 @@ const Bubble = memo(function Bubble({
   return (
     <div {...{ [MESSAGE_ROW]: "" }} className={cn("group flex w-full flex-col", user ? "animate-msg-in items-end" : "items-start")}>
       {peer && <PeerLabel peer={peer} />}
-      {speaker && <div className="mb-0.5 px-1 text-[11.5px] font-medium text-ink-secondary">{speaker}</div>}
+      {speaker && <div className="mb-0.5 px-1 text-[12px] font-medium text-ink-secondary">{speaker}</div>}
       <div className={cn("flex w-full items-center gap-1.5", user ? "justify-end" : "justify-start")}>
         {user && (
           <MessageActions
@@ -498,7 +500,9 @@ const Bubble = memo(function Bubble({
                 ? "text-ink"
                 : user
                   ? cn("bg-bubble-user px-4 py-2.5 whitespace-pre-wrap text-ink", bubbleStyle && "user-bubble-colored", simple && cn(SIMPLE_BUBBLE, bubbleStyle && "antialiased"))
-                  : cn("bg-card px-4 py-2.5 text-ink", simple && SIMPLE_BUBBLE),
+                  : formatted
+                    ? "w-full max-w-[min(var(--chat-prose-max),var(--chat-card-pct))] px-1 text-ink"
+                    : cn("bg-card px-4 py-2.5 text-ink", simple && SIMPLE_BUBBLE),
           )}
           style={user && !webhookView && !attachmentsOnly ? bubbleStyle : undefined}
           title={new Date(message.at).toLocaleString()}
@@ -517,15 +521,15 @@ const Bubble = memo(function Bubble({
           )}
           {user && webhookView ? (
             <div className="min-w-[300px] max-w-[520px]">
-              <div className="flex items-center gap-2 border-b border-accent/15 bg-accent/[0.055] px-4 py-2.5 text-[11.5px] font-medium text-accent">
+              <div className="flex items-center gap-2 border-b border-accent/15 bg-accent/[0.055] px-4 py-2.5 text-[12px] font-medium text-accent">
                 <Webhook size={13} />
                 <span>{t("chat.webhookTask")}</span>
               </div>
               <div className="chat-text px-4 py-3 whitespace-pre-wrap">{webhookView.task}</div>
               {webhookView.payload && (
-                <details className="border-t border-hairline/30 bg-inset/25 px-4 py-2.5 text-[11.5px] text-ink-secondary">
+                <details className="border-t border-hairline/30 bg-inset/25 px-4 py-2.5 text-[12px] text-ink-secondary">
                   <summary className="cursor-pointer select-none hover:text-ink">{t("chat.viewPayload")}</summary>
-                  <pre className="mt-2 max-h-48 overflow-auto rounded-lg border border-hairline/25 bg-black/25 p-3 font-mono text-[10.5px] leading-relaxed whitespace-pre-wrap text-ink-secondary">{webhookView.payload}</pre>
+                  <pre className="mt-2 max-h-48 overflow-auto rounded-lg border border-hairline/25 bg-black/25 p-3 font-mono text-[11px] leading-relaxed whitespace-pre-wrap text-ink-secondary">{webhookView.payload}</pre>
                 </details>
               )}
             </div>
@@ -559,12 +563,12 @@ const Bubble = memo(function Bubble({
               {message.quickModel && <QuickModelNote model={message.quickModel} />}
               <UserLineNote message={message} />
               {collapsible && (
-                <button onClick={() => setExpanded(true)} className="mt-1 text-[12.5px] text-ink-secondary hover:text-ink">
+                <button onClick={() => setExpanded(true)} className="mt-1 text-[13px] text-ink-secondary hover:text-ink">
                   {t("chat.showFull")}
                 </button>
               )}
               {expanded && (
-                <button onClick={() => setExpanded(false)} className="mt-1 text-[12.5px] text-ink-secondary hover:text-ink">
+                <button onClick={() => setExpanded(false)} className="mt-1 text-[13px] text-ink-secondary hover:text-ink">
                   {t("chat.showLess")}
                 </button>
               )}
@@ -1177,7 +1181,7 @@ export function ChatView({ bot: profile }: { bot: Bot }) {
       </div>
 
       {(advanced || remoteClient) && <BotActivityPicker bot={bot} />}{privateChat && team && <TeamPrivateFirstLine key={team.id} team={team} />}
-      {routineExecution && <div className="mx-5 mb-2 flex flex-wrap items-center gap-2 rounded-lg border border-hairline/40 bg-inset px-3 py-2 text-[11.5px] text-ink-secondary">
+      {routineExecution && <div className="mx-5 mb-2 flex flex-wrap items-center gap-2 rounded-lg border border-hairline/40 bg-inset px-3 py-2 text-[12px] text-ink-secondary">
         <span className="min-w-0 flex-1 truncate">{t("routines.executionDetails", { name: routineExecution.routineName })}</span>
         {canOpenResults && resultsThreadId && <button type="button" onClick={() => openNotificationTarget(dispatch, { botId: bot.id, threadId: resultsThreadId }, state, showThreads)} className="rounded px-2 py-1 text-accent hover:bg-raised">{t("routines.results.back")}</button>}
         <button type="button" onClick={() => dispatch({ type: "showRoutines", section: "logs", routineId: routineExecution.routineId, botId: bot.id })} className="rounded px-2 py-1 hover:bg-raised hover:text-ink">{t("routines.logs")}</button>

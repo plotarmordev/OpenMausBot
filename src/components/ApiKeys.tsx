@@ -444,14 +444,14 @@ export function ApiKeyRow({
         )}
       </div>
       {credential.warning && (
-        <div className="mt-1.5 flex gap-1.5 text-[11.5px] leading-[1.4] text-warning">
+        <div className="mt-1.5 flex gap-1.5 text-[12px] leading-[1.4] text-warning">
           <TriangleAlert size={13} className="mt-px shrink-0" aria-hidden="true" />
           <span>{credential.warning}</span>
         </div>
       )}
-      {credential.note && <p className="mt-1.5 text-[11.5px] leading-[1.4] text-ink-secondary">{credential.note}</p>}
+      {credential.note && <p className="mt-1.5 text-[12px] leading-[1.4] text-ink-secondary">{credential.note}</p>}
       {credential.showLink && (
-        <a href={credential.href} target="_blank" rel="noopener noreferrer" className="mt-1.5 inline-flex items-center gap-1 text-[11.5px] font-medium text-accent-text hover:underline">
+        <a href={credential.href} target="_blank" rel="noopener noreferrer" className="mt-1.5 inline-flex items-center gap-1 text-[12px] font-medium text-accent-text hover:underline">
           {credential.linkLabel}
           <ExternalLink size={11} aria-hidden="true" />
         </a>
@@ -506,7 +506,7 @@ export function OpenCodeProviderKeys() {
     <details data-opencode-provider-keys className="rounded-lg border border-hairline/40 bg-inset px-3 py-2" open={names.length > 0}>
       <summary className="cursor-pointer text-[13px] text-ink-secondary">{t("keys.opencode.otherProviders.title")}</summary>
       <div className="mt-3 flex flex-col gap-2">
-        <p className="text-[11.5px] leading-relaxed text-ink-secondary">{t("keys.opencode.otherProviders.hint")}</p>
+        <p className="text-[12px] leading-relaxed text-ink-secondary">{t("keys.opencode.otherProviders.hint")}</p>
         {names.map((saved) => (
           <div key={saved} data-opencode-provider-key={saved} className="flex items-center gap-2">
             <span className="size-1.5 shrink-0 rounded-full bg-success" />
@@ -579,17 +579,17 @@ export function AnthropicEveryClaudeBot() {
   };
   return (
     <div data-anthropic-every-claude-bot className="-mt-2">
-      <label className="flex cursor-pointer items-start gap-2 text-[12.5px] text-ink">
+      <label className="flex cursor-pointer items-start gap-2 text-[13px] text-ink">
         <input type="checkbox" checked={on} disabled={saving} onChange={toggle} className="mt-0.5 accent-accent" />
         <span>
           {t("keys.anthropic.everyBot")}
-          <span className="block text-[11.5px] leading-[1.4] text-ink-secondary">
+          <span className="block text-[12px] leading-[1.4] text-ink-secondary">
             {on ? t("keys.anthropic.everyBotOn") : t("keys.anthropic.everyBotOff")}
           </span>
         </span>
       </label>
       {on && (
-        <div className="mt-1.5 flex gap-1.5 text-[11.5px] leading-[1.4] text-warning">
+        <div className="mt-1.5 flex gap-1.5 text-[12px] leading-[1.4] text-warning">
           <TriangleAlert size={13} className="mt-px shrink-0" aria-hidden="true" />
           <span>{t("keys.anthropic.warning")}</span>
         </div>
@@ -718,7 +718,7 @@ export function OpenAiCompatUrl() {
           <Loader2 size={13} aria-hidden="true" className="absolute right-2.5 top-1/2 -translate-y-1/2 animate-spin text-ink-secondary" />
         )}
       </div>
-      <p className="mt-1 text-[11.5px] leading-relaxed text-ink-secondary">{t("keys.openaiCompat.urlHint")}</p>
+      <p className="mt-1 text-[12px] leading-relaxed text-ink-secondary">{t("keys.openaiCompat.urlHint")}</p>
       {error && <div className="mt-1 text-[12px] text-danger">{error}</div>}
     </div>
   );

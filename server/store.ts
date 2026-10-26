@@ -974,7 +974,7 @@ export class Store {
     fallbackDetail = "OpenMausBot restarted before this goal finished.",
     fallbackFinishedAt = Date.now(),
   ): number {
-    const ownedThreadIds = new Set<string>();
+    const ownedThreadIds = new Set<string>(this.bots.flatMap((bot) => (bot.tasks ?? []).map((task) => task.threadId)));
     for (const group of this.groups) {
       ownedThreadIds.add(group.threadId);
       for (const task of group.tasks ?? []) ownedThreadIds.add(task.threadId);

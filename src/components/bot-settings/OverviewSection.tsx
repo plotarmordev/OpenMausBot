@@ -36,6 +36,12 @@ export function OverviewSection({
     if (line === "Has the built-in browser.") return t("botOverview.line.browser");
     if (line === "Has no connected apps.") return t("botOverview.line.noApps");
     if (line === "Won't act on a schedule.") return t("botOverview.line.noSchedule");
+    if (line === "Can talk to the other bot.") return t("botOverview.line.talksToOne");
+    if (line === "Talks only to the bots chosen for it.") return t("botOverview.line.talksToChosen");
+    const talks = line.match(/^Can talk to all (\d+) other bots, in any department\.$/);
+    if (talks) return t("botOverview.line.talksToAll", { count: talks[1]! });
+    const inCharge = line.match(/^Also in charge of these departments: (.+)\.$/);
+    if (inCharge) return t("botOverview.line.alsoInCharge", { departments: inCharge[1]! });
     const computer = line.match(/^Computer preference: (.+)\.$/);
     if (computer) {
       const preference = computer[1] === "Auto; availability is checked when a task starts" ? t("botOverview.preference.auto") : computer[1] === "cloud computer" ? t("botOverview.preference.cloud") : computer[1] === "Local VM" ? t("botOverview.preference.vm") : computer[1] === "this computer" ? t("botOverview.preference.local") : computer[1] === "browser only" ? t("botOverview.preference.browser") : computer[1];
@@ -47,7 +53,7 @@ export function OverviewSection({
   return (
     <div className="flex flex-col gap-4">
       {refreshError && (
-        <div className="rounded-lg bg-inset px-3 py-2 text-[12.5px] text-ink-secondary">
+        <div className="rounded-lg bg-inset px-3 py-2 text-[13px] text-ink-secondary">
           {t("botOverview.refreshError")}
         </div>
       )}
@@ -83,7 +89,7 @@ export function OverviewSection({
               <button
                 type="button"
                 onClick={onSetup}
-                className="flex items-center gap-1.5 rounded-lg bg-accent px-3 py-2 text-[12.5px] font-medium text-accent-ink hover:brightness-110"
+                className="flex items-center gap-1.5 rounded-lg bg-accent px-3 py-2 text-[13px] font-medium text-accent-ink hover:brightness-110"
               >
                 <Sparkles size={14} /> {t("botSetup.withBot")}
               </button>
@@ -171,7 +177,7 @@ export function OverviewSection({
             {overview.recent.map((entry, i) => (
               <li key={i} className="flex items-baseline justify-between gap-3">
                 <span className="min-w-0 truncate">{entry.summary}</span>
-                <span className="shrink-0 text-[11.5px] text-ink-secondary">· {whenLabel(entry.at)}</span>
+                <span className="shrink-0 text-[12px] text-ink-secondary">· {whenLabel(entry.at)}</span>
               </li>
             ))}
           </ul>

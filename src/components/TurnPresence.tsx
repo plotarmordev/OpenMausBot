@@ -53,7 +53,7 @@ function ShimmerPhrase({ text, className, hidden }: { text: string; className?: 
 
 const NOTHING: readonly string[] = [];
 // The spaces keep copied text readable; the flex gap does the spacing on screen.
-const Dot = () => <span aria-hidden="true" className="text-[11.5px] text-ink-tertiary"> · </span>;
+const Dot = () => <span aria-hidden="true" className="text-[12px] text-ink-tertiary"> · </span>;
 
 /** The turn's live status line: "Working · 1m 12s · Writing index.html · 14 KB". The lead word and the timer stay for
  * the whole turn; `phrases` say what is happening now and rotate through their alternates; `size` is how much of the
@@ -123,7 +123,7 @@ export function TurnPresence({
             {since !== null && (
               <>
                 <Dot />
-                <WorkingTimer since={since} className="text-[11.5px] text-ink-tertiary" />
+                <WorkingTimer since={since} className="text-[12px] text-ink-tertiary" />
               </>
             )}
             {now && (
@@ -147,7 +147,7 @@ export function TurnPresence({
                 {size && (
                   <>
                     <Dot />
-                    <span className="text-[11.5px] tabular-nums text-ink-tertiary" data-turn-size>{size}</span>
+                    <span className="text-[12px] tabular-nums text-ink-tertiary" data-turn-size>{size}</span>
                   </>
                 )}
               </>

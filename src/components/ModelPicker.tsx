@@ -323,7 +323,7 @@ function ModelSearch({
           }}
           placeholder={t("model.search")}
           aria-label={local ? t("model.searchLocal") : t("model.search")}
-          className="w-full bg-transparent text-[12.5px] text-ink placeholder:text-ink-secondary focus:outline-none"
+          className="w-full bg-transparent text-[13px] text-ink placeholder:text-ink-secondary focus:outline-none"
         />
       </div>
     </div>
@@ -473,9 +473,9 @@ export function ModelPicker({
   const [scope, setScope] = useState<"bot" | "thread">("thread");
   const advanced = useAdvancedMode();
   const ownerOrAdmin = useOwnerOrAdmin();
-  // Cloud guests change only their own conversation's model, never the shared bot's default; thread-only until
+  // A guest changes only their own conversation's model, never the shared bot's default; thread-only until
   // authority loads.
-  const simpleUpdatesBotDefault = !state.config?.cloudHome || ownerOrAdmin === true;
+  const simpleUpdatesBotDefault = ownerOrAdmin === true;
   const [fullView, setFullView] = useState(false);
   const [pendingSwitch, setPendingSwitch] = useState<{ botId: string; threadId: string;
     selection: ModelSelection; updateBotDefault: boolean; name: string } | null>(null);
@@ -954,7 +954,7 @@ export function ModelPicker({
                       </button>
                       <span
                         className={cn(
-                          "shrink-0 rounded-full px-2 py-0.5 text-[10.5px] font-medium",
+                          "shrink-0 rounded-full px-2 py-0.5 text-[11px] font-medium",
                           blocked ? "bg-warning/10 text-warning" : "bg-success/10 text-success",
                         )}
                       >
@@ -977,8 +977,8 @@ export function ModelPicker({
                     <ChatGptPlanStatus key={railInstance.instanceId} instanceId={railInstance.instanceId} />
                   )}
                   {railInstance.access === "api"
-                    ? <div className="mt-0.5 text-[11.5px] text-ink-secondary">{t("model.apiKeyHint")}</div>
-                    : pane === "custom" && <div className="mt-0.5 text-[11.5px] text-ink-secondary">{t("model.localHint")}</div>}
+                    ? <div className="mt-0.5 text-[12px] text-ink-secondary">{t("model.apiKeyHint")}</div>
+                    : pane === "custom" && <div className="mt-0.5 text-[12px] text-ink-secondary">{t("model.localHint")}</div>}
                 </div>
 
                 {pane === "custom" && canReturnToOfficial && (
@@ -995,7 +995,7 @@ export function ModelPicker({
                 )}
 
                 {railInstance.policy ? (
-                  <div data-policy-blocked className="min-h-0 flex-1 overflow-y-auto px-3 pb-3 pt-1 text-[12.5px] leading-relaxed text-ink-secondary">
+                  <div data-policy-blocked className="min-h-0 flex-1 overflow-y-auto px-3 pb-3 pt-1 text-[13px] leading-relaxed text-ink-secondary">
                     <p className="font-medium text-ink">{t("policy.managedBy", { organization: railInstance.policy.organizationName })}</p>
                     <p className="mt-1">{t("policy.modelBlocked", { organization: railInstance.policy.organizationName })}</p>
                   </div>
@@ -1003,12 +1003,12 @@ export function ModelPicker({
                   <div className="min-h-0 flex-1 overflow-y-auto px-3 pb-3 pt-1">
                     <EngineSetup instance={railInstance} intent={pane === "custom" ? "inject" : "cloud"} />
                     {railInstance.claudeAccount && needsSignIn(railInstance) && pane !== "custom" && (
-                      <p className="mt-2 text-[11.5px] leading-relaxed text-ink-secondary">
+                      <p className="mt-2 text-[12px] leading-relaxed text-ink-secondary">
                         {railInstance.claudeAccount.signInShell === "powershell" && `${t("engines.account.powershell")} `}
                         {t("engines.account.signInHint")}
                       </p>
                     )}
-                    <p className="mt-2 text-center text-[11.5px] text-ink-tertiary">
+                    <p className="mt-2 text-center text-[12px] text-ink-tertiary">
                       {railInstance.snapshot.chatgptPlan ? t("engineSetup.chatgpt.modelsAfterSignIn") : pane === "main" && official.length > 0
                         ? official.length === 1
                           ? t("model.afterSetupOne")
@@ -1049,7 +1049,7 @@ export function ModelPicker({
                           </EngineGroupLabel>
                           {shownOfficial.map(renderRow)}
                           {shownOfficial.length === 0 && (
-                            <div className="px-2 py-5 text-center text-[12.5px] text-ink-secondary">
+                            <div className="px-2 py-5 text-center text-[13px] text-ink-secondary">
                               {t("model.noMatch", { query: query.trim() })}
                             </div>
                           )}
@@ -1057,7 +1057,7 @@ export function ModelPicker({
                             <button
                               type="button"
                               onClick={() => setShowAll(true)}
-                              className="mt-1 flex w-full items-center justify-between rounded-lg border-t border-hairline/40 px-2.5 py-2 text-[12.5px] font-medium text-ink-secondary hover:bg-control/60 hover:text-ink"
+                              className="mt-1 flex w-full items-center justify-between rounded-lg border-t border-hairline/40 px-2.5 py-2 text-[13px] font-medium text-ink-secondary hover:bg-control/60 hover:text-ink"
                             >
                               {t("model.showAll", { count: official.length })} <ChevronDown size={13} />
                             </button>
@@ -1075,7 +1075,7 @@ export function ModelPicker({
                       ) : (
                         <>
                           {lookingForLocal && custom.length > 0 && (
-                            <div className="flex px-2 pb-1.5 pt-0.5 text-[11.5px] text-ink-secondary">{lookingForLocalStatus}</div>
+                            <div className="flex px-2 pb-1.5 pt-0.5 text-[12px] text-ink-secondary">{lookingForLocalStatus}</div>
                           )}
                           {pinned.length > 0 && (
                             <EngineGroupLabel className="px-2 pb-1 pt-0.5">{t("model.loadedNow")}</EngineGroupLabel>
@@ -1088,11 +1088,11 @@ export function ModelPicker({
                           {custom.length === 0 && (
                             <div className="mx-1 rounded-xl border border-dashed border-hairline/50 px-3 py-5 text-center">
                               {lookingForLocal ? (
-                                <div className="text-[12.5px] text-ink-secondary">{lookingForLocalStatus}</div>
+                                <div className="text-[13px] text-ink-secondary">{lookingForLocalStatus}</div>
                               ) : (
                                 <>
-                                  <div className="text-[12.5px] font-medium text-ink">{t("model.noLocal")}</div>
-                                  <div className="mt-1 text-[11.5px] leading-relaxed text-ink-secondary">
+                                  <div className="text-[13px] font-medium text-ink">{t("model.noLocal")}</div>
+                                  <div className="mt-1 text-[12px] leading-relaxed text-ink-secondary">
                                     {t("model.noLocalHint")}
                                   </div>
                                 </>
@@ -1100,7 +1100,7 @@ export function ModelPicker({
                             </div>
                           )}
                           {custom.length > 0 && filteredCustom.length === 0 && (
-                            <div className="px-2 py-5 text-center text-[12.5px] text-ink-secondary">
+                            <div className="px-2 py-5 text-center text-[13px] text-ink-secondary">
                               {t("model.noMatch", { query: query.trim() })}
                             </div>
                           )}
@@ -1117,7 +1117,7 @@ export function ModelPicker({
                     threadId={threadId}
                     updateBotDefault={Boolean(threadId && scope === "bot")}
                     className="shrink-0 border-t border-hairline/40 px-4 py-2"
-                    label={<span className="text-[12.5px] font-medium text-ink">{active?.capabilities?.modelVariants ? t("model.simple.reasoning") : t("model.section.effort")}</span>}
+                    label={<span className="text-[13px] font-medium text-ink">{active?.capabilities?.modelVariants ? t("model.simple.reasoning") : t("model.section.effort")}</span>}
                   />
                 )}
 
@@ -1132,12 +1132,12 @@ export function ModelPicker({
                     }
                     disabled={!canOpenCustom}
                     onClick={() => openLocalModels(railInstance)}
-                    className="flex w-full shrink-0 items-center justify-between gap-2 border-t border-hairline/40 px-4 py-3 text-left text-[12.5px] font-medium text-ink hover:bg-control/60 disabled:cursor-not-allowed disabled:text-ink-secondary/40 disabled:hover:bg-transparent"
+                    className="flex w-full shrink-0 items-center justify-between gap-2 border-t border-hairline/40 px-4 py-3 text-left text-[13px] font-medium text-ink hover:bg-control/60 disabled:cursor-not-allowed disabled:text-ink-secondary/40 disabled:hover:bg-transparent"
                   >
                     <span>{t("model.useLocal")}</span>
                     <span className="flex items-center gap-2">
                       {custom.length > 0 && (
-                        <span className="rounded-full bg-inset px-2 py-0.5 text-[10.5px] text-ink-secondary">
+                        <span className="rounded-full bg-inset px-2 py-0.5 text-[11px] text-ink-secondary">
                           {t("model.available", { count: custom.length })}
                         </span>
                       )}

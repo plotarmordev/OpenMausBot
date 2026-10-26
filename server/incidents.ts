@@ -1,7 +1,7 @@
 import type { WireMessage as Message } from "../shared/wire.ts";
 import { withoutDeliveredNote } from "./peer-provenance.ts";
 import { botOwner } from "../shared/bot-owner.ts";
-import { canAccessTeam } from "./peer-roster.ts";
+import { hasTeamAuthority } from "./peer-roster.ts";
 
 export type IncidentKind = "failed" | "stalled" | "could-not-start" | "routine-failed";
 
@@ -39,7 +39,7 @@ export function chiefForBot<T extends IncidentBot>(bots: readonly T[], bot: Inci
   if (owner) return chiefs.find((chief) => botOwner(chief) === owner) ?? null;
   const unowned = chiefs.filter((chief) => !botOwner(chief));
   return unowned.find((chief) => sectionKey(chief.section) === sectionKey(bot.section))
-    ?? unowned.find((chief) => canAccessTeam(chief, bot.section))
+    ?? unowned.find((chief) => hasTeamAuthority(chief, bot.section))
     ?? null;
 }
 

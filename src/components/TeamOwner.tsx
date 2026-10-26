@@ -170,7 +170,7 @@ export function NeedsYouButton({ compact = false }: { compact?: boolean }) {
               onClick={() => { setOpen(false); if (item.threadId) openThread(dispatch, { botId, threadId: item.threadId }, state, showThreads); }}
               className="flex w-full flex-col items-start px-3.5 py-2 text-left hover:bg-raised/70">
               <span className="w-full truncate text-[13px] text-ink">{title}</span>
-              {text && <span className="w-full truncate text-[11.5px] text-ink-secondary">{text}</span>}
+              {text && <span className="w-full truncate text-[12px] text-ink-secondary">{text}</span>}
             </button>;
           })}
         </div>

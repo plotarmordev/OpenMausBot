@@ -132,7 +132,7 @@ export function Terminal({ playing, onCue, onEnded, label }: SceneProps) {
               <span className="size-2.5 rounded-full bg-[#febc2e]" />
               <span className="size-2.5 rounded-full bg-[#28c840]" />
             </div>
-            <div className="ml-2 flex h-6 max-w-[150px] items-center gap-1.5 rounded-t-lg bg-[#35363a] px-2.5 text-[9.5px] text-[#e8eaed]">
+            <div className="ml-2 flex h-6 max-w-[150px] items-center gap-1.5 rounded-t-lg bg-[#35363a] px-2.5 text-[10px] text-[#e8eaed]">
               <MausAvatar color="green" state="idle" size={10} animated={false} trackPointer={false} />
               <span className="truncate">OpenMausBot</span>
               <span className="ml-1 text-[#9aa0a6]">×</span>
@@ -145,7 +145,7 @@ export function Terminal({ playing, onCue, onEnded, label }: SceneProps) {
               <span>›</span>
               <span>↻</span>
             </div>
-            <div className="flex flex-1 items-center gap-1.5 rounded-full bg-[#202124] px-2.5 py-1 text-[9.5px] tabular-nums text-[#e8eaed]">
+            <div className="flex flex-1 items-center gap-1.5 rounded-full bg-[#202124] px-2.5 py-1 text-[10px] tabular-nums text-[#e8eaed]">
               <span className="text-[8px] text-[#9aa0a6]">🔒</span>
               <span className="text-[#9aa0a6]">127.0.0.1</span>
               <span className="text-[#9aa0a6]">:8799</span>
@@ -156,7 +156,7 @@ export function Terminal({ playing, onCue, onEnded, label }: SceneProps) {
         <div className="relative flex min-h-0 flex-1 bg-app">
           <div className="flex w-[104px] shrink-0 flex-col border-r border-hairline/40 bg-panel/70 p-2">
             <div className="h-5 rounded-md bg-inset" />
-            <div className="mt-2 text-[7.5px] font-semibold uppercase tracking-[0.12em] text-ink-tertiary">Bots</div>
+            <div className="mt-2 text-[8px] font-semibold uppercase tracking-[0.12em] text-ink-tertiary">Bots</div>
             <div className="mt-1 flex items-center gap-1.5 rounded-md bg-raised/70 px-1.5 py-1">
               <MausAvatar color="green" state="happy" size={14} animated={false} trackPointer={false} />
               <div className="min-w-0">
@@ -182,7 +182,7 @@ export function Terminal({ playing, onCue, onEnded, label }: SceneProps) {
                 <div className="mt-0.5 h-1 w-24 rounded bg-ink-secondary/40" />
                 <div className="mt-2 flex h-[18px] w-full items-center rounded-md border border-hairline/40 bg-inset px-2 text-[8px] text-ink-secondary">Your name</div>
                 <div className="mt-1 flex h-[18px] w-full items-center rounded-md border border-hairline/40 bg-inset px-2 text-[8px] text-ink-secondary">you@example.com</div>
-                <div className="mt-1 flex h-[18px] w-full items-center justify-center rounded-md bg-accent text-[8.5px] font-medium text-white">Continue</div>
+                <div className="mt-1 flex h-[18px] w-full items-center justify-center rounded-md bg-accent text-[9px] font-medium text-white">Continue</div>
               </div>
             </div>
           </div>

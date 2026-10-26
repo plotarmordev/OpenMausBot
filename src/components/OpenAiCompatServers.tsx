@@ -67,8 +67,8 @@ function AddedServers({ servers }: { servers: Array<InstanceInfo & { url?: strin
   return (
     <div>
       <div className="mb-1.5 text-[13px] text-ink-secondary">{t("apiInstances.title")}</div>
-      <p className="mb-2 text-[11.5px] leading-relaxed text-ink-secondary">{t("apiInstances.subtitle")}</p>
-      {servers.length === 0 && <p className="text-[11.5px] text-ink-secondary">{t("apiInstances.empty")}</p>}
+      <p className="mb-2 text-[12px] leading-relaxed text-ink-secondary">{t("apiInstances.subtitle")}</p>
+      {servers.length === 0 && <p className="text-[12px] text-ink-secondary">{t("apiInstances.empty")}</p>}
       {servers.map((server) => (
         <div key={server.instanceId} className="mb-1.5 flex items-center justify-between gap-2 rounded-lg border border-hairline/40 bg-inset px-3 py-2">
           <div className="min-w-0">

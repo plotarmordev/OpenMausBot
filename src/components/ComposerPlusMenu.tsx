@@ -22,14 +22,14 @@ import { SidebarPopoverMenu, type SidebarMenuItem } from "./SidebarPopoverMenu";
 
 type ApprovalChoice = ComponentProps<typeof ApprovalModeSelector>;
 
-/** Finish together: the room keeps working until the goal is done. The chip turns accent while it is on. */
-export function GoalToggle({ on, onToggle }: { on: boolean; onToggle: () => void }) {
+/** Finish together: the room (or, `solo`, the one bot) keeps working until the goal is done. The chip turns accent while it is on. */
+export function GoalToggle({ on, onToggle, solo = false }: { on: boolean; onToggle: () => void; solo?: boolean }) {
   return (
     <button
       type="button"
       aria-pressed={on}
-      aria-label={t("composer.goal.aria")}
-      title={t("composer.goal.title")}
+      aria-label={t(solo ? "composer.goal.soloAria" : "composer.goal.aria")}
+      title={t(solo ? "composer.goal.soloTitle" : "composer.goal.title")}
       onClick={onToggle}
       className={cn(
         "flex h-8 items-center gap-1.5 whitespace-nowrap rounded-full border px-3 text-[13px] transition-colors",
@@ -92,7 +92,7 @@ function approvalItem(name: string, choice: ApprovalChoice): SidebarMenuItem {
 }
 
 /**
- * Simple mode's round + at the start of the composer: attach a file, Finish together (rooms), the thread's approval
+ * Simple mode's round + at the start of the composer: attach a file, Finish together, the thread's approval
  * level and the call mode (bots), each running the handler its Advanced button runs.
  */
 export function ComposerPlusMenu({ onAttach, goal, approval, callBotId, extraItems = [], circle = false }: {
@@ -101,7 +101,7 @@ export function ComposerPlusMenu({ onAttach, goal, approval, callBotId, extraIte
   extraItems?: SidebarMenuItem[];
   /** The phone dock: a round button of its own beside the field, not a small chip inside it. */
   circle?: boolean;
-  goal?: { on: boolean; onToggle: () => void };
+  goal?: { on: boolean; onToggle: () => void; solo?: boolean };
   approval?: { name: string; choice: ApprovalChoice };
   /** The bot whose call button the call mode starts, as that button's own mode menu did. */
   callBotId?: string;
@@ -121,7 +121,7 @@ export function ComposerPlusMenu({ onAttach, goal, approval, callBotId, extraIte
     { key: "attach", label: t("composer.attach"), icon: <Paperclip size={16} />, onSelect: onAttach },
     ...(goal ? [{
       key: "goal",
-      label: t("composer.goal.aria"),
+      label: t(goal.solo ? "composer.goal.soloAria" : "composer.goal.aria"),
       icon: <Target size={16} />,
       active: goal.on,
       trailing: goal.on ? check : undefined,

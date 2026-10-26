@@ -10,6 +10,8 @@ import {
   packageInstallCommand,
   stagedInstallFile,
 } from "./package-install-command.mjs";
+import { canInstallElevated, installPackageElevated } from "./elevated-install.mjs";
+import { releaseSingleInstanceLock } from "./single-instance.mjs";
 import { openBlankTerminal } from "./terminal-launch.mjs";
 import { createUpdaterCoordinator } from "./updater-coordinator.mjs";
 
@@ -38,6 +40,7 @@ function updaterLogger() {
 }
 
 // electron-updater would install a .deb through a polkit root prompt and `dpkg -i` (no dependency resolution) over the running app.
+// A .deb is installed by elevated-install.mjs when a password prompt can be shown; every system package otherwise gets the hand-off below.
 const HAND_OFF_TYPES = new Set(HAND_OFF_PACKAGE_TYPES);
 
 // The command is never executed for the person, so nothing here becomes a process argument.
@@ -48,6 +51,17 @@ export function handOffDownloadedPackage(packageType) {
     clipboard.writeText(command);
     return { command, terminalOpened: await openBlankTerminal() };
   };
+}
+
+export function installDownloadedPackage(files, { sha512 } = {}) {
+  return installPackageElevated({ file: stagedInstallFile(files), sha512 });
+}
+
+// The install replaced the files under this process, so reopen at once; the lock goes first or the new copy exits (see main.mjs).
+function relaunchAfterInstall() {
+  releaseSingleInstanceLock(app);
+  app.relaunch();
+  app.quit();
 }
 
 function setState(patch) {
@@ -101,9 +115,12 @@ export function startUpdater() {
   const handOff = HAND_OFF_TYPES.has(packageType);
   // On macOS this also starts Squirrel.Mac's native staging at once; a system package is never installed on quit.
   autoUpdater.autoInstallOnAppQuit = !handOff;
-  setState({ installMode: handOff ? "handoff" : "restart" });
+  const elevated = packageType === "deb" && canInstallElevated();
+  setState({ installMode: handOff && !elevated ? "handoff" : "restart" });
   updaterCoordinator = createUpdaterCoordinator(autoUpdater, setState, {
     handOffInstall: handOff ? handOffDownloadedPackage(packageType) : null,
+    elevatedInstall: elevated ? installDownloadedPackage : null,
+    relaunch: elevated ? relaunchAfterInstall : null,
     nativeStaging: process.platform === "darwin",
   });
 

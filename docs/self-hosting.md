@@ -720,10 +720,10 @@ alone.
   recorded in the admin activity log.
 - **Departments.** A department (sidebar section) is listed to a user only when it
   holds a bot or room they can see.
-- **Bots working together.** A bot reaches a teammate (`coordinate_bots`,
-  its roster and `list_bots`, @mentions, a Chief's team) only when exactly
-  the same people can see both: otherwise one bot's thread could carry the
-  other's answers to people who cannot see it. Bots nobody restricted all
+- **Bots working together.** A bot reaches any teammate, in any department
+  (`coordinate_bots`, its roster and `list_bots`, @mentions, a Chief's team),
+  but only when exactly the same people can see both: otherwise one bot's
+  thread could carry the other's answers to people who cannot see it. Bots nobody restricted all
   share "everyone", so nothing changes until an admin restricts one. A bot a
   Chief creates (directly, or in a reviewed team setup) gets exactly the
   Chief's audience.

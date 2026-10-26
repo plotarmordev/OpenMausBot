@@ -396,9 +396,11 @@ export interface UpdaterState {
   /** native work may still be running; recovery requires an app restart */
   retryable?: boolean;
   /**
-   * How the download gets applied. "restart" quits and installs in place;
+   * How the download gets applied. "restart" quits and installs in place (an
+   * Ubuntu .deb asks for the password once, installs and reopens);
    * "handoff" copies the install command and opens a terminal so the user
-   * can finish — Ubuntu .deb (and rpm/pacman) builds use this.
+   * can finish — rpm/pacman builds, and a .deb where no password prompt
+   * can be shown, use this.
    */
   installMode?: "restart" | "handoff";
   /** hand-off only: the install command, already on the clipboard */

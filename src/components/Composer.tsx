@@ -283,7 +283,7 @@ export function Composer({
     const responders = roomRespondersForComposer(message, members ?? [], group);
     return responders.length > 0 && responders.every(botSupportsImages);
   };
-  const typedGoalText = group && !group.dm ? goalTextFromComposer(text) : null;
+  const typedGoalText = !group?.dm ? goalTextFromComposer(text) : null;
   const effectiveText = typedGoalText ?? text;
   const effectiveChannelMode = typedGoalText !== null ? "goal" : channelMode;
   const engineSupportsImages = imageTargetsSupport(effectiveText, effectiveChannelMode);
@@ -301,11 +301,11 @@ export function Composer({
           )?.capabilities?.agentsMcp,
       );
     const available: ComposerSlashCommand[] = [];
-    if (group && !group.dm) available.push({
+    if (!group?.dm) available.push({
       kind: "command",
       id: "goal",
       label: "/goal",
-      description: t("composer.command.goalDesc"),
+      description: t(group ? "composer.command.goalDesc" : "composer.command.goalBotDesc"),
     });
     if (
       skillAuthoringEnabled(state.config) &&
@@ -558,7 +558,7 @@ export function Composer({
     if (group) {
       dispatch({ type: "sendGroup", groupId: group.id, mode: failedMode, ...retry });
     } else if (bot) {
-      dispatch({ type: "send", botId: bot.id, ...retry });
+      dispatch({ type: "send", botId: bot.id, mode: failedMode, ...retry });
     }
   };
   const send = () => {
@@ -585,7 +585,7 @@ export function Composer({
       reply: replyTo ?? null,
       replyToId: replyTo?.id,
       threadId,
-      channelMode: group ? effectiveChannelMode : undefined,
+      channelMode: effectiveChannelMode,
     };
     if (group) {
       dispatch({
@@ -600,9 +600,9 @@ export function Composer({
       });
       roomMessageSent(effectiveChannelMode, busy);
     } else if (bot) {
-      const points = takePointedChips(threadId);
+      const points = effectiveChannelMode === "goal" ? null : takePointedChips(threadId);
       dispatch({
-        type: "send", botId: bot.id, text: body, sendId: sentDraft.sendId, replyToId: replyTo?.id, threadId, dataContext,
+        type: "send", botId: bot.id, text: body, sendId: sentDraft.sendId, replyToId: replyTo?.id, threadId, dataContext, mode: effectiveChannelMode,
         ...(points ? { pointed: points.pointed } : {}),
         onError: () => { points?.restore(); restoreDraft(sentDraft); },
       });
@@ -611,7 +611,7 @@ export function Composer({
     setText("");
     setAttachments([]);
     onConsumeReply?.();
-    if (group) setChannelMode("chat");
+    setChannelMode("chat");
   };
 
   const handlePaste = (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
@@ -692,7 +692,7 @@ export function Composer({
     }
     setChannelMode((current) => current === "goal" ? "chat" : "goal");
   };
-  const goal = group && !group.dm ? { on: effectiveChannelMode === "goal", onToggle: toggleGoal } : undefined;
+  const goal = !group?.dm ? { on: effectiveChannelMode === "goal", onToggle: toggleGoal, solo: !group } : undefined;
   const approvalChoice = modeBot && approvalEngine && !remoteClient ? {
     approvalMode: modeBot.approvalMode,
     autoApprove: modeBot.autoApprove,
@@ -715,7 +715,7 @@ export function Composer({
         {failedSends.map((failed) => (
           <div
             key={failed.id}
-            className="mb-2 flex items-center gap-2 rounded-lg border border-danger/30 bg-danger/10 px-3 py-2 text-[12.5px] text-danger"
+            className="mb-2 flex items-center gap-2 rounded-lg border border-danger/30 bg-danger/10 px-3 py-2 text-[13px] text-danger"
           >
             <span className="min-w-0 flex-1 truncate">
               {t("composer.failed.notSent", {
@@ -745,7 +745,7 @@ export function Composer({
         <MentionMenu listRef={mentionListRef} motion={mentionMotion} choices={candidates} highlight={highlight}
           everyoneCount={mentionEveryoneCount} onPick={pickMention} onHighlight={setHighlight} />
         {approval && (
-          <div className="mb-2 overflow-hidden rounded-3xl bg-composer ring-1 ring-composer-ring">
+          <div className="mb-2 overflow-hidden rounded-2xl bg-composer ring-1 ring-composer-ring">
             <PendingApprovalPanel
               key={approval.requestId}
               pending={approval}
@@ -789,7 +789,7 @@ export function Composer({
             data-composer-backdrop
             className="pointer-events-none absolute -left-5 -right-5 -bottom-3 top-1/2 bg-app"
           />}
-        <div data-tour="composer" className={cn("@container/composer relative z-[1]", singleRow ? "flex items-end gap-2" : "rounded-3xl bg-composer px-2 py-1.5 ring-1 ring-composer-ring")}>
+        <div data-tour="composer" className={cn("@container/composer relative z-[1]", singleRow ? "flex items-end gap-2" : "rounded-2xl bg-composer px-2 pt-2 pb-1.5 ring-1 ring-composer-ring")}>
         {singleRow && !locked && (
           <div className="flex shrink-0 items-center">
             <PhonePlus
@@ -808,7 +808,7 @@ export function Composer({
         )}
         <div className={singleRow ? "min-w-0 flex-1 rounded-[26px] bg-composer px-3 py-1.5 ring-1 ring-composer-ring" : "contents"}>
         {replyTo && <ComposerReplyStrip message={replyTo} fallbackName={bot?.name} onClear={onClearReply} />}
-        <div data-composer-row className={cn("flex items-end gap-1", !singleRow && "@max-[30rem]/composer:flex-wrap")}>
+        <div data-composer-row className={cn("flex items-end gap-1", !singleRow && "flex-wrap")}>
           <input
             ref={fileInput}
             type="file"
@@ -838,7 +838,7 @@ export function Composer({
                 <Paperclip size={17} />
               </button>}
               {/* Simple mode keeps the chip only while Finish together is on, so the + menu's choice stays visible. */}
-              {goal && (advanced || goal.on) && <GoalToggle on={goal.on} onToggle={goal.onToggle} />}
+              {goal && (advanced || goal.on) && <GoalToggle {...goal} />}
               {advanced && approvalChoice && <ApprovalModeSelector {...approvalChoice} />}
               {modeBot && !remoteClient && advanced && (
                 <PlaceChip
@@ -852,7 +852,7 @@ export function Composer({
             </div>
           )}
           <MentionTextarea
-          wrapperClassName={singleRow ? undefined : "@max-[30rem]/composer:order-first @max-[30rem]/composer:basis-full"}
+          wrapperClassName={singleRow ? undefined : "order-first basis-full"}
           inputRef={inputRef}
           peers={group ? members ?? [] : state.bots.filter((member) => member.id !== bot?.id)}
           everyone={Boolean(group && !group.dm)}
@@ -964,12 +964,12 @@ export function Composer({
                         name: group.name,
                         hint: groupComposerHint(group, members ?? [], { jevOn: jevRoomRoutingOn(state.config) }),
                       })
-                  : t("composer.placeholder.bot", { name: bot?.name ?? "" })
+                  : t(channelMode === "goal" ? "composer.placeholder.goalSolo" : "composer.placeholder.bot", { name: bot?.name ?? "" })
           }
           aria-label={t("composer.placeholder.bot", { name: group ? group.name : (bot?.name ?? "") })}
-            className="block max-h-[9rem] min-h-6 w-full resize-none overflow-y-auto bg-transparent px-1 py-1 text-[15px] leading-6 placeholder:text-ink-secondary focus:outline-none"
+            className={cn("block max-h-[9rem] w-full resize-none overflow-y-auto bg-transparent px-1 py-1 text-[15px] leading-6 placeholder:text-ink-secondary focus:outline-none", singleRow ? "min-h-6" : "min-h-14")}
           />
-          <div data-composer-actions className={cn("flex items-center gap-1", !singleRow && "@max-[30rem]/composer:ml-auto")}>
+          <div data-composer-actions className={cn("flex items-center gap-1", !singleRow && "ml-auto")}>
           {busy && !locked && (
           <button
             onClick={interruptTurn}

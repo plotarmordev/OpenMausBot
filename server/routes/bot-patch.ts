@@ -526,7 +526,7 @@ export function createBotPatchRoutes(deps: BotPatchRouteDeps): RouteHandler {
         }
         patch.approvePeerComms = body.approvePeerComms;
       }
-      // null: everyone visible in the section; an array (even empty) is the explicit wiring. Narrowing is free;
+      // null: every visible bot; an array (even empty) is the explicit wiring. Narrowing is free;
       // widening needs acknowledgePeerScope, since any loopback caller (a bot with Bash) gets admin.
       if (body.peers !== undefined) {
         let nextPeers: string[] | undefined;
@@ -535,7 +535,7 @@ export function createBotPatchRoutes(deps: BotPatchRouteDeps): RouteHandler {
           !Array.isArray(body.peers) ||
           body.peers.some((peerId: unknown) => typeof peerId !== "string")
         ) {
-          return json(res, 400, { error: "peers must be a list of bot ids, or null for every bot in this section" });
+          return json(res, 400, { error: "peers must be a list of bot ids, or null for every bot" });
         } else {
           nextPeers = [...new Set<string>(body.peers)].slice(0, MAX_WORKSPACE_BOTS);
         }
@@ -545,7 +545,7 @@ export function createBotPatchRoutes(deps: BotPatchRouteDeps): RouteHandler {
           (nextPeers === undefined || nextPeers.some((peerId) => !currentPeers.includes(peerId)));
         if (widensReach && body.acknowledgePeerScope !== true) {
           return json(res, 400, {
-            error: "Widening a bot's allowed peers requires confirming it first (acknowledgePeerScope)",
+            error: "Letting a bot talk to more bots requires confirming it first (acknowledgePeerScope)",
           });
         }
         patch.peers = nextPeers;
@@ -556,13 +556,13 @@ export function createBotPatchRoutes(deps: BotPatchRouteDeps): RouteHandler {
         const sections = [...new Set(parsed.data)];
         const newSections = sections.filter(section => !(existingBot?.managedSections ?? []).includes(section));
         if (newSections.some(section => section !== "" && !store.sections.includes(section))) {
-          return json(res, 400, { error: "Create the named department before giving a Chief access to it" });
+          return json(res, 400, { error: "Create the named department before making a Chief responsible for it" });
         }
         if (sections.length && !(body.chiefOfStaff === true || (existingBot?.chiefOfStaff && body.chiefOfStaff !== false))) {
-          return json(res, 400, { error: "Only a Chief of Staff can be given access to additional teams" });
+          return json(res, 400, { error: "Only a Chief of Staff can be made responsible for additional departments" });
         }
         if (newSections.length && body.acknowledgePeerScope !== true) {
-          return json(res, 400, { error: "Confirm which additional teams this Chief may work with (acknowledgePeerScope)" });
+          return json(res, 400, { error: "Confirm which additional departments this Chief is responsible for (acknowledgePeerScope)" });
         }
         patch.managedSections = sections;
       }

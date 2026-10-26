@@ -49,6 +49,17 @@ describe("the team's sign-in in an audience's home", () => {
     expect(syncSignIn(files().bob, [owner])).toBe("same");
   });
 
+  it("a shorter refresh replaces the whole team's file, in place", () => {
+    write(team, credentials("tok-1-long-access-token"));
+    syncSignIn(files().bob);
+    const inode = statSync(team).ino;
+    write(bob, credentials("tok-2"), SETTLED_MS + 500);
+    expect(syncSignIn(files().owner, [bob])).toBe("taken back");
+    expect(readFileSync(team, "utf8")).toBe(credentials("tok-2"));
+    expect(statSync(team).ino).toBe(inode);
+    expect(readFileSync(owner, "utf8")).toBe(credentials("tok-2"));
+  });
+
   it("a copy still being written, or one that does not read whole, is never taken back", () => {
     write(team, credentials("tok-1"));
     syncSignIn(files().bob);

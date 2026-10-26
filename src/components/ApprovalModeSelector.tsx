@@ -181,7 +181,7 @@ export function ApprovalModeSelector({
                         {option.label}
                         {selected && <Check size={15} className="shrink-0" />}
                       </span>
-                      <span className="text-[12.5px] leading-snug text-ink-secondary">
+                      <span className="text-[13px] leading-snug text-ink-secondary">
                         {option.description}
                       </span>
                     </span>
@@ -192,7 +192,7 @@ export function ApprovalModeSelector({
             })}
             {!visibleOptions.some((option) => option.mode === "full") && allowlistAction}
             {!trustedModesAvailable && (trustedModesNotice || driverKind === "codex" || requiresLocalDesktop) && (
-              <div className="border-t border-hairline/20 px-4 py-2.5 text-[11.5px] leading-snug text-ink-secondary">
+              <div className="border-t border-hairline/20 px-4 py-2.5 text-[12px] leading-snug text-ink-secondary">
                 {trustedModesNotice ?? t("approvalMode.customLocalOnlyDot")}
               </div>
             )}

@@ -122,8 +122,9 @@ export type EventSeed = {
   call?: CalendarCall;
 };
 
+/** No group is a goal in one bot's own chat, which any active bot can lead. */
 function activeRoomMembers(group: Group | undefined, bots: Bot[]): Bot[] {
-  if (!group) return [];
+  if (!group) return bots.filter((bot) => !bot.hidden);
   return group.memberIds.flatMap((id) => {
     const bot = bots.find((candidate) => candidate.id === id);
     return bot && !bot.hidden ? [bot] : [];
@@ -274,7 +275,7 @@ function BotPicker({
               className={cn("flex min-w-0 items-center gap-2 rounded-lg px-2 py-2 text-left transition", active ? "bg-accent/12 ring-1 ring-accent/50" : "hover:bg-raised", locked && "cursor-default")}
             >
               <BotAvatar bot={bot} state={active ? "happy" : "idle"} size={32} animated={false} />
-              <span className="min-w-0 flex-1 truncate text-[12.5px] font-medium text-ink">{bot.name}</span>
+              <span className="min-w-0 flex-1 truncate text-[13px] font-medium text-ink">{bot.name}</span>
               {active && <CheckCircle2 size={14} className="shrink-0 text-accent" />}
             </button>
           );
@@ -379,7 +380,7 @@ export function EventEditor({
   const cloudReady = Boolean(state.config?.box.configured && botIds.length > 0 && botIds.every(id => boatCapableEngine(state.instances, bots.find(bot => bot.id === id)?.modelSelection.instanceId)?.snapshot.state === "available"));
   const rooms = state.groups.filter(roomCanRunGoal);
   const selectedRoom = rooms.find((group) => group.id === groupId);
-  const roomMembers = activeRoomMembers(selectedRoom, state.bots);
+  const roomMembers = selectedRoom ? activeRoomMembers(selectedRoom, state.bots) : bots;
   const isRoomGoal = kind === "routine" && routineTarget === "room-goal";
   const cloudHome = state.config?.cloudHome === true;
   const at = fromLocalDateAndTime(date, startTime, existingRoutine || existingCall ? initialAt : undefined);
@@ -506,7 +507,7 @@ export function EventEditor({
           prompt: description,
           target: routineTarget,
           botId: lockedBotId ?? botIds[0] ?? "",
-          groupId: routineTarget === "room-goal" ? groupId : null,
+          groupId: routineTarget === "room-goal" && groupId ? groupId : null,
           runOn: routineTarget === "room-goal" ? "maus" : runOn,
           enabled: existingRoutine && (existingRoutine.enabled || !isDone(existingRoutine, savedAt)) ? undefined : true,
           schedule: nextSchedule,
@@ -552,7 +553,7 @@ export function EventEditor({
     && (kind === "call"
       ? botIds.length > 0
       : routineTarget === "room-goal"
-        ? groupId && botIds[0] && roomMembers.some((bot) => bot.id === botIds[0])
+        ? botIds[0] && roomMembers.some((bot) => bot.id === botIds[0])
         : botIds.length > 0)
     && !intervalInvalid
     && !intervalDaysInvalid
@@ -574,8 +575,8 @@ export function EventEditor({
 
   const kindSwitchControl = canSwitchKind && (
             <div className={cn(advanced && "ml-10", "inline-flex rounded-lg bg-inset p-1")}>
-              <button type="button" onClick={() => { setKind("routine"); setBotIds((ids) => ids.slice(0, 1)); }} className={cn("rounded-md px-4 py-1.5 text-[12.5px] font-medium", kind === "routine" ? "bg-raised text-ink shadow" : "text-ink-secondary")}>{t("routines.kind.routine")}</button>
-              <button type="button" onClick={() => { setKind("call"); if (recurrence === "interval" || recurrence === "limit_reset" || isCronChoice(recurrence)) setRecurrence("none"); }} className={cn("rounded-md px-4 py-1.5 text-[12.5px] font-medium", kind === "call" ? "bg-raised text-ink shadow" : "text-ink-secondary")}>{t("routines.kind.call")}</button>
+              <button type="button" onClick={() => { setKind("routine"); setBotIds((ids) => ids.slice(0, 1)); }} className={cn("rounded-md px-4 py-1.5 text-[13px] font-medium", kind === "routine" ? "bg-raised text-ink shadow" : "text-ink-secondary")}>{t("routines.kind.routine")}</button>
+              <button type="button" onClick={() => { setKind("call"); if (recurrence === "interval" || recurrence === "limit_reset" || isCronChoice(recurrence)) setRecurrence("none"); }} className={cn("rounded-md px-4 py-1.5 text-[13px] font-medium", kind === "call" ? "bg-raised text-ink shadow" : "text-ink-secondary")}>{t("routines.kind.call")}</button>
             </div>
           );
   const routineTypeControl = kind === "routine" && !lockedBotId && (
@@ -588,7 +589,7 @@ export function EventEditor({
                   className={cn("flex items-start gap-3 rounded-xl border p-3 text-left transition", routineTarget === "bot" ? "border-accent/60 bg-accent/10" : "border-hairline/50 bg-inset hover:bg-raised")}
                 >
                   <UserRoundPlus size={17} className={cn("mt-0.5 shrink-0", routineTarget === "bot" ? "text-accent" : "text-ink-secondary")} />
-                  <span><span className="block text-[12.5px] font-medium text-ink">{t("routines.editor.botTask")}</span><span className="mt-1 block text-[11px] leading-relaxed text-ink-secondary">{t("routines.editor.botTaskHelp")}</span></span>
+                  <span><span className="block text-[13px] font-medium text-ink">{t("routines.editor.botTask")}</span><span className="mt-1 block text-[11px] leading-relaxed text-ink-secondary">{t("routines.editor.botTaskHelp")}</span></span>
                 </button>
                 <button
                   type="button"
@@ -596,7 +597,7 @@ export function EventEditor({
                   className={cn("flex items-start gap-3 rounded-xl border p-3 text-left transition", routineTarget === "room-goal" ? "border-accent/60 bg-accent/10" : "border-hairline/50 bg-inset hover:bg-raised")}
                 >
                   <Target size={17} className={cn("mt-0.5 shrink-0", routineTarget === "room-goal" ? "text-accent" : "text-ink-secondary")} />
-                  <span><span className="block text-[12.5px] font-medium text-ink">{t("routines.editor.teamGoal")}</span><span className="mt-1 block text-[11px] leading-relaxed text-ink-secondary">{t("routines.editor.teamGoalHelp")}</span></span>
+                  <span><span className="block text-[13px] font-medium text-ink">{t("routines.editor.teamGoal")}</span><span className="mt-1 block text-[11px] leading-relaxed text-ink-secondary">{t("routines.editor.teamGoalHelp")}</span></span>
                 </button>
               </div>
             </div>
@@ -643,7 +644,7 @@ export function EventEditor({
               )}
               {recurrence === "interval" && kind === "routine" && (
                 <div className="space-y-3">
-                  <div className="flex flex-wrap items-center gap-2 text-[12.5px] text-ink">
+                  <div className="flex flex-wrap items-center gap-2 text-[13px] text-ink">
                     <span className="font-medium">Runs every</span>
                     <Select
                       value={INTERVAL_PRESETS.includes(intervalMinutes) ? String(intervalMinutes) : "custom"}
@@ -665,13 +666,13 @@ export function EventEditor({
                         aria-invalid={intervalInvalid}
                         aria-describedby={intervalInvalid ? "routine-interval-error" : "routine-interval-help"}
                         autoFocus
-                        className={cn("w-20 rounded-lg border bg-inset px-3 py-2 text-[12.5px] tabular-nums text-ink outline-none focus:border-accent", intervalInvalid ? "border-danger/70" : "border-hairline/50")}
+                        className={cn("w-20 rounded-lg border bg-inset px-3 py-2 text-[13px] tabular-nums text-ink outline-none focus:border-accent", intervalInvalid ? "border-danger/70" : "border-hairline/50")}
                       />
                     )}
                     <span>minutes</span>
                   </div>
 
-                  <div className="grid items-center gap-2 text-[12.5px] text-ink sm:flex sm:flex-wrap">
+                  <div className="grid items-center gap-2 text-[13px] text-ink sm:flex sm:flex-wrap">
                     <span className="inline-flex items-center gap-2 whitespace-nowrap">
                       <span className="font-medium">On</span>
                       <Select
@@ -779,7 +780,7 @@ export function EventEditor({
   );
   const runLimitControls = kind === "routine" && (
                 <details className="rounded-xl border border-hairline/40 bg-inset/40 px-3 py-2.5">
-                  <summary className="cursor-pointer select-none text-[11.5px] font-medium text-ink-secondary hover:text-ink">
+                  <summary className="cursor-pointer select-none text-[12px] font-medium text-ink-secondary hover:text-ink">
                     Advanced · {timeoutMinutes == null ? "no run limit" : `${durationLabel(timeoutMinutes)} run limit`}
                   </summary>
                   <div className="mt-3 border-t border-hairline/35 pt-3">
@@ -790,7 +791,7 @@ export function EventEditor({
                         {EVENT_DURATION_OPTIONS.map((minutes) => <option key={minutes} value={minutes}>{durationLabel(minutes)}</option>)}
                       </Select>
                     </label>
-                    <div className="mt-1.5 text-[10.5px] leading-relaxed text-ink-secondary">Optional. The clock starts when work actually begins and does not control how often the routine starts.</div>
+                    <div className="mt-1.5 text-[11px] leading-relaxed text-ink-secondary">Optional. The clock starts when work actually begins and does not control how often the routine starts.</div>
                     {recurrence !== "none" && <div className="mt-3">
                       <label className="flex flex-wrap items-center gap-2 text-[12px] text-ink">
                         <span>{t("routines.overlapLabel")}</span>
@@ -799,13 +800,13 @@ export function EventEditor({
                           <option value="queue">{t("routines.overlapQueue")}</option>
                         </Select>
                       </label>
-                      <p className="mt-1.5 text-[10.5px] leading-relaxed text-ink-secondary">{t(overlap === "queue" ? "routines.overlapQueueHelp" : "routines.overlapSkipHelp")}</p>
+                      <p className="mt-1.5 text-[11px] leading-relaxed text-ink-secondary">{t(overlap === "queue" ? "routines.overlapQueueHelp" : "routines.overlapSkipHelp")}</p>
                     </div>}
                     {recurrence !== "none" && <label className="mt-3 flex items-start gap-2 text-[12px] text-ink">
                       <input type="checkbox" aria-label={t("routines.runOnStartupLabel")} checked={runOnStartup} onChange={(event) => setRunOnStartup(event.target.checked)} className="mt-0.5 accent-accent" />
                       <span>
                         <span className="block">{t("routines.runOnStartupLabel")}</span>
-                        <span className="mt-1 block text-[10.5px] leading-relaxed text-ink-secondary">{t("routines.runOnStartupHelp")}</span>
+                        <span className="mt-1 block text-[11px] leading-relaxed text-ink-secondary">{t("routines.runOnStartupHelp")}</span>
                       </span>
                     </label>}
                   </div>
@@ -815,7 +816,7 @@ export function EventEditor({
           <label className={cn("flex items-start gap-3 rounded-xl border border-hairline/40 bg-inset/40 px-3.5 py-3", advanced && "ml-8")}>
             <input type="checkbox" aria-label={t("routines.continuityLabel")} checked={continuity} onChange={(event) => setContinuity(event.target.checked)} className="mt-0.5 accent-accent" />
             <span>
-              <span className="block text-[12.5px] font-medium text-ink">{t("routines.continuityLabel")}</span>
+              <span className="block text-[13px] font-medium text-ink">{t("routines.continuityLabel")}</span>
               <span className="mt-1 block text-[11px] leading-relaxed text-ink-secondary">{t("routines.continuityHelp")}</span>
             </span>
           </label>
@@ -828,12 +829,12 @@ export function EventEditor({
             <Paperclip size={18} className="mt-2.5 shrink-0 text-ink-secondary" />
             {isRoomGoal ? (
               <div className="min-w-0 flex-1 rounded-xl border border-hairline/50 bg-inset px-3.5 py-3">
-                <div className="text-[12.5px] font-medium text-ink">Use the group’s shared context</div>
+                <div className="text-[13px] font-medium text-ink">Use the group’s shared context</div>
                 <div className="mt-1 text-[11px] leading-relaxed text-ink-secondary">{t("routines.editor.teamGoalAttachments")}</div>
               </div>
             ) : <div className="min-w-0 flex-1 space-y-2">
               <input ref={fileInput} type="file" multiple className="hidden" onChange={(event) => { void pickFiles(event.target.files); event.target.value = ""; }} />
-              <button type="button" onClick={() => fileInput.current?.click()} className="rounded-lg border border-hairline/50 px-3 py-2 text-[12.5px] font-medium text-ink hover:bg-raised">Add attachment</button>
+              <button type="button" onClick={() => fileInput.current?.click()} className="rounded-lg border border-hairline/50 px-3 py-2 text-[13px] font-medium text-ink hover:bg-raised">Add attachment</button>
               <AttachmentChips attachments={attachments} onRemove={(id) => setAttachments((current) => current.filter((attachment) => attachment.id !== id))} />
               <div className="text-[11px] leading-relaxed text-ink-secondary">
                 {kind === "routine"
@@ -842,7 +843,7 @@ export function EventEditor({
                     ? "References will be shared in the group when the event starts."
                     : "References stay with the event and are available when you join the group."}
               </div>
-              {attachmentNotice && <div className="text-[11.5px] text-warning">{attachmentNotice}</div>}
+              {attachmentNotice && <div className="text-[12px] text-warning">{attachmentNotice}</div>}
             </div>}
           </div>
   );
@@ -852,12 +853,12 @@ export function EventEditor({
               <div className="min-w-0 flex-1">
                 {isRoomGoal ? (
                   <div className="rounded-xl border border-accent/35 bg-accent/[0.07] p-3">
-                    <div className="text-[12.5px] font-medium text-ink">{cloudHome ? "Runs on My Cloud" : "Runs on this computer"}</div>
+                    <div className="text-[13px] font-medium text-ink">{cloudHome ? "Runs on My Cloud" : "Runs on this computer"}</div>
                     <div className="mt-1 text-[11px] leading-relaxed text-ink-secondary">OpenMausBot keeps the group and its member hand-offs together for the full goal.</div>
                   </div>
                 ) : <div className="grid grid-cols-2 gap-2">
-                  <button type="button" onClick={() => setRunOn("maus")} className={cn("rounded-xl border p-3 text-left", runOn === "maus" ? "border-accent/60 bg-accent/10" : "border-hairline/50 bg-inset hover:bg-raised")}><div className="text-[12.5px] font-medium text-ink">Bot’s current setup</div><div className="mt-1 text-[11px] text-ink-secondary">Keeps its model and configured computer, including a self-hosted VPS.</div></button>
-                  <button type="button" disabled={!cloudReady || attachments.length > 0} onClick={() => setRunOn("cloud")} className={cn("rounded-xl border p-3 text-left disabled:cursor-not-allowed disabled:opacity-45", runOn === "cloud" ? "border-accent/60 bg-accent/10" : "border-hairline/50 bg-inset hover:bg-raised")}><div className="text-[12.5px] font-medium text-ink">{t("routines.runsOn.boat")}</div><div className="mt-1 text-[11px] text-ink-secondary">{t(cloudHome ? "routines.runsOn.boatHintCloudHome" : "routines.runsOn.boatHint")}</div></button>
+                  <button type="button" onClick={() => setRunOn("maus")} className={cn("rounded-xl border p-3 text-left", runOn === "maus" ? "border-accent/60 bg-accent/10" : "border-hairline/50 bg-inset hover:bg-raised")}><div className="text-[13px] font-medium text-ink">Bot’s current setup</div><div className="mt-1 text-[11px] text-ink-secondary">Keeps its model and configured computer, including a self-hosted VPS.</div></button>
+                  <button type="button" disabled={!cloudReady || attachments.length > 0} onClick={() => setRunOn("cloud")} className={cn("rounded-xl border p-3 text-left disabled:cursor-not-allowed disabled:opacity-45", runOn === "cloud" ? "border-accent/60 bg-accent/10" : "border-hairline/50 bg-inset hover:bg-raised")}><div className="text-[13px] font-medium text-ink">{t("routines.runsOn.boat")}</div><div className="mt-1 text-[11px] text-ink-secondary">{t(cloudHome ? "routines.runsOn.boatHintCloudHome" : "routines.runsOn.boatHint")}</div></button>
                 </div>}
               </div>
             </div>
@@ -905,7 +906,7 @@ export function EventEditor({
             <div className="flex items-start gap-4">
               <Clock3 size={18} className="mt-2.5 shrink-0 text-ink-secondary" />
               <div className="min-w-0 flex-1 space-y-3">
-                <div className="text-[12.5px] font-medium text-ink">{t("routines.editor.when")}</div>
+                <div className="text-[13px] font-medium text-ink">{t("routines.editor.when")}</div>
                 {whenControls}
                 <div role="group" aria-label={t("routines.editor.repeat")} className="flex flex-wrap gap-1.5">
                   {repeatChoices.map(([choice, label]) => (
@@ -920,7 +921,7 @@ export function EventEditor({
                     </button>
                   ))}
                 </div>
-                {!repeatChoices.some(([choice]) => choice === recurrence) && <div className="text-[11.5px] text-ink-secondary">{t("routines.editor.customRepeat")}</div>}
+                {!repeatChoices.some(([choice]) => choice === recurrence) && <div className="text-[12px] text-ink-secondary">{t("routines.editor.customRepeat")}</div>}
               </div>
             </div>
           )}
@@ -931,42 +932,36 @@ export function EventEditor({
               {isRoomGoal ? (
                 <div className="space-y-3">
                   <div>
-                    <label htmlFor="routine-goal-room" className="mb-2 block text-[12.5px] font-medium text-ink">Choose a group</label>
-                    {rooms.length > 0 ? (
-                      <Select id="routine-goal-room" value={groupId} onChange={(event) => selectRoom(event.target.value)} className="w-full">
-                        <option value="">Select a group</option>
-                        {rooms.map((room) => <option key={room.id} value={room.id}>{room.name}</option>)}
-                      </Select>
+                    <label htmlFor="routine-goal-room" className="mb-2 block text-[13px] font-medium text-ink">{t("routines.editor.goalWhere")}</label>
+                    <Select id="routine-goal-room" value={groupId} onChange={(event) => selectRoom(event.target.value)} className="w-full">
+                      <option value="">{t("routines.editor.goalOneOnOne")}</option>
+                      {rooms.map((room) => <option key={room.id} value={room.id}>{room.name}</option>)}
+                    </Select>
+                  </div>
+                  <div>
+                    <div className="mb-2 text-[13px] font-medium text-ink">{selectedRoom ? "Choose the lead" : t("routines.editor.who")}</div>
+                    {roomMembers.length > 0 ? (
+                      <>
+                        <BotPicker bots={roomMembers} selected={botIds} multiple={false} onChange={selectBots} />
+                        <div className="mt-2 text-[12px] text-ink-secondary">{selectedRoom ? `The lead coordinates ${selectedRoom.name} and assigns work to its active members.` : t("routines.editor.goalOneOnOneHelp")}</div>
+                      </>
                     ) : (
-                      <div className="rounded-xl border border-dashed border-hairline/60 bg-inset px-3.5 py-3 text-[11.5px] leading-relaxed text-ink-secondary">Create a group from the sidebar first, then come back to schedule its goal.</div>
+                      <div className="rounded-xl border border-warning/30 bg-warning/10 px-3.5 py-3 text-[12px] text-warning">This group has no active members. Add or restore a bot before scheduling the goal.</div>
                     )}
                   </div>
-                  {selectedRoom && (
-                    <div>
-                      <div className="mb-2 text-[12.5px] font-medium text-ink">Choose the lead</div>
-                      {roomMembers.length > 0 ? (
-                        <>
-                          <BotPicker bots={roomMembers} selected={botIds} multiple={false} onChange={selectBots} />
-                          <div className="mt-2 text-[11.5px] text-ink-secondary">The lead coordinates {selectedRoom.name} and assigns work to its active members.</div>
-                        </>
-                      ) : (
-                        <div className="rounded-xl border border-warning/30 bg-warning/10 px-3.5 py-3 text-[11.5px] text-warning">This group has no active members. Add or restore a bot before scheduling the goal.</div>
-                      )}
-                    </div>
-                  )}
                 </div>
               ) : (
                 <>
-                  <div className="mb-2 text-[12.5px] font-medium text-ink">{kind === "routine" ? (advanced ? "Assign a bot" : t("routines.editor.who")) : "Add guests"}</div>
+                  <div className="mb-2 text-[13px] font-medium text-ink">{kind === "routine" ? (advanced ? "Assign a bot" : t("routines.editor.who")) : "Add guests"}</div>
                   {bots.length > 0 ? (
                 <>
                   <BotPicker bots={bots} selected={botIds} multiple={kind === "call"} locked={Boolean(lockedBotId)} onChange={selectBots} />
-                  <div className="mt-2 text-[11.5px] text-ink-secondary">{kind === "routine" ? "This bot owns each scheduled run." : `${selectedBots.length || "No"} bot${selectedBots.length === 1 ? "" : "s"} invited to the call.`}</div>
+                  <div className="mt-2 text-[12px] text-ink-secondary">{kind === "routine" ? "This bot owns each scheduled run." : `${selectedBots.length || "No"} bot${selectedBots.length === 1 ? "" : "s"} invited to the call.`}</div>
                 </>
               ) : (
                 <button type="button" onClick={() => { dispatch({ type: "toggleNewBot", open: true }); onClose(); }} className="w-full rounded-xl border border-dashed border-accent/45 bg-accent/[0.06] px-4 py-4 text-left hover:bg-accent/10">
-                  <div className="text-[12.5px] font-medium text-accent">Create your first bot</div>
-                  <div className="mt-1 text-[11.5px] text-ink-secondary">A calendar event needs at least one bot.</div>
+                  <div className="text-[13px] font-medium text-accent">Create your first bot</div>
+                  <div className="mt-1 text-[12px] text-ink-secondary">A calendar event needs at least one bot.</div>
                 </button>
                   )}
                 </>
@@ -992,7 +987,7 @@ export function EventEditor({
                 aria-expanded={moreOpen}
                 aria-controls="routine-more-options"
                 onClick={() => setMoreOpen((open) => !open)}
-                className="flex items-center gap-1.5 rounded-lg px-2 py-1.5 text-[12.5px] font-medium text-accent-text hover:bg-raised"
+                className="flex items-center gap-1.5 rounded-lg px-2 py-1.5 text-[13px] font-medium text-accent-text hover:bg-raised"
               >
                 <ChevronRight size={14} className={cn("transition-transform", moreOpen && "rotate-90")} />
                 {t(moreOpen ? "routines.editor.fewer" : "routines.editor.more")}
@@ -1015,13 +1010,13 @@ export function EventEditor({
             </div>
           )}
 
-          {error && <div className="ml-10 flex items-start gap-2 rounded-xl border border-danger/30 bg-danger/10 px-3 py-2.5 text-[12.5px] text-danger"><CircleAlert size={15} className="mt-0.5 shrink-0" />{error}</div>}
+          {error && <div className="ml-10 flex items-start gap-2 rounded-xl border border-danger/30 bg-danger/10 px-3 py-2.5 text-[13px] text-danger"><CircleAlert size={15} className="mt-0.5 shrink-0" />{error}</div>}
         </div>
 
 
         <div className="sticky bottom-0 flex items-center justify-end gap-2 border-t border-hairline/40 bg-panel/95 px-5 py-3.5 backdrop-blur">
-          <button onClick={onClose} className="rounded-lg px-4 py-2 text-[12.5px] text-ink-secondary hover:bg-raised hover:text-ink">Cancel</button>
-          <button onClick={save} disabled={saving || attachmentPending || !valid} className="flex items-center gap-2 rounded-lg bg-accent px-5 py-2 text-[12.5px] font-semibold text-white hover:brightness-110 disabled:opacity-40">{(saving || attachmentPending) && <Loader2 size={14} className="animate-spin" />}{attachmentPending ? "Attaching…" : existingRoutine || existingCall || (kind === "routine" && !isRoomGoal) ? t("automations.editor.app.save") : kind === "call" ? "Schedule call" : "Schedule team goal"}</button>
+          <button onClick={onClose} className="rounded-lg px-4 py-2 text-[13px] text-ink-secondary hover:bg-raised hover:text-ink">Cancel</button>
+          <button onClick={save} disabled={saving || attachmentPending || !valid} className="flex items-center gap-2 rounded-lg bg-accent px-5 py-2 text-[13px] font-semibold text-white hover:brightness-110 disabled:opacity-40">{(saving || attachmentPending) && <Loader2 size={14} className="animate-spin" />}{attachmentPending ? "Attaching…" : existingRoutine || existingCall || (kind === "routine" && !isRoomGoal) ? t("automations.editor.app.save") : kind === "call" ? "Schedule call" : "Schedule team goal"}</button>
         </div>
       </div>
     </div>
@@ -1141,7 +1136,7 @@ export function QuickComposer({
             <button type="button" onClick={() => setKind("call")} className={cn("rounded-lg px-3 py-1.5 text-[12px] font-medium", kind === "call" ? "bg-accent/15 text-accent" : "text-ink-secondary hover:bg-raised hover:text-ink")}>{t("routines.kind.call")}</button>
           </div>
         )}
-        <div className="flex items-start gap-3 text-[12.5px] text-ink">
+        <div className="flex items-start gap-3 text-[13px] text-ink">
           <Clock3 size={16} className="mt-0.5 shrink-0 text-ink-secondary" />
           {seed.limitReset ? <div data-testid="quick-limit-reset">{limitResetWhen({ engine: seed.limitReset.engine, repeat: "once" })}</div> : <div><div>{niceDate(seed.at)}</div><div className="mt-0.5 text-ink-secondary">{niceTime(seed.at)}{kind === "call" ? ` – ${niceTime(seed.at + durationMinutes * 60_000)}` : ""}</div></div>}
         </div>
@@ -1150,7 +1145,7 @@ export function QuickComposer({
           {bots.length === 0 ? (
             <button type="button" onClick={() => { dispatch({ type: "toggleNewBot", open: true }); onClose(); }} className="min-w-0 flex-1 rounded-xl border border-dashed border-accent/45 bg-accent/[0.06] px-3 py-3 text-left hover:bg-accent/10">
               <div className="text-[12px] font-medium text-accent">Create your first bot</div>
-              <div className="mt-0.5 text-[10.5px] text-ink-secondary">Then come back to schedule it.</div>
+              <div className="mt-0.5 text-[11px] text-ink-secondary">Then come back to schedule it.</div>
             </button>
           ) : kind === "routine" ? (
             <Select value={botIds[0] ?? ""} onChange={(event) => selectBots([event.target.value])} className="flex-1">
@@ -1163,10 +1158,10 @@ export function QuickComposer({
         </div>
         <div className="flex items-start gap-3">
           <FileText size={16} className="mt-2.5 shrink-0 text-ink-secondary" />
-          <textarea value={description} onChange={(event) => setDescription(event.target.value)} rows={3} placeholder={kind === "routine" ? "What should the bot do?" : "Add a description (optional)"} className="min-w-0 flex-1 resize-none rounded-lg border border-hairline/50 bg-inset px-3 py-2 text-[12.5px] leading-relaxed text-ink outline-none placeholder:text-ink-tertiary focus:border-accent" />
+          <textarea value={description} onChange={(event) => setDescription(event.target.value)} rows={3} placeholder={kind === "routine" ? "What should the bot do?" : "Add a description (optional)"} className="min-w-0 flex-1 resize-none rounded-lg border border-hairline/50 bg-inset px-3 py-2 text-[13px] leading-relaxed text-ink outline-none placeholder:text-ink-tertiary focus:border-accent" />
         </div>
         {kind === "routine" && <ResultsDestination bot={bots.find((bot) => bot.id === botIds[0])} value={resultsThreadId} onChange={(threadId) => setResultsThreadId(threadId ?? null)} />}
-        {error && <div className="rounded-lg bg-danger/10 px-3 py-2 text-[11.5px] text-danger">{error}</div>}
+        {error && <div className="rounded-lg bg-danger/10 px-3 py-2 text-[12px] text-danger">{error}</div>}
       </div>
       <div className="flex items-center justify-end gap-2 border-t border-hairline/40 px-4 py-3">
         <button onClick={() => onMore({ ...seed, kind, botIds, name, description, durationMinutes, resultsThreadId })} title="Choose repeating schedules and other options" className="rounded-lg px-3 py-2 text-[12px] font-medium text-accent hover:bg-accent/10">More options</button>
@@ -1199,9 +1194,8 @@ function CalendarEventCard({
   const routine = item.kind === "routine" ? item.routine : null;
   const run = item.kind === "routine" ? item.run : null;
   const isRoomGoal = !isCall && (run?.target ?? routine?.target) === "room-goal";
-  const room = isRoomGoal
-    ? groups.find((candidate) => candidate.id === (run?.groupId ?? routine?.groupId))
-    : undefined;
+  const roomId = isRoomGoal ? run?.groupId ?? routine?.groupId : undefined;
+  const room = roomId ? groups.find((candidate) => candidate.id === roomId) ?? { name: t("routines.group") } : undefined;
   const ownerIds = isCall ? item.call.botIds : [run?.botId ?? routine?.botId ?? ""];
   const ownerBots = ownerIds.flatMap((id) => bots.find((bot) => bot.id === id) ?? []);
   const primary = ownerBots[0];
@@ -1278,7 +1272,7 @@ function CalendarEventCard({
         {previewDuration >= 30 && (isCall ? <Video size={compact ? 11 : 13} className="mt-0.5 shrink-0" /> : primary ? <BotAvatar bot={primary} state={status ? statusState(status) : paused ? "sleeping" : "idle"} size={compact ? 18 : 22} animated={status === "running" || status === "waiting"} /> : null)}
         <div className="min-w-0 flex-1">
           <div className={cn("truncate text-[11px] font-semibold", previewDuration < 30 ? "leading-none" : "leading-tight")}>{name}</div>
-          {previewDuration >= 30 && <div className="mt-0.5 flex min-w-0 items-center gap-1 text-[9.5px] opacity-80">{!isCall && <span data-event-status={paused ? "paused" : attention ? "needs-you" : "working"} className={cn("size-1.5 shrink-0 rounded-full", paused ? "bg-ink-tertiary" : attention ? "bg-warning" : "bg-success")} />}<span className="truncate">{niceTime(item.at)} · {isCall ? t(ownerBots.length === 1 ? "routines.botCountOne" : "routines.botCountMany", { count: ownerBots.length }) : isRoomGoal ? room?.name ?? t("routines.group") : intervalCadence ? `${primary?.name ?? ""} · ${intervalCadence}` : primary?.name}</span></div>}
+          {previewDuration >= 30 && <div className="mt-0.5 flex min-w-0 items-center gap-1 text-[10px] opacity-80">{!isCall && <span data-event-status={paused ? "paused" : attention ? "needs-you" : "working"} className={cn("size-1.5 shrink-0 rounded-full", paused ? "bg-ink-tertiary" : attention ? "bg-warning" : "bg-success")} />}<span className="truncate">{niceTime(item.at)} · {isCall ? t(ownerBots.length === 1 ? "routines.botCountOne" : "routines.botCountMany", { count: ownerBots.length }) : room ? room.name : intervalCadence ? `${primary?.name ?? ""} · ${intervalCadence}` : primary?.name}</span></div>}
         </div>
         {previewDuration >= 30 && ownerBots.length > 1 && <span className="rounded bg-inset/60 px-1 py-0.5 text-[8px]">+{ownerBots.length - 1}</span>}
       </div>
@@ -1389,7 +1383,7 @@ export function CalendarGrid({
       </div>
       <div role="grid" aria-label="Routine and call calendar" onDragEnd={() => setDragPreview(null)} className="relative grid" style={{ height: HOUR_HEIGHT * 24, gridTemplateColumns, minWidth }}>
         <div className="relative border-r border-hairline/40">
-          {Array.from({ length: 24 }, (_, hour) => <div key={hour} className="absolute right-2 -translate-y-1/2 text-[9.5px] tabular-nums text-ink-tertiary" style={{ top: hour * HOUR_HEIGHT }}>{hour === 0 ? "" : new Date(2000, 0, 1, hour).toLocaleTimeString([], { hour: "numeric" })}</div>)}
+          {Array.from({ length: 24 }, (_, hour) => <div key={hour} className="absolute right-2 -translate-y-1/2 text-[10px] tabular-nums text-ink-tertiary" style={{ top: hour * HOUR_HEIGHT }}>{hour === 0 ? "" : new Date(2000, 0, 1, hour).toLocaleTimeString([], { hour: "numeric" })}</div>)}
         </div>
         {starts.map((start) => {
           const now = new Date();
@@ -1403,7 +1397,7 @@ export function CalendarGrid({
               {Array.from({ length: 48 }, (_, half) => <div key={half} className={cn("pointer-events-none absolute inset-x-0 border-t", half % 2 === 0 ? "border-hairline/30" : "border-hairline/10")} style={{ top: (half / 2) * HOUR_HEIGHT }} />)}
               {start === today && <div className="pointer-events-none absolute inset-x-0 z-20 flex items-center" style={{ top: nowTop }}><span className="-ml-1 size-2 rounded-full bg-danger" /><span className="h-px flex-1 bg-danger/80" /></div>}
               {selected && <div className="pointer-events-none absolute inset-x-1 z-10 rounded-md border border-accent/70 bg-accent/20" style={{ top: ((new Date(selected.start).getHours() * 60 + new Date(selected.start).getMinutes()) / 60) * HOUR_HEIGHT, height: Math.max(16, ((selected.end - selected.start) / 3_600_000) * HOUR_HEIGHT) }} />}
-              {preview && <div className="pointer-events-none absolute inset-x-1 z-20 rounded-md border border-accent/80 bg-accent/25 shadow-sm" style={{ top: ((new Date(preview.at).getHours() * 60 + new Date(preview.at).getMinutes()) / 60) * HOUR_HEIGHT, height: HOUR_HEIGHT / 2 }}><div className="px-2 py-1 text-[9.5px] font-medium text-accent">{niceTime(preview.at)}</div></div>}
+              {preview && <div className="pointer-events-none absolute inset-x-1 z-20 rounded-md border border-accent/80 bg-accent/25 shadow-sm" style={{ top: ((new Date(preview.at).getHours() * 60 + new Date(preview.at).getMinutes()) / 60) * HOUR_HEIGHT, height: HOUR_HEIGHT / 2 }}><div className="px-2 py-1 text-[10px] font-medium text-accent">{niceTime(preview.at)}</div></div>}
               {markers.filter((marker) => startOfDay(marker.at) === start).map((marker) => <LimitResetMarker key={marker.engine} marker={marker} hourHeight={HOUR_HEIGHT} onDrop={onDropOnReset && ((drop) => onDropOnReset(drop, marker))} />)}
               {dayItems.map((item) => <CalendarEventCard key={item.id} item={item} bots={bots} groups={groups} compact={days === 7} layout={collisionLayouts.get(item.id) ?? { column: 0, columns: 1 }} selected={item.id === selectedId} onOpen={() => onOpen(item)} onResize={(minutes) => onResize(item, minutes)} />)}
             </div>
@@ -1452,7 +1446,7 @@ export function EventDetails({
   const botIds = call?.botIds ?? [run?.botId ?? routine?.botId ?? ""];
   const invited = botIds.flatMap((id) => bots.find((bot) => bot.id === id) ?? []);
   const primary = invited[0];
-  const executionOwner = isRoomGoal ? goalGroup : primary;
+  const executionOwner = isRoomGoal && goalGroupId ? goalGroup : primary;
   const canOpenExecution = Boolean(executionThreadId && (executionOwner?.threadId === executionThreadId || executionOwner?.tasks?.some((task) => task.threadId === executionThreadId)));
   const resultsThreadId = run ? run.resultsThreadId ?? run.sourceThreadId : routine?.resultsThreadId;
   const openResultsId = resultsThreadId ?? (!run && routine?.target === "bot" ? primary?.mainThreadId : undefined);
@@ -1562,7 +1556,7 @@ export function EventDetails({
         <div className="min-w-0 flex-1">
           <div className="break-words text-[15px] font-semibold leading-snug text-ink">{title}</div>
           <div className="mt-1 flex flex-wrap items-center gap-1.5">
-            {routine && <span className={cn("rounded-full px-2 py-0.5 text-[10.5px] font-medium", routine.enabled ? "bg-success/15 text-success" : "bg-inset text-ink-secondary")}>{routineScheduleState(routine)}</span>}
+            {routine && <span className={cn("rounded-full px-2 py-0.5 text-[11px] font-medium", routine.enabled ? "bg-success/15 text-success" : "bg-inset text-ink-secondary")}>{routineScheduleState(routine)}</span>}
             <span className="text-[11px] text-ink-secondary">{niceDate(item.at)} · {niceTime(item.at)}{isCall ? ` – ${niceTime(item.at + item.durationMinutes * 60_000)}` : ""}</span>
           </div>
         </div>
@@ -1570,33 +1564,33 @@ export function EventDetails({
       </div>
 
       <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-4 py-4">
-        {run && <div role="status" aria-live="polite" className="rounded-xl border border-hairline/40 bg-inset p-3"><div className="flex items-center gap-2 text-[12px] font-medium text-ink">{run.status === "running" && <Loader2 size={13} className="animate-spin text-accent" />}{routineRunLabel(run)}</div>{run.output && <div className="mt-2 max-h-48 overflow-y-auto whitespace-pre-wrap text-[11.5px] leading-relaxed text-ink-secondary">{run.output}</div>}{run.error && <div className="mt-2 text-[11.5px] text-danger">{run.error}</div>}</div>}
-        {run?.attention && <div className="flex items-start gap-2 rounded-xl border border-warning/30 bg-warning/10 px-3 py-2.5 text-warning"><CircleAlert size={15} className="mt-0.5 shrink-0" /><div className="min-w-0 whitespace-pre-wrap text-[11.5px] leading-relaxed">{run.attention}</div></div>}
-        {run?.status === "waiting" && !run.attention && <div className="rounded-xl border border-warning/30 bg-warning/10 px-3 py-2.5 text-[11.5px] text-warning">This run is waiting. Open its execution thread for more context.</div>}
+        {run && <div role="status" aria-live="polite" className="rounded-xl border border-hairline/40 bg-inset p-3"><div className="flex items-center gap-2 text-[12px] font-medium text-ink">{run.status === "running" && <Loader2 size={13} className="animate-spin text-accent" />}{routineRunLabel(run)}</div>{run.output && <div className="mt-2 max-h-48 overflow-y-auto whitespace-pre-wrap text-[12px] leading-relaxed text-ink-secondary">{run.output}</div>}{run.error && <div className="mt-2 text-[12px] text-danger">{run.error}</div>}</div>}
+        {run?.attention && <div className="flex items-start gap-2 rounded-xl border border-warning/30 bg-warning/10 px-3 py-2.5 text-warning"><CircleAlert size={15} className="mt-0.5 shrink-0" /><div className="min-w-0 whitespace-pre-wrap text-[12px] leading-relaxed">{run.attention}</div></div>}
+        {run?.status === "waiting" && !run.attention && <div className="rounded-xl border border-warning/30 bg-warning/10 px-3 py-2.5 text-[12px] text-warning">This run is waiting. Open its execution thread for more context.</div>}
 
         <DrawerField label={isCall ? t("routines.drawer.guests") : isRoomGoal ? t("routines.drawer.lead") : t("routines.drawer.bot")}>
           <div className="flex flex-wrap gap-1.5">
             {invited.map((bot) => <div key={bot.id} className="flex items-center gap-1.5 rounded-full border border-hairline/50 bg-inset py-0.5 pl-0.5 pr-2.5"><BotAvatar bot={bot} state="idle" size={22} animated={false} /><span className="text-[12px] text-ink">{bot.name}</span></div>)}
-            {invited.length === 0 && <span className="text-[12.5px] text-ink-secondary">{t("routines.unavailableBot")}</span>}
+            {invited.length === 0 && <span className="text-[13px] text-ink-secondary">{t("routines.unavailableBot")}</span>}
           </div>
         </DrawerField>
-        {isRoomGoal && <DrawerField label={t("routines.drawer.group")}><div className="text-[12.5px] text-ink">{goalGroup?.name ?? "Group unavailable"}</div></DrawerField>}
+        {isRoomGoal && goalGroupId && <DrawerField label={t("routines.drawer.group")}><div className="text-[13px] text-ink">{goalGroup?.name ?? "Group unavailable"}</div></DrawerField>}
         {(routine || call) && (
           <DrawerField label={t("routines.drawer.schedule")}>
-            <div className="text-[12.5px] text-ink">{scheduleLabel((routine ?? call)!.schedule)}</div>
+            <div className="text-[13px] text-ink">{scheduleLabel((routine ?? call)!.schedule)}</div>
             {routine?.schedule.type === "cron" && <div className="mt-2"><CronSchedulePreview schedule={routine.schedule} paused={!routine.enabled} /></div>}
           </DrawerField>
         )}
-        {description && <DrawerField label={isCall ? t("routines.drawer.agenda") : t("routines.drawer.what")}><div className="whitespace-pre-wrap text-[12.5px] leading-relaxed text-ink">{description}</div></DrawerField>}
+        {description && <DrawerField label={isCall ? t("routines.drawer.agenda") : t("routines.drawer.what")}><div className="whitespace-pre-wrap text-[13px] leading-relaxed text-ink">{description}</div></DrawerField>}
         {!isCall && (
           <DrawerField label={t("routines.drawer.runsOn")}>
-            <div className="flex items-start gap-2 text-[12.5px] text-ink">{runOn === "cloud" ? <Cloud size={14} className="mt-0.5 shrink-0 text-ink-secondary" /> : <Laptop size={14} className="mt-0.5 shrink-0 text-ink-secondary" />}<span>{runsOn.label}</span></div>
+            <div className="flex items-start gap-2 text-[13px] text-ink">{runOn === "cloud" ? <Cloud size={14} className="mt-0.5 shrink-0 text-ink-secondary" /> : <Laptop size={14} className="mt-0.5 shrink-0 text-ink-secondary" />}<span>{runsOn.label}</span></div>
             <div className="mt-0.5 text-[11px] leading-relaxed text-ink-secondary">{runsOn.hint}</div>
           </DrawerField>
         )}
-        {!isCall && !isRoomGoal && <DrawerField label={t("routines.results.label")}><div className="text-[12.5px] text-ink">{resultsTitle}</div></DrawerField>}
+        {!isCall && !isRoomGoal && <DrawerField label={t("routines.results.label")}><div className="text-[13px] text-ink">{resultsTitle}</div></DrawerField>}
         {attachments.length > 0 && <DrawerField label="Attachments"><AttachmentChips attachments={attachments} />{call && <div className="mt-1.5 text-[11px] leading-relaxed text-ink-secondary">{call.botIds.length > 1 ? "These references will be shared in the group when the event starts." : "These references stay with the event and are available when you join the group."}</div>}</DrawerField>}
-        {advanced && !isCall && <DrawerField label={t("routines.drawer.runLimit")}><div className="text-[12.5px] text-ink">{safetyLimit == null ? "No time limit" : `Stops if still running after ${durationLabel(safetyLimit)}`}</div></DrawerField>}
+        {advanced && !isCall && <DrawerField label={t("routines.drawer.runLimit")}><div className="text-[13px] text-ink">{safetyLimit == null ? "No time limit" : `Stops if still running after ${durationLabel(safetyLimit)}`}</div></DrawerField>}
         {!isCall && (
           <DrawerField label={t("routines.logs")} action={routine && <button type="button" onClick={() => { dispatch({ type: "showRoutines", section: "logs", routineId: routine.id, botId: routine.botId }); onClose(); }} className="flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] text-accent-text hover:bg-raised"><FileText size={11} />{t("routines.drawer.allRuns")}</button>}>
             {recentRuns.length === 0
@@ -1604,7 +1598,7 @@ export function EventDetails({
               : <div className="space-y-1">{recentRuns.map((recent) => <RecentRunRow key={recent.id} run={recent} current={recent.id === run?.id} onOpen={() => onOpenRun?.(recent)} />)}</div>}
           </DrawerField>
         )}
-        {error && <div role="alert" className="rounded-lg bg-danger/10 px-3 py-2 text-[11.5px] text-danger">{error}</div>}
+        {error && <div role="alert" className="rounded-lg bg-danger/10 px-3 py-2 text-[12px] text-danger">{error}</div>}
       </div>
 
       <div className="space-y-2 border-t border-hairline/40 px-4 py-3">
@@ -1618,7 +1612,7 @@ export function EventDetails({
           {roomId && <button onClick={() => onOpenRoom(roomId)} className="flex items-center gap-1.5 rounded-lg bg-accent px-3 py-2 text-[12px] font-semibold text-accent-ink hover:brightness-110"><ExternalLink size={13} />Join group</button>}
           {call && call.botIds.length > 1 && <button onClick={joinRoom} disabled={working} className="flex items-center gap-1.5 rounded-lg bg-accent px-3 py-2 text-[12px] font-semibold text-accent-ink hover:brightness-110 disabled:opacity-50"><ExternalLink size={13} />Join group</button>}
           {isRoomGoal && goalGroup && !executionThreadId && <button onClick={() => { onOpenRoom(goalGroup.id); onClose(); }} className="flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-[12px] text-ink-secondary hover:bg-raised hover:text-ink"><ExternalLink size={13} />Open group</button>}
-          {canOpenExecution && <button onClick={openRunTask} className="flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-[12px] text-ink-secondary hover:bg-raised hover:text-ink"><ExternalLink size={13} />{isRoomGoal ? "Open group thread" : "Open thread"}</button>}
+          {canOpenExecution && <button onClick={openRunTask} className="flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-[12px] text-ink-secondary hover:bg-raised hover:text-ink"><ExternalLink size={13} />{isRoomGoal && goalGroupId ? "Open group thread" : "Open thread"}</button>}
           {canOpenResults && openResultsId && <button type="button" onClick={() => { openNotificationTarget(dispatch, { botId: botIds[0], threadId: openResultsId }, state, showThreads); onClose(); }} className="flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-[12px] text-ink-secondary hover:bg-raised hover:text-ink"><ExternalLink size={13} />{t("routines.results.open")}</button>}
           {run && ["queued", "running", "waiting"].includes(run.status) && <button onClick={() => void invoke(`/api/routine-runs/${run.id}/cancel`)} disabled={working} className="flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-[12px] text-ink-secondary hover:bg-raised hover:text-ink disabled:opacity-40"><X size={13} />Cancel run</button>}
           <div className="ml-auto flex items-center gap-1">
@@ -1635,7 +1629,7 @@ function DrawerField({ label, action, children }: { label: string; action?: Reac
   return (
     <section>
       <div className="mb-1.5 flex items-center justify-between gap-2">
-        <h3 className="text-[10.5px] font-semibold uppercase tracking-wider text-ink-tertiary">{label}</h3>
+        <h3 className="text-[11px] font-semibold uppercase tracking-wider text-ink-tertiary">{label}</h3>
         {action}
       </div>
       {children}
@@ -1698,7 +1692,7 @@ export function PausedList({
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-3" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
       <div ref={dialogRef} role="dialog" aria-modal="true" aria-label="Paused routines" tabIndex={-1} className="w-full max-w-[520px] rounded-2xl border border-hairline/60 bg-panel shadow-2xl">
-        <div className="flex items-center justify-between border-b border-hairline/40 px-5 py-4"><div><div className="text-[16px] font-semibold text-ink">Paused routines</div><div className="mt-0.5 text-[11.5px] text-ink-secondary">History is kept; no new tasks will run.</div></div><button onClick={onClose} className="rounded-full p-2 text-ink-secondary hover:bg-raised" aria-label={t("routines.paused.close")}><X size={17} /></button></div>
+        <div className="flex items-center justify-between border-b border-hairline/40 px-5 py-4"><div><div className="text-[16px] font-semibold text-ink">Paused routines</div><div className="mt-0.5 text-[12px] text-ink-secondary">History is kept; no new tasks will run.</div></div><button onClick={onClose} className="rounded-full p-2 text-ink-secondary hover:bg-raised" aria-label={t("routines.paused.close")}><X size={17} /></button></div>
         <div className="max-h-[55vh] space-y-1 overflow-y-auto p-3">
           {routines.map((routine) => {
             const bot = bots.find((candidate) => candidate.id === routine.botId);
@@ -1709,8 +1703,8 @@ export function PausedList({
               <div key={routine.id} className="flex items-center gap-3 rounded-xl px-3 py-2.5 hover:bg-raised/60">
                 {room ? <span className="flex size-9 shrink-0 items-center justify-center rounded-full bg-accent/12 text-accent"><UsersRound size={17} /></span> : bot && <BotAvatar bot={bot} state="sleeping" size={36} animated={false} />}
                 <div className="min-w-0 flex-1">
-                  <div className="truncate text-[12.5px] font-medium text-ink">{routine.name}</div>
-                  <div className="mt-0.5 truncate text-[10.5px] text-ink-secondary">{room ? `${t("routines.editor.teamGoal")} · ${room.name} · ` : ""}{scheduleLabel(routine.schedule)}</div>
+                  <div className="truncate text-[13px] font-medium text-ink">{routine.name}</div>
+                  <div className="mt-0.5 truncate text-[11px] text-ink-secondary">{room ? `${t("routines.editor.teamGoal")} · ${room.name} · ` : ""}{scheduleLabel(routine.schedule)}</div>
                 </div>
                 {room && <button onClick={() => { onOpenRoom(room.id); onClose(); }} className="rounded-lg px-2 py-1.5 text-[11px] text-ink-secondary hover:bg-inset">Group</button>}
                 <button onClick={() => dispatch({ type: "updateRoutine", routineId: routine.id, patch: { enabled: true } })} className="rounded-lg bg-accent/15 px-2.5 py-1.5 text-[11px] font-medium text-accent">Resume</button>

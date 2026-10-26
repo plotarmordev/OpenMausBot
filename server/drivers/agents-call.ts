@@ -272,18 +272,18 @@ export async function callTool(name: string, args: Json, context: ToolCallContex
   if (name === "list_bots") {
     const r = await api(`/api/internal/agents?self=${encodeURIComponent(BOT_ID)}`);
     const bots = (r.bots as Array<Json>) ?? [];
-    if (!bots.length) return { text: "No other reachable bots yet." };
+    if (!bots.length) return { text: "No other bots you can reach yet." };
     const lines = bots.map((b) => {
       const role = b.title ? ` — ${b.title}` : "";
       const about = b.description ? ` (${String(b.description).slice(0, 120)})` : "";
       const state = typeof b.statusText === "string"
         ? (b.status === "available" ? "" : b.statusText)
         : (b.busy ? "busy" : "");
-      const team = typeof b.section === "string" ? `, team: ${peerName(b.section) || "General"}` : "";
+      const team = typeof b.section === "string" ? `, department: ${peerName(b.section) || "General"}` : "";
       return `- ${b.name}${role}${about} [id: ${b.id}, model: ${b.model}${team}${state ? `, ${state}` : ""}]`;
     });
     return {
-      text: `Reachable teammates:\n${lines.join("\n")}\n\nUse coordinate_bots for concrete work or, with consult: true, for advice, then end your turn. Busy teammates queue and results resume you automatically.`,
+      text: `Bots you can reach (every department; you can contact any of them):\n${lines.join("\n")}\n\nUse coordinate_bots for concrete work or, with consult: true, for advice, then end your turn. Busy teammates queue and results resume you automatically.`,
     };
   }
   if (name === "list_rooms") {
@@ -438,7 +438,7 @@ export async function callTool(name: string, args: Json, context: ToolCallContex
     };
   }
   if (name === "create_room") {
-    if (args.section !== undefined) return { text: "Room sections are fixed to your own section; ask the user to move rooms.", isError: true };
+    if (args.section !== undefined) return { text: "A room you create stays in your own department; ask the user to move it.", isError: true };
     const roomName = String(args.name ?? "").trim();
     const memberIds = Array.isArray(args.member_bot_ids)
       ? args.member_bot_ids.map((id) => String(id).trim()).filter(Boolean)

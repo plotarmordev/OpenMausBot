@@ -15,6 +15,7 @@ import type { ModelSelection, RequestOutcome, SteerOutcome } from "../contracts.
 import { parseDataContext, type DataContext } from "../data-context.ts";
 import { preparePointed } from "../pointed.ts";
 import type { Handoffs } from "../delta-context.ts";
+import type { OneOnOneGoals } from "../host/one-on-one-goals.ts";
 import type { ProviderRegistry } from "../harness/registry.ts";
 import { spokenLineFields } from "../live-call-record.ts";
 import type { PhoneSecretSubmissionRegistry } from "../phone-secret.ts";
@@ -124,6 +125,7 @@ export interface BotMessageRouteDeps {
   fromPhone(auth: RequestAuth): boolean;
   /** Records a send a registered phone made, so the turn it starts knows the person is talking from the phone. */
   notePhoneSend(sendId: string): void;
+  goals: Pick<OneOnOneGoals, "start">;
 }
 
 /** External interfaces (the Slack worker) opt in. `onBehalfOf`, advertised by /api/health as
@@ -154,7 +156,7 @@ export function createBotMessageRoutes(deps: BotMessageRouteDeps): RouteHandler 
     turnSelection, policyModelRefusal, clearUnattended, drainQueuedSends, answeringCardAs, resolveAndSendTrust, resolveAndSendTeamSetup,
     resolveAndSendRoutine, resolveAndSendProfile, resolveAndSendModel, resolveSkillRequest, sendSkillResolution, answerRequest,
     deliverLateQuestionAnswer, interruptDirectThread, stopThreadForPerson, cancelDirectTurnDispatch, revokeInternalCapabilitiesForThread,
-    cancelGroupTurnOperations, closeOpenApprovals, harnessCardOutcome, pressRecords, serverPress, relayedReaction, answeredIn, fromPhone, notePhoneSend,
+    cancelGroupTurnOperations, closeOpenApprovals, harnessCardOutcome, pressRecords, serverPress, relayedReaction, answeredIn, fromPhone, notePhoneSend, goals,
   } = deps;
   const pinnedClientThread = pinnedClientThreadGuard(store);
   /** widget -> sendId of a press on its way in: a second tap before acceptance must not send a second answer. */
@@ -201,6 +203,19 @@ export function createBotMessageRoutes(deps: BotMessageRouteDeps): RouteHandler 
       const threadId = body.threadId ?? bot.threadId;
       const notYours = cloudGuestSendRefusal(auth, threadId);
       if (notYours) return json(res, 403, { error: notYours });
+      if (body.mode !== undefined && body.mode !== "chat" && body.mode !== "goal") return json(res, 400, { error: "mode must be chat or goal" });
+      if (body.mode === "goal") {
+        if (guarded || pressed || fromAnApp || pointing) return json(res, 400, { error: "a goal is a plain typed message" });
+        if (!store.taskByThread(bot.id, threadId)) return json(res, 404, { error: "no such conversation" });
+        const goalRefused = directSendRefusal(bot.id, threadId);
+        if (goalRefused) return json(res, goalRefused.status, goalRefused.body);
+        const goalSendId = parseSendId(body.sendId);
+        const accepted = goalSendId ? acceptedSendMatch(store.messagesFor(threadId), goalSendId, typed, undefined, "goal") : null;
+        if (accepted?.kind === "conflict") return json(res, 409, { error: "sendId already belongs to another message" });
+        if (accepted?.kind === "match") return json(res, 202, { ok: true, threadId, message: accepted.message });
+        const message = goals.start(bot.id, threadId, typed, { sendId: goalSendId, sender: messageSender(auth) });
+        return json(res, 202, { ok: true, threadId, message });
+      }
       const onBehalfOf = guardedBody?.data?.onBehalfOf;
       const capacity = onBehalfOf && threadId === botMainThread(bot.id) ? "person" : undefined;
       const trigger: UsageTrigger = onBehalfOf

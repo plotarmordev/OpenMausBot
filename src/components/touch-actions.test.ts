@@ -19,7 +19,7 @@ const notActions: Array<{ file: string; snippet: string; why: string }> = [
   { file: "components/ScreenFrame.tsx", snippet: "group-hover/image:opacity-100", why: "aria-hidden zoom hint; the whole image is the tap target" },
   { file: "components/AttachmentPreview.tsx", snippet: "group-hover/image:opacity-100", why: "zoom hint; the whole image is the tap target" },
   { file: "components/remote-desktop-panel.tsx", snippet: "bg-black/65 py-2", why: "caption; the whole preview is the tap target" },
-  { file: "components/routines/CalendarSidebar.tsx", snippet: "text-[8.5px]", why: "'Drag' hint badge, not a control" },
+  { file: "components/routines/CalendarSidebar.tsx", snippet: "text-[9px]", why: "'Drag' hint badge, not a control" },
   { file: "components/RoutineCalendarPage.tsx", snippet: "cursor-ns-resize", why: "mouse drag-resize handle for call events" },
   { file: "components/ComputerPanel.tsx", snippet: "opacity-80", why: "already visible at 80% without hover" },
   { file: "components/bot-panel/PanelHero.tsx", snippet: "whitespace-nowrap rounded-md border border-hairline bg-menu", why: "\"Edit avatar\" tooltip; the avatar button itself is the tap target" },
@@ -90,7 +90,7 @@ describe("hover-only actions on touch screens", () => {
       loadStylesheet: async (id, base) => {
         const path = id === "tailwindcss" ? join(tailwindRoot, "index.css") : id.startsWith("tailwindcss/")
           ? join(tailwindRoot, id.slice("tailwindcss/".length))
-          : join(base, id);
+          : id.startsWith(".") ? join(base, id) : fileURLToPath(import.meta.resolve(id));
         return { path, base: dirname(path), content: readFileSync(path, "utf8") };
       },
     });

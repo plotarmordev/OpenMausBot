@@ -38,7 +38,7 @@ function Typed({ text, caret, sent = false }: { text: string; caret: boolean; se
   const command = text.slice(0, COMMAND.length);
   const whole = command === COMMAND;
   return (
-    <span className={cn("text-[12.5px] leading-snug", sent ? "text-[var(--color-bubble-user-ink)]" : "text-ink")}>
+    <span className={cn("text-[13px] leading-snug", sent ? "text-[var(--color-bubble-user-ink)]" : "text-ink")}>
       <span
         className={cn(
           "-mx-1 rounded-md px-1 py-px font-mono transition-[background-color,color] duration-200 ease-out",
@@ -169,7 +169,7 @@ export function Setup({ playing, onCue, onEnded, label }: SceneProps) {
                 />
               </div>
               {replied ? (
-                <div className="animate-spot-in origin-left rounded-2xl rounded-tl-md bg-card px-3 py-2 text-[12.5px] text-ink">
+                <div className="animate-spot-in origin-left rounded-2xl rounded-tl-md bg-card px-3 py-2 text-[13px] text-ink">
                   Got it. Setting myself up.
                 </div>
               ) : (
@@ -189,7 +189,7 @@ export function Setup({ playing, onCue, onEnded, label }: SceneProps) {
           <div className="mt-1 flex items-end gap-2 rounded-2xl border border-hairline/50 bg-card px-3 py-2.5 shadow-lg shadow-black/20">
             <div className="min-h-[34px] min-w-0 flex-1">
               {sent ? (
-                <span className="text-[12.5px] text-ink-secondary">Message</span>
+                <span className="text-[13px] text-ink-secondary">Message</span>
               ) : (
                 <Typed text={TYPED.slice(0, typed)} caret />
               )}
@@ -220,7 +220,7 @@ export function Setup({ playing, onCue, onEnded, label }: SceneProps) {
                   Bug triager
                 </Reveal>
               </div>
-              <div className="mt-1 text-[10.5px] text-ink-secondary">
+              <div className="mt-1 text-[11px] text-ink-secondary">
                 {configured ? "Ready" : sent ? "Setting up…" : "New bot"}
               </div>
             </div>
@@ -239,7 +239,7 @@ export function Setup({ playing, onCue, onEnded, label }: SceneProps) {
             </span>
           </Row>
           <Row icon={Folder} label="Folder" done={steps >= 4} bar="w-16">
-            <code className="font-mono text-[11.5px]">~/bug-triage</code>
+            <code className="font-mono text-[12px]">~/bug-triage</code>
           </Row>
         </div>
       </div>

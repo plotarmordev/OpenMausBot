@@ -67,14 +67,14 @@ export function MeetYourBotBeat({
 
   return (
     <div className="stagger flex flex-col">
-      <p className="animate-rise mt-1 text-[13.5px] leading-relaxed text-ink-secondary" style={staggerIndex(0)}>
+      <p className="animate-rise mt-1 text-[14px] leading-relaxed text-ink-secondary" style={staggerIndex(0)}>
         {t(bot?.chiefOfStaff ? "onboarding.bot.chiefIntro" : "onboarding.bot.intro")}
       </p>
 
       <div className="animate-rise mt-5 flex items-center gap-4" style={staggerIndex(1)}>
         <MausAvatar color={color} state="happy" size={64} label={name || bot?.name} />
         <div className="min-w-0 flex-1">
-          <label className="text-[11.5px] font-medium uppercase tracking-wide text-ink-secondary" htmlFor="welcome-bot-name">
+          <label className="text-[12px] font-medium uppercase tracking-wide text-ink-secondary" htmlFor="welcome-bot-name">
             {t("onboarding.bot.name")}
           </label>
           <input
@@ -92,7 +92,7 @@ export function MeetYourBotBeat({
       </div>
 
       <div className="animate-rise mt-4" style={staggerIndex(2)}>
-        <div className="text-[11.5px] font-medium uppercase tracking-wide text-ink-secondary">{t("onboarding.bot.color")}</div>
+        <div className="text-[12px] font-medium uppercase tracking-wide text-ink-secondary">{t("onboarding.bot.color")}</div>
         <div role="radiogroup" aria-label={t("onboarding.bot.color")} className="mt-2 flex flex-wrap gap-2">
           {MAUS_COLOR_NAMES.map((c) => (
             <button
@@ -116,7 +116,7 @@ export function MeetYourBotBeat({
       </div>
 
       <div className="animate-rise mt-4" style={staggerIndex(3)}>
-        <label className="text-[11.5px] font-medium uppercase tracking-wide text-ink-secondary" htmlFor="welcome-bot-soul">
+        <label className="text-[12px] font-medium uppercase tracking-wide text-ink-secondary" htmlFor="welcome-bot-soul">
           {t("onboarding.bot.soul")}
         </label>
         <input

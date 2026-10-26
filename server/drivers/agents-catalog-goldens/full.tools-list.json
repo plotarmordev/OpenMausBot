@@ -102,7 +102,7 @@
     },
     {
       "name": "list_room_targets",
-      "description": "Discover actual OpenMausBot teammates and rooms in your allowed teams. Works in a normal bot conversation too; no room is required. Returns bot and room IDs, roles and working folders, never other conversations' history. Use these bots, not native coding helpers with similar names, when the user asks their team to work together.",
+      "description": "Discover actual OpenMausBot teammates you can reach, in every department, and rooms. Works in a normal bot conversation too; no room is required. Returns bot and room IDs, roles and working folders, never other conversations' history. Use these bots, not native coding helpers with similar names, when the user asks their team to work together.",
       "inputSchema": {
         "type": "object",
         "properties": {},
@@ -151,7 +151,7 @@
               "standing",
               "new"
             ],
-            "description": "standing (default): this conversation's one work thread with each teammate. new: a new thread on the teammate, its own history and run (in_my_folder: in your folder); its result still returns here."
+            "description": "standing (default): this conversation's one work thread with each teammate. new: a new thread on the teammate, its own history and run; its result still returns here."
           },
           "title": {
             "type": "string",
@@ -159,7 +159,8 @@
             "description": "With thread \"new\": the new thread's sidebar name, short and specific (e.g. \"Launch: Reddit draft\"). Defaults to the start of message."
           },
           "in_my_folder": {
-            "type": "boolean"
+            "type": "boolean",
+            "description": "Default true."
           },
           "reply": {
             "type": "string",
@@ -232,7 +233,7 @@
     },
     {
       "name": "list_bots",
-      "description": "List the other bots (agents) you may contact in your own team and any additional teams the owner has explicitly allowed you to coordinate, with their team, model and current status. Call this to discover exact teammate IDs before assigning work or asking advice with coordinate_bots.",
+      "description": "List every other bot (agent) you can contact, in every department, with its department, model and current status. Call this to discover exact teammate IDs before assigning work or asking advice with coordinate_bots.",
       "inputSchema": {
         "type": "object",
         "properties": {}
@@ -787,7 +788,7 @@
     },
     {
       "name": "create_room",
-      "description": "Create a room in your own section when the user asks for one (maximum four per turn). Chiefs only. Choose active peers from list_bots; you are included automatically as the default responder. This creates no turns or messages. Section moves stay with the user. Follow the tool result under the effective access level; if permission is refused, ask the user to make the room change instead, without trying another route.",
+      "description": "Create a room in your own department when the user asks for one (maximum four per turn). Chiefs only. Choose active bots from list_bots, from any department; you are included automatically as the default responder. This creates no turns or messages. Moving a room to another department stays with the user. Follow the tool result under the effective access level; if permission is refused, ask the user to make the room change instead, without trying another route.",
       "inputSchema": {
         "type": "object",
         "additionalProperties": false,
@@ -821,7 +822,7 @@
     },
     {
       "name": "manage_room",
-      "description": "Manage a room from list_rooms: rename it, change its bulletin, or add/remove/set members. Chiefs only, within your own section and allowed peers; keep yourself as a member. Busy rooms, pending approvals and team-goal leads are protected. You cannot move rooms or bots between sections. Follow the tool result under the effective access level; if the change is refused, report the blocker and ask the user to make the change instead, without trying another route.",
+      "description": "Manage a room from list_rooms: rename it, change its bulletin, or add/remove/set members. Chiefs only, for rooms in your own department, with any bots you can reach; keep yourself as a member. Busy rooms, pending approvals and team-goal leads are protected. You cannot move rooms or bots between departments. Follow the tool result under the effective access level; if the change is refused, report the blocker and ask the user to make the change instead, without trying another route.",
       "inputSchema": {
         "type": "object",
         "additionalProperties": false,

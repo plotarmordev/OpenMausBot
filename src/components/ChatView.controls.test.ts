@@ -285,13 +285,14 @@ describe("thread control placement", () => {
     fixture.advanced = true;
   });
 
-  it("gives the editor its own row in a narrow chat", () => {
+  it("gives the editor its own row above the controls", () => {
     const markup = renderToStaticMarkup(createElement(ChatView, { bot }));
     expect(markup).toContain("@container/composer");
     const row = /data-composer-row="[^"]*" class="([^"]*)"/.exec(markup)!;
-    expect(row[1]).toContain("@max-[30rem]/composer:flex-wrap");
+    expect(row[1].split(" ")).toContain("flex-wrap");
     const editor = /class="mention-editor ([^"]*)"/.exec(markup)!;
-    expect(editor[1].split(" ")).toEqual(expect.arrayContaining(["min-w-0", "flex-1", "@max-[30rem]/composer:order-first", "@max-[30rem]/composer:basis-full"]));
+    expect(editor[1].split(" ")).toEqual(expect.arrayContaining(["min-w-0", "flex-1", "order-first", "basis-full"]));
+    expect(/<textarea[^>]*class="([^"]*)"/.exec(markup)![1].split(" ")).toContain("min-h-14");
   });
 
   it("keeps the composer inert until the deleted thread's replacement transcript arrives", () => {
@@ -339,7 +340,7 @@ describe("thread control placement", () => {
     const action = renderToStaticMarkup(createElement(ErrorRow, { message: "Network timeout", action: { label: "Open", onClick: () => {} } }));
     for (const markup of [retry, action]) {
       expect(markup).toContain('class="ui-button ui-button-md ');
-      expect(markup).not.toContain("text-[12.5px]");
+      expect(markup).not.toContain("text-[13px]");
     }
   });
   it("directs ChatGPT plan limits to usage settings rather than repeatedly retrying", () => {
@@ -537,8 +538,8 @@ describe("thread control placement", () => {
     const markup = renderToStaticMarkup(createElement(ChatView, { bot }));
     expect(markup.match(/data-test-model-control/g)).toHaveLength(1);
     expect(markup.indexOf("data-test-model-control")).toBeLessThan(markup.indexOf('role="log"'));
-    expect(markup.indexOf("rounded-3xl bg-composer")).toBeGreaterThan(-1);
-    expect(markup.indexOf("data-test-approval-control")).toBeGreaterThan(markup.indexOf("rounded-3xl bg-composer"));
+    expect(markup.indexOf('data-tour="composer"')).toBeGreaterThan(-1);
+    expect(markup.indexOf("data-test-approval-control")).toBeGreaterThan(markup.indexOf('data-tour="composer"'));
     expect(markup.indexOf("data-test-approval-control")).toBeLessThan(markup.indexOf("<textarea"));
     expect(markup).not.toContain('aria-label="Thread settings"');
     expect(fixture.model).toMatchObject({ threadId: "selected", bot: { busy: false, modelSelection: { model: "thread-model" } } });
@@ -558,7 +559,7 @@ describe("thread control placement", () => {
   it.each([true, false])("pins a place per conversation from the composer only in Advanced (advanced: %s)", (advanced) => {
     fixture.advanced = advanced;
     const markup = renderToStaticMarkup(createElement(ChatView, { bot }));
-    const pill = markup.slice(markup.indexOf("rounded-3xl bg-composer"), markup.indexOf("<textarea"));
+    const pill = markup.slice(markup.indexOf('data-tour="composer"'), markup.indexOf("<textarea"));
     expect(pill.match(/data-testid="place-chip"/g) ?? []).toHaveLength(advanced ? 1 : 0);
     expect(markup.includes("Where this conversation works")).toBe(advanced);
     fixture.advanced = true;

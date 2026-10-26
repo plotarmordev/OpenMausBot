@@ -82,14 +82,14 @@ function LendThisComputer({ bridge }: { bridge: PageLendingBridge }) {
       <p id="lend-this-computer" className="text-[13px] font-medium text-ink">{lendingTitle()}</p>
       <Switch checked={lending.on} disabled={working} aria-labelledby="lend-this-computer" onClick={toggle} />
     </div>
-    <p role="status" className="text-[12.5px] text-ink-secondary">{pageLendingLine(lending)}</p>
+    <p role="status" className="text-[13px] text-ink-secondary">{pageLendingLine(lending)}</p>
     {lending.on && lendScreen && <label data-lend-screen={lending.screen ? "on" : "off"} className="mt-1 flex items-start gap-2">
       <input className="mt-1" type="checkbox" checked={lending.screen} disabled={working || (!lending.screen && !lending.screenAvailable)}
         onChange={(event) => perform(() => lendScreen(event.target.checked))} />
-      <span className="text-[12.5px] text-ink">{t("lending.screen")}<span className="mt-0.5 block text-[12px] text-ink-secondary">
+      <span className="text-[13px] text-ink">{t("lending.screen")}<span className="mt-0.5 block text-[12px] text-ink-secondary">
         {t(lending.screen || lending.screenAvailable ? "lending.screenHelp" : "lending.screenUnavailable")}</span></span>
     </label>}
-    {failed && <p role="alert" data-lending-failed={failed} className="text-[12.5px] text-danger">{t(failed)}</p>}
+    {failed && <p role="alert" data-lending-failed={failed} className="text-[13px] text-danger">{t(failed)}</p>}
   </div>;
 }
 

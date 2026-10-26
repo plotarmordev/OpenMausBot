@@ -70,7 +70,7 @@ export function ConversationTurnLimit({ group }: { group: Group }) {
             setError("");
           }
         }}
-        className={`h-8 w-[88px] rounded-full border bg-raised/60 px-3 text-[12.5px] font-medium tabular-nums text-ink outline-none ${
+        className={`h-8 w-[88px] rounded-full border bg-raised/60 px-3 text-[13px] font-medium tabular-nums text-ink outline-none ${
           error ? "border-danger/60" : "border-hairline/40 focus:border-accent"
         }`}
       />

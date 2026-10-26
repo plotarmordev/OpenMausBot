@@ -101,7 +101,7 @@ function FallbackChain({ bot, onChange }: { bot: Bot; onChange: (fallback: Bot["
             <li key={entry.instanceId} className="flex items-center gap-2 rounded-lg bg-inset px-3 py-1.5 text-[13px]">
               <span className="w-4 shrink-0 tabular-nums text-ink-secondary">{index + 1}.</span>
               <span className="min-w-0 flex-1 truncate text-ink">{nameOf(entry.instanceId)}</span>
-              <span className="shrink-0 truncate text-[11.5px] text-ink-secondary">{entry.model}</span>
+              <span className="shrink-0 truncate text-[12px] text-ink-secondary">{entry.model}</span>
               <button
                 type="button"
                 onClick={() => onChange(chain.filter((candidate) => candidate.instanceId !== entry.instanceId))}

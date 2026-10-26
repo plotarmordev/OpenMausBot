@@ -48,6 +48,12 @@ The figures come from the existing usage ledger and survive restarting the app. 
 
 The sidebar groups bots into departments, such as "Product A" or "SEO/SEA". Bots outside any department are in General.
 
+Departments are folders, not walls. Every bot can talk to every other bot, in any department, with nothing to set up: ask your Support bot to "check with @Bolt" and it asks Bolt, even when Bolt is in Dev or reports to someone else. Bots can also be in a group chat together whatever their departments.
+
+What a department does decide is who is in charge. A Chief of Staff looks after its own department (and any others you put it in charge of under **Permissions → Also in charge of**): it hears about its bots' problems, can retry their work and can suggest changes to how they're set up. Talking to a bot never gives another bot that kind of say over it.
+
+A bot talks to fewer bots only if it was set up with a list of the bots it may talk to, for example from a template. Its **Permissions** page then says so, with **Let it talk to every bot** to open it up again. An archived bot can't be reached, and on a shared workspace a bot only works with bots the same people can see.
+
 ### Renaming a department
 
 Right-click a named department heading in the sidebar and choose **Rename department**, or use the department's menu on the Team map. Enter the new name and save. Bots (including archived bots), group chats, shared instructions, and an assigned desktop stay together. Existing management access to a populated department follows its new name; an existing department's name cannot be used to merge departments. Finish active work before renaming.
@@ -69,12 +75,13 @@ On a team's Cloud, every bot reports to one person: whoever created it, unless s
 - The face at the end of a bot's row in the sidebar shows who it reports to. Admins, and the person it reports to, can click it to pick someone else.
 - Right-click a department and choose **Set owner for all bots…** to change every bot in it at once. When they all report to one person, the department shows "→ Name".
 - A question or approval in a shared chat says who it is asking.
-- Each person can have their own Chief of Staff: a crowned bot that reports to them. It coordinates only the bots that report to that person, and keeps their daily brief in their private chat with it.
+- Each person can have their own Chief of Staff: a crowned bot that reports to them. It is in charge of the bots that report to that person, and keeps their daily brief in their private chat with it. Like every bot, it can still talk to any other bot, and any bot can talk to it.
+- In your private chat, a bot can ask any other bot for you. That bot's work stays private to you too, and nothing from your private chat is posted into a group chat.
 - The Team map's **Who reports to whom** shows each person with their Chief and their bots. Drag a bot onto a person to change who it reports to, or open it from a department's menu with **See who reports to whom**.
 
 ## Delegation
 
-Bots can hand work to other bots. Delegated runs carry explicit status back into the parent conversation, including completion, failure, and cancellation.
+Bots can hand work to other bots, in any department. Delegated runs carry explicit status back into the parent conversation, including completion, failure, and cancellation: you see a "Sent to Bolt" line where the work went out, and the answer when it comes back.
 
 ### Creating a specialist with a chosen model
 

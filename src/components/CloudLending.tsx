@@ -169,7 +169,7 @@ export function CloudLending({ bridge, moving = false }: { bridge: CloudLendingB
     {stopped && <p data-lending-stopped={snapshot.state?.stopped?.reason} className="text-[13px] text-ink-secondary">{stopped}</p>}
     {via && <p data-lending-via="access" className="text-[12px] text-ink-secondary">{via}</p>}
     {lastUsed && <p data-lending-last-used className="text-[12px] text-ink-secondary">{lastUsed}</p>}
-    {on && <button type="button" aria-expanded={more} data-lending-more className="inline-flex w-fit items-center gap-1 text-[12.5px] text-ink-secondary hover:text-ink" onClick={() => setMore(!more)}>
+    {on && <button type="button" aria-expanded={more} data-lending-more className="inline-flex w-fit items-center gap-1 text-[13px] text-ink-secondary hover:text-ink" onClick={() => setMore(!more)}>
       <ChevronRight size={13} aria-hidden="true" className={more ? "rotate-90 transition-transform" : "transition-transform"} />{t("lending.more")}
     </button>}
     {on && more && <>
