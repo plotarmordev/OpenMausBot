@@ -25,6 +25,12 @@ permissions, and the work stays relayed content rather than the person's own
 request. The route stays admin-only, so a member's session cannot name
 someone else.
 
+The coordinator persists this capacity-only person marker separately from its
+outside/relay origin. Restart recovery retains the exemption without granting
+the relay or its delegated children direct-person authority. An admin owner
+token without a person trigger does not grant the exemption: at capacity the
+main-chat request returns `guarded_busy` without transcript or queue changes.
+
 Every guarded send's user line is stored with `relayed: true`: an external
 interface relayed it, and nobody typed it in one of this workspace's clients.
 A Live call running on that thread never reads such a line, or the bot's

@@ -217,9 +217,17 @@ home is removed after the test.
 The per-bot thread limit defaults to sixteen and accepts one through sixteen.
 A person's message in the bot's main chat, typed or relayed for a person
 through the guarded route, bypasses capacity, and so does the coordinator
-resuming that main-chat turn after delegated work returns. Peer work, including Chief retries,
-remains capped. A queued person message can pass a capacity-blocked peer
-entry in the main chat without dispatching that peer.
+resuming that main-chat turn after delegated work returns. The coordinator root
+persists a capacity-only `capacity: "person"` marker in `runtime.db`; absent
+markers remain capped, including records written before this field existed.
+Delegation authority is separate: an inherited user origin never grants this
+exemption, and guarded relays retain outside/relay origin and outside child
+authority. Peer work, including Chief retries and self-opened `start_thread`
+roots, remains capped even when archiving an older main chat promotes its thread
+to main. Recovery preserves the marker rather than inferring it from origin.
+A queued person message can pass a capacity-blocked peer entry in the main chat
+without dispatching that peer. Guarded admin input without a person trigger is
+refused at capacity without appending, queuing, or launching a provider.
 
 ```sh
 pnpm exec vitest run --no-file-parallelism server/thread-capacity-api.test.ts server/steer-queue.test.ts server/direct-coordination.e2e.test.ts

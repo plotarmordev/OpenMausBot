@@ -1,4 +1,5 @@
 // Real provider processes with independent per-thread gates, under the disposable-home launcher.
+import { randomBytes } from "node:crypto";
 import { existsSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { connect, type Socket } from "node:net";
 import { tmpdir } from "node:os";
@@ -17,11 +18,13 @@ describe("per-bot thread capacity through an isolated HTTP fixture", () => {
   let evidence: unknown[];
   const sockets: Socket[] = [];
   const projectDirs: string[] = [];
+  const ownerToken = randomBytes(32).toString("base64url");
+  const realFetch = globalThis.fetch;
 
   const api = async (method: string, path: string, body?: unknown) => {
     const response = await fetch(`${fixture.info.url}${path}`, {
       method,
-      headers: { "content-type": "application/json", origin: fixture.info.url },
+      headers: { "content-type": "application/json", origin: fixture.info.url, "x-openmausbot-desktop-owner": ownerToken },
       ...(body === undefined ? {} : { body: JSON.stringify(body) }),
     });
     const result = { status: response.status, body: await response.json() as any };
@@ -90,7 +93,9 @@ describe("per-bot thread capacity through an isolated HTTP fixture", () => {
 
   beforeEach(async () => {
     evidence = [];
-    fixture = await launchVerificationServer();
+    globalThis.fetch = (input, init = {}) => realFetch(input, { ...init,
+      headers: { ...Object.fromEntries(new Headers(init.headers)), "x-openmausbot-desktop-owner": ownerToken } });
+    fixture = await launchVerificationServer({ ...process.env, OMB_TEST_DESKTOP_OWNER_TOKEN: ownerToken });
     const wrapper = join(fixture.info.dataDir, "capacity-claude.mjs");
     writeFileSync(wrapper, [
       "#!/usr/bin/env node",
@@ -109,6 +114,7 @@ describe("per-bot thread capacity through an isolated HTTP fixture", () => {
   }, 30_000);
 
   afterEach(async () => {
+    globalThis.fetch = realFetch;
     for (const socket of sockets.splice(0)) socket.destroy();
     if (!fixture) return;
     const evidencePath = `${fixture.info.logPath}.capacity.json`;
@@ -256,7 +262,7 @@ describe("per-bot thread capacity through an isolated HTTP fixture", () => {
     }
   }, 90_000);
 
-  it.each(["Chief peer retry", "guarded person relay"])("applies person-only main-chat admission at full capacity for %s", async (ingress) => {
+  it.each(["Chief peer retry", "guarded admin", "guarded person relay"])("applies person-only main-chat admission at full capacity for %s", async (ingress) => {
     await limit(1);
     const { botId, threads: [main] } = await botWithThreads(1);
     const { botId: chiefId, threads: [chiefThread] } = await botWithThreads(1);
@@ -289,6 +295,19 @@ describe("per-bot thread capacity through an isolated HTTP fixture", () => {
         return;
       }
       const snapshot = await api("GET", `/api/threads/${main}/messages`);
+      const beforeLaunch = readFileSync(threadFile(main, "json"), "utf8");
+      if (ingress === "guarded admin") {
+        const refused = await api("POST", `/api/bots/${botId}/messages/guarded`, {
+          threadId: main, sendId: "guarded-capacity-admin", text: "ADMIN_MUST_WAIT",
+          expectedActiveLeafId: snapshot.body.activeLeafId, expectedApprovalMode: "ask",
+        });
+        expect(refused.status).toBe(409);
+        expect(refused.body).toMatchObject({ code: "guarded_busy" });
+        expect(await messages(main)).toEqual(snapshot.body.messages);
+        expect((await api("GET", "/api/bots?messages=0")).body.botQueuedMessages?.[main] ?? []).toEqual([]);
+        expect(readFileSync(threadFile(main, "json"), "utf8")).toBe(beforeLaunch);
+        return;
+      }
       const relay = await api("POST", `/api/bots/${botId}/messages/guarded`, {
         threadId: main, sendId: "guarded-capacity-person", text: "PERSON_RELAY_AT_CAPACITY",
         expectedActiveLeafId: snapshot.body.activeLeafId, expectedApprovalMode: "ask",

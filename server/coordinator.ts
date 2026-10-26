@@ -43,8 +43,7 @@ export interface HandoffView {
   approvalGranted: boolean;
   kind: "work" | "assignment";
   origin?: WorkOrigin;
-  /** A person's own message a guarded app relayed: outside work for authority, a person's main chat for capacity. */
-  personRelay?: true;
+  capacity?: "person";
   restarts: number;
   restart?: "rerun" | "cut" | "teammates";
   /** work: do it; consult: answer, act on nothing; notify: one-way. */
@@ -66,7 +65,7 @@ export interface BeginTurnRequest {
   level: Level;
   opener?: HandoffOpener;
   origin?: WorkOrigin;
-  personRelay?: boolean;
+  capacity?: "person";
   goalRunId?: string;
 }
 

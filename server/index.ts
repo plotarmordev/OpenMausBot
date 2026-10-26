@@ -303,7 +303,7 @@ import { createRoomAccess } from "./host/room-access.ts";
 import { createWebhookRoomPost } from "./host/webhook-room-deps.ts";
 import { createRoomJobs, parallelRoomJobsEnabled, type RoomRoundLine } from "./host/room-jobs.ts";
 import { createDelegatedLevel } from "./host/delegated-level.ts";
-import { CONSENT_RULE, escapeNotes, OUTSIDE, peerLineText, peerProvenanceNote, quoteInNote, reportNote, requestWorkOrigin, type WorkOrigin } from "./peer-provenance.ts";
+import { CONSENT_RULE, escapeNotes, OUTSIDE, peerLineText, peerProvenanceNote, quoteInNote, reportNote, requestWorkOrigin, workOrigin, type WorkOrigin } from "./peer-provenance.ts";
 import { decideRoomPost, emptyRoomPostBudget, type RoomPostAttempt, type RoomPostBudget } from "./room-post-budget.ts";
 import { pageSize, slimMessage } from "./host/message-pages.ts";
 import { ReplayBuffer } from "./host/sse-replay.ts";
@@ -2366,7 +2366,7 @@ function hasDirectDispatch(botId: string): boolean {
 }
 
 function personRoot(node: HandoffView): boolean {
-  return !node.parentId && (node.origin?.kind === "user" || node.personRelay === true);
+  return !node.parentId && node.capacity === "person";
 }
 
 function canAdmitDirectTurn(botId: string, threadId: string, personRoot = false): boolean {
@@ -8156,7 +8156,8 @@ async function startTurn(
     const opener = handoffOpener({ botId: bot.id, threadId }, threadId);
     coordinator.beginTurn({ id: dispatchClaimId, address: { botId: bot.id, threadId }, brief: resolvedImages.text,
       level: approvalModeForTurn(bot, commsDepth > 0, threadId), ...(opener ? { opener } : {}), origin: requestOrigin,
-      ...(opts?.personRelay ? { personRelay: true } : {}) });
+      ...(!opts?.peerAsk && !userMessage.peerAsk && !opts?.automationSource && !opts?.unattended && commsDepth === 0 &&
+        (workOrigin(userMessage).kind === "user" || opts?.personRelay) ? { capacity: "person" as const } : {}) });
   }
   if (!opts?.computerSelectionContinuation && !opts?.cardContinuation && !opts?.automationSource && !opts?.unattended &&
       !opts?.commsDepth && !opts?.coordination && !inheritedTeamComputer(bot) && bot.computer !== "off" && agentsMounted) {
