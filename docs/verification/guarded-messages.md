@@ -9,15 +9,20 @@ The guarded request includes `text`, `threadId`, a stable `sendId`, and the
 `expectedActiveLeafId` from the task's current message page. An empty task uses
 `null`; a newly created bot may already have a greeting and a non-null leaf.
 The runtime admits new work only while the task is idle, has a free slot, uses
-the exact expected approval mode, and still has that leaf. Omitted
+the exact expected approval mode, and still has that leaf. A send made for a
+person (`onBehalfOf`, or a person's own session) to the bot's main chat needs
+no free slot, and neither does the coordinator resuming that main-chat turn
+after its teammates report back. Omitted
 `expectedApprovalMode` means Ask without automatic or remembered approvals.
 It returns the original receipt for an already accepted matching send.
 
 `capabilities.guardedOnBehalfOf: 1` additionally accepts
 `onBehalfOf: { email?, name? }` (at least one): the person a relay such as the
 Slack worker acts for. The turn is booked to them in the usage ledger instead
-of to this machine. It changes nothing else: not the transcript's sender, not
-permissions. The route stays admin-only, so a member's session cannot name
+of to this machine, and it lifts the free-slot requirement for the bot's main
+chat as above. It changes nothing else: not the transcript's sender, not
+permissions, and the work stays relayed content rather than the person's own
+request. The route stays admin-only, so a member's session cannot name
 someone else.
 
 Every guarded send's user line is stored with `relayed: true`: an external

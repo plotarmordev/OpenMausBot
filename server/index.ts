@@ -2365,6 +2365,10 @@ function hasDirectDispatch(botId: string): boolean {
   return [...directTurnDispatchClaims.values()].some((claim) => claim.botId === botId);
 }
 
+function personRoot(node: HandoffView): boolean {
+  return !node.parentId && (node.origin?.kind === "user" || node.personRelay === true);
+}
+
 function canAdmitDirectTurn(botId: string, threadId: string, personRoot = false): boolean {
   return admit("peer", {}, {
     threadBusy: threadBusy(botId, threadId),
@@ -3983,7 +3987,7 @@ function outstandingAssignmentsPrompt(threadId: string): string {
 }
 
 function queuedBehindPerson(node: HandoffView): { threadId: string; kind: "approval" | "question" | "review"; title: string } | undefined {
-  if (node.groupId || node.status !== "queued" || threadBusy(node.botId, node.threadId) || !botAtThreadCapacity(node.botId, !node.parentId && node.origin?.kind === "user" ? node.threadId : undefined)) return undefined;
+  if (node.groupId || node.status !== "queued" || threadBusy(node.botId, node.threadId) || !botAtThreadCapacity(node.botId, personRoot(node) ? node.threadId : undefined)) return undefined;
   for (const task of store.tasks(node.botId)) {
     if (task.threadId === node.threadId || task.activity !== "waiting-on-you") continue;
     const card = openPersonCard(task.threadId);
@@ -4123,7 +4127,7 @@ const coordinator: Coordinator = createCoordinator({
       const seat = parkedSeats.get(n.id);
       if (seat && !turnResources.free(seat)) return true;
       if (n.groupId) return Boolean(store.bot(n.botId)?.busy || groupThreadIsWorking(n.groupId, n.threadId));
-      if (canAdmitDirectTurn(n.botId, n.threadId, !n.parentId && n.origin?.kind === "user")) return false;
+      if (canAdmitDirectTurn(n.botId, n.threadId, personRoot(n))) return false;
       noteQueuedBehindPerson(n);
       return true;
     },
@@ -7945,6 +7949,7 @@ async function startTurn(
     via?: "call";
     callId?: string;
     relayed?: boolean;
+    personRelay?: boolean;
     dataContext?: DataContext;
     app?: { context?: string; fromApp?: Message["fromApp"]; pointed?: Message["pointed"] };
     onDispatchError?: (message: string) => void;
@@ -8150,7 +8155,8 @@ async function startTurn(
   if (!opts?.coordination && !opts?.compactOnly && !opts?.cardContinuation) {
     const opener = handoffOpener({ botId: bot.id, threadId }, threadId);
     coordinator.beginTurn({ id: dispatchClaimId, address: { botId: bot.id, threadId }, brief: resolvedImages.text,
-      level: approvalModeForTurn(bot, commsDepth > 0, threadId), ...(opener ? { opener } : {}), origin: requestOrigin });
+      level: approvalModeForTurn(bot, commsDepth > 0, threadId), ...(opener ? { opener } : {}), origin: requestOrigin,
+      ...(opts?.personRelay ? { personRelay: true } : {}) });
   }
   if (!opts?.computerSelectionContinuation && !opts?.cardContinuation && !opts?.automationSource && !opts?.unattended &&
       !opts?.commsDepth && !opts?.coordination && !inheritedTeamComputer(bot) && bot.computer !== "off" && agentsMounted) {

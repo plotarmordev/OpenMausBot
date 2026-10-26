@@ -215,8 +215,9 @@ the exact control commands, wait results, and bounded transcripts. Its temporary
 home is removed after the test.
 
 The per-bot thread limit defaults to sixteen and accepts one through sixteen.
-Person messages in the bot's main chat bypass capacity, including guarded
-relays and coordinator continuations. Peer work, including Chief retries,
+A person's message in the bot's main chat, typed or relayed for a person
+through the guarded route, bypasses capacity, and so does the coordinator
+resuming that main-chat turn after delegated work returns. Peer work, including Chief retries,
 remains capped. A queued person message can pass a capacity-blocked peer
 entry in the main chat without dispatching that peer.
 

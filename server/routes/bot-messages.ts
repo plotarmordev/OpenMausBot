@@ -67,7 +67,7 @@ export interface BotMessageRouteDeps {
   ): Promise<DirectSendReceipt>;
   directSendRefusal(botId: string, threadId: string): { status: number; body: Record<string, unknown> } | null;
   startTurn(botId: string, text: string, opts?: {
-    threadId?: string; replyTo?: Message; sendId?: string; sender?: ResolvedSender; trigger?: UsageTrigger; relayed?: boolean;
+    threadId?: string; replyTo?: Message; sendId?: string; sender?: ResolvedSender; trigger?: UsageTrigger; relayed?: boolean; personRelay?: boolean;
     dataContext?: DataContext; compactOnly?: boolean; cardContinuation?: boolean; editedMessageId?: string;
   }): Promise<Message>;
   usageTriggerFor(auth: RequestAuth): UsageTrigger;
@@ -269,7 +269,8 @@ export function createBotMessageRoutes(deps: BotMessageRouteDeps): RouteHandler 
             if (guardedAdmission.action === "refuse") {
               throw Object.assign(new Error("wait for a free thread slot before retrying this message"), { status: 409, code: "guarded_busy" });
             }
-            const message = await startTurn(bot.id, text, { threadId, replyTo, sendId, sender, trigger, relayed: true, dataContext });
+            const message = await startTurn(bot.id, text, { threadId, replyTo, sendId, sender, trigger, relayed: true,
+              ...(trigger.kind === "user" ? { personRelay: true } : {}), dataContext });
             return { ok: true as const, threadId, message };
           }
         : undefined;

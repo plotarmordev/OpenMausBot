@@ -52,10 +52,10 @@ function legacyOrigin(origin: Origin): WorkOrigin | undefined {
 
 const hostFirstTurn = (a: Assignment): boolean => !a.parentId && a.status === "running" && a.executions === 1;
 
-function runtimeOrigin(origin: WorkOrigin | undefined, source: RoomAddress): Origin {
+function runtimeOrigin(origin: WorkOrigin | undefined, source: RoomAddress, personRelay: boolean): Origin {
   return origin?.kind === "user"
     ? { kind: "person", source: "chat", ref: source.threadId, quote: origin.request }
-    : { kind: "outside", source: "chat", ref: source.threadId };
+    : { kind: "outside", source: personRelay ? "relay" : "chat", ref: source.threadId };
 }
 
 export function needsInputQuestion(text: string): string | undefined {
@@ -90,6 +90,7 @@ export function view(a: Assignment, parent?: Assignment): HandoffView {
   if (a.startedAt !== undefined) node.startedAt = a.startedAt;
   const origin = legacyOrigin(a.origin);
   if (origin) node.origin = origin;
+  if (a.origin.kind === "outside" && a.origin.source === "relay") node.personRelay = true;
   if (a.restart !== undefined) node.restart = a.restart;
   return node;
 }
@@ -271,7 +272,7 @@ export class RuntimeCoordinator implements Coordinator {
     const { address, opener } = req;
     const row = this.runtime.begin({
       id: req.id,
-      origin: opener?.origin ?? runtimeOrigin(req.origin, address),
+      origin: opener?.origin ?? runtimeOrigin(req.origin, address, req.personRelay === true),
       requester: opener
         ? { ...opener.requester, botId: opener.requester.botId ?? address.botId, threadId: opener.requester.threadId ?? address.threadId, chief: this.host.chiefOf(address) }
         : { kind: "person", threadId: address.threadId, botId: address.botId, chief: this.host.chiefOf(address) },

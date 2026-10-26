@@ -702,7 +702,7 @@ it("queues a recipient at capacity, preserving its existing task and resuming on
   expect(f.evidence().filter((turn: any) => turn.botId === f.lead.id).map((turn: any) => turn.threadId)).toEqual([f.lead.activeTaskId, f.nodes().find((node: any) => node.parentId && node.botId === f.lead.id).threadId]);
 }), 45_000);
 
-it("resumes a person main-chat root while a routine holds every capacity slot", () => fixture(async f => {
+it.each(["typed", "guarded relay"])("resumes a person's %s main-chat root while a routine holds every capacity slot", (ingress) => fixture(async f => {
   await f.api("/api/config", { threads: { maxConcurrentPerBot: 1 } }, "PATCH");
   const childGate = join(f.session.info.dataDir, "capacity-child");
   const routineGate = join(f.session.info.dataDir, "capacity-routine");
@@ -712,7 +712,17 @@ it("resumes a person main-chat root while a routine holds every capacity slot", 
     promptIncludes: "HOLD_ROUTINE_CAPACITY",
     plan: { gateFile: routineGate, readyFile: routineReady, reply: "Routine finished" },
   }];
-  await f.start();
+  if (ingress === "typed") await f.start();
+  else {
+    f.save();
+    await f.api(`/api/bots/${f.chief.id}`, { approvalMode: "ask", autoApprove: false }, "PATCH");
+    const snapshot = await f.api(`/api/threads/${f.chief.activeTaskId}/messages`);
+    const relay = await f.api(`/api/bots/${f.chief.id}/messages/guarded`, {
+      threadId: f.chief.activeTaskId, sendId: "guarded-coordinator-person", text: "Please have Engineering build and independently verify a CSV export. Own the result.",
+      expectedActiveLeafId: snapshot.activeLeafId, expectedApprovalMode: "ask", onBehalfOf: { name: "Sam", email: "sam@example.test" },
+    });
+    expect(relay.queued).toBeUndefined();
+  }
   await assigningTurnEnded(f);
   const routine = (await f.api("/api/routines", {
     name: "Coordinator capacity holder", prompt: "HOLD_ROUTINE_CAPACITY", target: "bot", botId: f.chief.id,
