@@ -299,22 +299,26 @@ describe("per-bot thread capacity through an isolated HTTP fixture", () => {
       schedule: { type: "daily", time: "23:00" },
     })).body.routine;
     try {
-      await api("POST", `/api/routines/${routine.id}/run`);
-      await expect.poll(() => busyThreads(botId), { timeout: 15_000 }).toHaveLength(1);
-      const [holder] = await busyThreads(botId);
-      await dump(holder);
       const wrapper = join(fixture.info.dataDir, "goal-claude.mjs");
       writeFileSync(wrapper, [
         "#!/usr/bin/env node",
+        'import { basename } from "node:path";',
+        `if (basename(process.cwd()) === ${JSON.stringify(main)}) {`,
         'process.env.FAKE_CLAUDE_MODE = "happy";',
         `process.env.FAKE_CLAUDE_REPLY_STATE = ${JSON.stringify(threadFile(main, "replies"))};`,
         `process.env.FAKE_CLAUDE_REPLIES = ${JSON.stringify(JSON.stringify([
           '<openmaus-goal>{"status":"continue","next":"Capacity fixture","instruction":"Finish the second card turn","detail":"Continue"}</openmaus-goal>',
           '<openmaus-goal>{"status":"completed","detail":"Goal completed at capacity"}</openmaus-goal>',
         ]))};`,
-        `await import(${JSON.stringify(pathToFileURL(join(process.cwd(), "server/testing/fake-claude-cli.ts")).href)});`,
+        "}",
+        `const cli = basename(process.cwd()) === ${JSON.stringify(main)} ? ${JSON.stringify(pathToFileURL(join(process.cwd(), "server/testing/fake-claude-cli.ts")).href)} : ${JSON.stringify(pathToFileURL(join(fixture.info.dataDir, "capacity-claude.mjs")).href)};`,
+        "await import(cli);",
       ].join("\n"), { mode: 0o700 });
       expect((await api("PATCH", "/api/instances/claude", { cli: wrapper })).status).toBe(200);
+      await api("POST", `/api/routines/${routine.id}/run`);
+      await expect.poll(() => busyThreads(botId), { timeout: 15_000 }).toHaveLength(1);
+      const [holder] = await busyThreads(botId);
+      await dump(holder);
       const sent = await api("POST", `/api/bots/${botId}/messages`, { threadId: main, mode: "goal", text: "PERSON_GOAL_AT_CAPACITY" });
       expect(sent.status).toBe(202);
       await expect.poll(async () => (await messages(main)).find(message => message.kind === "goal.run")?.goalRun,

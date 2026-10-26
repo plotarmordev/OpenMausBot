@@ -244,11 +244,18 @@ describe("one-on-one goal runs (a room of one)", () => {
   it.each(["non-person", "non-main", "routine"])("keeps %s goals capped while another thread holds the slot", async (kind) => {
     expect((await api("PATCH", "/api/config", { threads: { maxConcurrentPerBot: 1 } })).status).toBe(200);
     const bot = await newBot(`Capped ${kind}`, "capped");
-    const holder = (await api("POST", `/api/bots/${bot.id}/tasks`, { title: "Slot holder" })).body.task;
-    expect((await api("POST", `/api/bots/${bot.id}/messages`, { threadId: holder.threadId, text: "Hold capacity" })).status).toBe(202);
-    await expect.poll(() => busy(bot.id)).toBe(true);
+    const holdingRoutine = (await api("POST", "/api/routines", {
+      name: "Goal capacity holder", prompt: "Hold capacity", target: "bot", botId: bot.id, runOn: "maus",
+      schedule: { type: "once", at: Date.now() + 60_000 }, durationMinutes: 30,
+    })).body.routine;
+    const holdingRun = (await api("POST", `/api/routines/${holdingRoutine.id}/run`)).body.run;
+    const holderState = async () => (await api("GET", "/api/routines")).body.runs.find((run: { id: string }) => run.id === holdingRun.id);
+    await expect.poll(async () => (await holderState())?.status).toBe("running");
+    const holder = await holderState();
     let routineId: string | undefined;
-    const goalThread = bot.threadId;
+    const goalThread = kind === "non-main"
+      ? (await api("POST", `/api/bots/${bot.id}/tasks`, { title: "Not main" })).body.task.threadId : bot.threadId;
+    expect((await api("POST", `/api/bots/${bot.id}/tasks/${bot.threadId}`, {})).status).toBe(200);
     try {
       if (kind === "routine") {
         const created = await api("POST", "/api/routines", {
@@ -287,6 +294,7 @@ describe("one-on-one goal runs (a room of one)", () => {
       await api("POST", `/api/bots/${bot.id}/interrupt`, { threadId: goalThread });
       await api("POST", `/api/bots/${bot.id}/interrupt`, { threadId: holder.threadId });
       if (routineId) await api("DELETE", `/api/routines/${routineId}`);
+      await api("DELETE", `/api/routines/${holdingRoutine.id}`);
       await api("PATCH", "/api/config", { threads: { maxConcurrentPerBot: 16 } });
     }
   });
