@@ -1,5 +1,13 @@
+import { ESCALATIONS_THREAD_TITLE } from "./escalations.ts";
+import { INCIDENTS_THREAD_TITLE } from "./incidents.ts";
 import type { Coordinator } from "./coordinator.ts";
 import type { BotRecord, Store, TaskRecord } from "./store.ts";
+
+const NOTICE_TITLES: ReadonlySet<string> = new Set([INCIDENTS_THREAD_TITLE, ESCALATIONS_THREAD_TITLE]);
+
+export function isNoticeThread(task: TaskRecord): boolean {
+  return NOTICE_TITLES.has(task.title);
+}
 
 export interface CloseGuards {
   coordinator: Pick<Coordinator, "awaitingAnswer" | "activeDirect">;

@@ -18,7 +18,7 @@ import type { MessagePage } from "./channels.ts";
 import { bulkDeleteThreadIds, type BulkDeleteRefusal } from "./bulk-delete.ts";
 import { PASS, type RouteHandler } from "./table.ts";
 import { sawThread } from "../thread-presence.ts";
-import { closeRefusal, closeThread } from "../thread-close.ts";
+import { closeRefusal, closeThread, isNoticeThread } from "../thread-close.ts";
 import { readThreadNotifications } from "./notifications.ts";
 
 type HostedModels = NonNullable<ReturnType<typeof hostedModelPolicy>>;
@@ -260,6 +260,7 @@ export function createTaskRoutes(deps: TaskRouteDeps): RouteHandler & { deleteTa
         if (task.closedBy) return answerClosed(true);
         const opener = task.openedBy ? store.bot(task.openedBy.botId) : undefined;
         if (!opener) return json(res, 403, { error: "only a thread a bot opened can be closed here" });
+        if (isNoticeThread(task)) return json(res, 403, { error: `#${task.title} is where OpenMausBot reports to this bot — it stays open` });
         const refusal = closeRefusal(deps, bot.id, task) ?? (deps.routines()?.isActiveThread(task.threadId) ? `#${task.title} is running a routine — wait for it to finish` : null);
         if (refusal) return json(res, 409, { error: refusal });
         closeThread(store, bot.id, task, opener);

@@ -155,6 +155,14 @@ describe("PATCH /api/bots/:bot/tasks/:thread { close: true }", () => {
     }
   });
 
+  it.each(["Team incidents", "Team escalations"])("refuses the %s thread OpenMausBot reports into, though its bot opened it", async (title) => {
+    const f = fixture();
+    const notices = f.store.createTask(f.capri.id, title, false, undefined, { botId: f.capri.id, name: "Capri", at: 1 })!;
+    expect((await f.patch(f.capri.id, notices.threadId, { close: true })).status).toBe(403);
+    expect(f.store.taskByThread(f.capri.id, notices.threadId)).not.toHaveProperty("closedBy");
+    expect(f.closeChips(notices.threadId)).toHaveLength(0);
+  });
+
   it.each([
     ["false", { close: false }, 400],
     ["a string", { close: "true" }, 400],
