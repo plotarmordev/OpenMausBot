@@ -42,6 +42,7 @@ it("restores mixed queue order and durable dispatch without coalescing or duplic
     const paired = await api("POST", "/api/auth/pair", { code: (await api("POST", "/api/auth/pairing", {})).code });
     const bot = (await api("POST", "/api/bots", { name: "Mixed durable queue" })).bot!;
     const threadId = bot.threadId;
+    await api("PATCH", `/api/bots/${bot.id}`, { modelSelection: { instanceId: "holder", model: "claude-sonnet-5" } });
     await api("PATCH", `/api/bots/${bot.id}/tasks/${threadId}`, { modelSelection: { instanceId: "opencodeGo", model: "fixture/queue" } });
     const state = () => api("GET", "/api/bots?messages=0");
     const journal = () => {
@@ -55,7 +56,6 @@ it("restores mixed queue order and durable dispatch without coalescing or duplic
       await api("POST", `/api/bots/${bot.id}/messages`, { threadId, text }, person ? paired.token : undefined);
     }
     expect(journal()).toEqual([{ status: "pending" }, { status: "pending" }, { status: "pending" }]);
-    await api("PATCH", `/api/bots/${bot.id}`, { modelSelection: { instanceId: "holder", model: "claude-sonnet-5" } });
     await server.stop();
     await server.start();
     await expect.poll(() => lines().length, { timeout: 20_000 }).toBe(2);
