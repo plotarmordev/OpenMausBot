@@ -66,18 +66,18 @@ it("restores mixed queue order and durable dispatch without coalescing or duplic
     await expect.poll(async () => (await state()).bots.find(entry => entry.id === bot.id)!.tasks.some(task => task.threadId !== threadId && task.busy), { timeout: 20_000 }).toBe(true);
     await api("PATCH", "/api/config", { threads: { maxConcurrentPerBot: 1 } });
     writeFileSync(mainGate, "");
-    await expect.poll(journal, { timeout: 20_000 }).toEqual([{ status: "pending" }, { status: "pending" }]);
-    expect(lines()).toHaveLength(2);
-    expect((await state()).botQueuedMessages[threadId].map(item => item.text)).toEqual(["UNMARKED_SECOND", "PERSON_THIRD"]);
+    await expect.poll(journal, { timeout: 20_000 }).toEqual([{ status: "pending" }]);
+    expect(lines()).toHaveLength(3);
+    expect((await state()).botQueuedMessages[threadId].map(item => item.text)).toEqual(["UNMARKED_SECOND"]);
     unlinkSync(mainGate);
     writeFileSync(holderGate, "");
-    await expect.poll(() => lines().length, { timeout: 20_000 }).toBe(3);
-    expect(journal()).toEqual([{ status: "dispatching" }, { status: "pending" }]);
+    await expect.poll(() => lines().length, { timeout: 20_000 }).toBe(4);
+    expect(journal()).toEqual([{ status: "dispatching" }]);
     writeFileSync(mainGate, "");
     await expect.poll(() => lines().length, { timeout: 20_000 }).toBe(4);
     await expect.poll(journal, { timeout: 20_000 }).toEqual([]);
     const users = (await api("GET", `/api/threads/${threadId}/messages?limit=100`)).messages.filter(message => message.role === "user").map(message => message.text);
-    expect(users).toEqual(["INITIAL_INTERRUPTED", "PERSON_FIRST", "UNMARKED_SECOND", "PERSON_THIRD"]);
+    expect(users).toEqual(["INITIAL_INTERRUPTED", "PERSON_FIRST", "PERSON_THIRD", "UNMARKED_SECOND"]);
     expect(lines()).toHaveLength(4);
   } finally {
     writeFileSync(holderGate, "");
