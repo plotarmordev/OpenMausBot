@@ -520,7 +520,7 @@ import {
 import { createGracefulShutdown } from "./graceful-shutdown.ts";
 import { acquireDataDirLeaseForProcess } from "./data-dir-lease.ts";
 import { createWorkspaceAccess, describeEdition, editionForSettings, editionStatus, entitled, hostedWorkspaceConfiguration, hostedWorkspaceConfigured, licenseWarning, sharedWorkspaceFullAccessConfigured, loadEnterpriseLayer, workspaceMembership, type WorkspaceAccess } from "./enterprise.ts";
-import { environmentDescriptor, loadEnvironmentId, serverVersion } from "./environment.ts";
+import { attestsEnvironment, ENVIRONMENT_HEADER, environmentDescriptor, loadEnvironmentId, serverVersion } from "./environment.ts";
 import { WorkspaceBackupMaintenance } from "./workspace-backup-maintenance.ts";
 import { createWorkspaceBackupRoutes, isWorkspaceBackupSessionControl } from "./workspace-backup-http.ts";
 import { applyPendingWorkspaceRestore, readLastWorkspaceRestore, type WorkspaceRestoreResult } from "./workspace-backup.ts";
@@ -12505,7 +12505,7 @@ ROUTES.push(createBotMessageRoutes({
   store, registry, handoffs, liveTurn: (threadId) => liveTurns.running(threadId), phoneSecretSubmissions, directTurnDispatchClaims, groupSpeakers,
   routines: () => routines,
   fromPhone: phones.fromPhone, notePhoneSend: phones.noteSend,
-  desktopManaged: DESKTOP_MANAGED, cloudHome: Boolean(CLOUD_HOME), DirectSendRefused,
+  desktopManaged: DESKTOP_MANAGED, cloudHome: Boolean(CLOUD_HOME), environmentId: ENVIRONMENT_ID, DirectSendRefused,
   acceptDirectSend, directSendRefusal, startTurn, usageTriggerFor, messageSender, cloudGuestSendRefusal, cloudThreadRefusal,
   cardAnswerRefusal, commandRememberRefusal, requestBehavior, requestedTaskBot, botForThread, threadBusy,
   botAtThreadCapacity, parksBehindCoordination, activeGroupTurnForBot, runningTurnInstance, engineSteersImages, resolveReplyTarget,
@@ -12941,9 +12941,11 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
   try {
     url = new URL(req.url ?? "/", `http://localhost:${PORT}`);
   } catch {
+    if (attestsEnvironment(req.url ?? "")) res.setHeader(ENVIRONMENT_HEADER, ENVIRONMENT_ID);
     return json(res, 400, { error: "invalid request URL" });
   }
   const path = url.pathname;
+  if (attestsEnvironment(path)) res.setHeader(ENVIRONMENT_HEADER, ENVIRONMENT_ID);
   const method = req.method ?? "GET";
   let m: RegExpMatchArray | null = null;
   let releaseWorkspaceRequest: (() => void) | undefined;

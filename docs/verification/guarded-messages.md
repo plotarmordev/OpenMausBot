@@ -32,6 +32,21 @@ It does not grant or change permissions. The exact task, not its bot default,
 must match; Ask callers never silently become Full. Retry receipts continue
 to return the original accepted action before rechecking admission conditions.
 
+Every response to an `/api/` or `/.well-known/openmausbot/` request, errors
+included, carries `OpenMausBot-Environment: <environmentId>`, the id
+`/.well-known/openmausbot/environment` serves. The server sets it once per
+request before any route runs, so the header on a page or receipt names the
+install that produced that body, also through a proxy that forwards responses.
+
+`capabilities.guardedEnvironment: 1` additionally accepts
+`expectedEnvironmentId`. Any other install answers `409` with
+`code: "guarded_environment"` and its own `environmentId` before anything else:
+no bot lookup, no `sendId` lookup or reservation, no stored line, no queue
+entry, no turn. The refused `sendId` stays free. Without the field a guarded
+send behaves as before. A retry is answered from the stored conversation
+(`messages.db`), so it returns the original message after a restart too; a
+message keeps its `sendId` until its conversation is deleted.
+
 Run the permanent isolated HTTP checks:
 
 ```sh
@@ -47,7 +62,9 @@ their child processes are closed by each fixture.
 The checks cover strict input and authentication, foreign task refusal, lost
 response recovery, changed-leaf rejection, Ask/automatic/remembered approval
 settings, busy/capacity refusal without enqueueing or steering, concurrent
-guarded admissions, and duplicate receipt identity. A running ordinary turn
+guarded admissions, duplicate receipt identity, and the install binding: the
+environment header on every response and another install's id refused without
+storing or reserving anything. A running ordinary turn
 remains unchanged when a guarded send is refused. Ordinary composer sends
 retain their existing behavior; this endpoint does not prohibit a later human
 message from steering or queueing through the ordinary route.

@@ -70,6 +70,15 @@ function readEnvironmentId(file: string): string | undefined {
   return id;
 }
 
+/** Every response to an `/api/` or `/.well-known/openmausbot/` request, errors included, names the install that
+ * answered it in this header: the same `environmentId` the descriptor serves. A response without it comes from an
+ * install of unknown identity. */
+export const ENVIRONMENT_HEADER = "OpenMausBot-Environment";
+
+export function attestsEnvironment(path: string): boolean {
+  return path.startsWith("/api/") || path.startsWith("/.well-known/openmausbot/");
+}
+
 /** Read or create the id. Written once, never rotated by the server itself. */
 export function loadEnvironmentId(dataDir: string): string {
   const file = join(dataDir, "environment-id");

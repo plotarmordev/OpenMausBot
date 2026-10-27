@@ -61,6 +61,7 @@ export interface BotMessageRouteDeps {
   groupSpeakers: ReadonlyMap<string, { botId: string }>;
   desktopManaged: boolean;
   cloudHome: boolean;
+  environmentId: string;
   DirectSendRefused: abstract new (...args: never[]) => { readonly status: number; readonly body: Record<string, unknown> };
   acceptDirectSend(
     input: {
@@ -136,7 +137,15 @@ export interface BotMessageRouteDeps {
 /** External interfaces (the Slack worker) opt in. `onBehalfOf`, advertised by /api/health as
  * capabilities.guardedOnBehalfOf, books the turn to that person; only this admin-scoped route reads it. `reaction`
  * replaces `text` when the person reacted in that app: a 👍 or 👎 (Slack's name for it, or the emoji any platform
- * sends) on the message in `replyToId`, made by `onBehalfOf`. */
+ * sends) on the message in `replyToId`, made by `onBehalfOf`.
+ *
+ * `expectedEnvironmentId`, advertised as capabilities.guardedEnvironment, names the install the sender means: any other
+ * install answers 409 `guarded_environment` with its own `environmentId` before it stores, reserves, queues or starts
+ * anything, and before it looks the `sendId` up.
+ *
+ * A retry with the same `sendId`, text and `replyToId` answers with the message first accepted under it. That match
+ * reads the stored conversation (messages.db in the data directory), so it survives a restart, and the message keeps
+ * its `sendId` for as long as it exists: nothing expires it; only deleting its whole conversation removes it. */
 const guardedSendSchema = z.object({
   threadId: z.string().regex(/^[\w-]+$/),
   sendId: z.string().regex(/^[A-Za-z0-9_-]{16,80}$/),
@@ -144,6 +153,7 @@ const guardedSendSchema = z.object({
   reaction: z.string().max(64).optional(),
   expectedActiveLeafId: z.string().regex(/^[\w-]+$/).nullable(),
   expectedApprovalMode: z.enum(["ask", "full"]).optional(),
+  expectedEnvironmentId: z.uuid().optional(),
   replyToId: z.string().optional(),
   onBehalfOf: z.object({
     email: z.string().trim().toLowerCase().max(254).pipe(z.email()).optional(),
@@ -154,7 +164,7 @@ const guardedSendSchema = z.object({
 export function createBotMessageRoutes(deps: BotMessageRouteDeps): RouteHandler {
   const {
     store, registry, handoffs, liveTurn, phoneSecretSubmissions, directTurnDispatchClaims, groupSpeakers,
-    desktopManaged: DESKTOP_MANAGED, cloudHome: CLOUD_HOME, DirectSendRefused,
+    desktopManaged: DESKTOP_MANAGED, cloudHome: CLOUD_HOME, environmentId, DirectSendRefused,
     acceptDirectSend, directSendRefusal, startTurn, usageTriggerFor, messageSender, cloudGuestSendRefusal, cloudThreadRefusal,
     cardAnswerRefusal, commandRememberRefusal, requestBehavior, requestedTaskBot, botForThread, threadBusy,
     botAtThreadCapacity, parksBehindCoordination, activeGroupTurnForBot, runningTurnInstance, engineSteersImages, resolveReplyTarget,
@@ -188,10 +198,16 @@ export function createBotMessageRoutes(deps: BotMessageRouteDeps): RouteHandler 
       // A distinct route, so an older server answers 404 instead of ignoring the safety preconditions.
       const guardedBody = guarded ? guardedSendSchema.safeParse(body) : null;
       if (guardedBody && !guardedBody.success) {
-        const onBehalfOfInvalid = guardedBody.error.issues.some((issue) => issue.path[0] === "onBehalfOf");
-        return json(res, 400, { error: onBehalfOfInvalid
+        const invalidFields = new Set(guardedBody.error.issues.map((issue) => issue.path[0]));
+        return json(res, 400, { error: invalidFields.has("onBehalfOf")
           ? "onBehalfOf must name the person with an email address, a name, or both"
-          : "guarded sends require threadId, sendId, text (or a reaction) and expectedActiveLeafId" });
+          : invalidFields.has("expectedEnvironmentId")
+            ? "expectedEnvironmentId must be an install's environmentId"
+            : "guarded sends require threadId, sendId, text (or a reaction) and expectedActiveLeafId" });
+      }
+      const expectedEnvironment = guardedBody?.data.expectedEnvironmentId;
+      if (expectedEnvironment !== undefined && expectedEnvironment.toLowerCase() !== environmentId.toLowerCase()) {
+        return json(res, 409, { error: "this message is meant for another OpenMausBot install", code: "guarded_environment", environmentId });
       }
       const relayed = guardedBody?.data?.reaction === undefined ? null : normalizeReaction(guardedBody.data.reaction);
       if (guardedBody?.data?.reaction !== undefined && (!reactionAnswer(relayed) || !body.replyToId || !guardedBody.data.onBehalfOf)) {
