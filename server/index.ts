@@ -7392,6 +7392,12 @@ function commitAutomaticRecovery(botId: string, threadId: string, recovery: Queu
   store.appendMessage(threadId, { role: "bot", kind: "activity", tool: { name: recovery.activity, ok: true } });
 }
 
+function configuredRecoveryPlan(bot: BotRecord | null): QueuedAutomaticRecovery["plan"] {
+  if (!cfg.automaticRecovery?.enabled) return { source: "disabled", steps: [] };
+  if (bot?.fallback?.length) return { source: "task", steps: bot.fallback };
+  return { source: "global", steps: cfg.automaticRecovery.backup ? [cfg.automaticRecovery.backup] : [] };
+}
+
 // One drain at a time: the coordinator's changed hook can re-enter it, which would append the same held line twice.
 let drainingQueuedSends = false, queuedSendsDrainOwed = false;
 function drainQueuedSends() {
@@ -7411,14 +7417,18 @@ function drainQueuedSendsNow() {
       const recovery = head.recovery;
       const callbacks = queuedRecoveryCallbacks.get(queueId);
       const current = store.projectBotForTask(botId, threadId);
-      const checked = current && checkedTaskModelSwitch(current, recovery.selection, false, false, true);
+      const plan = configuredRecoveryPlan(current);
+      const step = plan.steps[(recovery.options.automaticRecoveryIndex ?? 0) - 1];
+      const checked = current && step && checkedTaskModelSwitch(current, step, false, false, true);
       const latestInput = store.activePath(threadId).findLast(m => m.role === "user" && m.kind === "text");
       const stale = cfg.automaticRecovery?.enabled !== true || !current || !store.taskByThread(botId, threadId)?.cwd ||
         directRequestOwners.get(threadId)?.stopped ||
         latestInput?.id !== recovery.recoveryUserMessageId || latestInput?.requestCancelled ||
         hasNewerQueuedInput("bot", botId, threadId, queueId) ||
         JSON.stringify(current.modelSelection) !== JSON.stringify(recovery.from) ||
-        !registry.get(recovery.selection.instanceId)?.enabled || !checked?.ok;
+        JSON.stringify(plan) !== JSON.stringify(recovery.plan) ||
+        !checked?.ok || JSON.stringify(checked.selection) !== JSON.stringify(recovery.selection) ||
+        !registry.get(recovery.selection.instanceId)?.enabled;
       const fail = (message: string) => {
         queuedRecoveryCallbacks.delete(queueId);
         store.appendMessage(threadId, { role: "bot", kind: "activity", turnSucceeded: false, tool: failedTurnTool(message) });
@@ -8829,9 +8839,8 @@ async function startTurn(
       if (e instanceof PlaceUnavailableError) clearFailedAutoPin(bot.id, threadId, e.place);
       let message = e instanceof Error ? e.message : String(e);
       const current = store.projectBotForTask(bot.id, threadId);
-      const backups = cfg.automaticRecovery?.enabled
-        ? current?.fallback?.length ? current.fallback : cfg.automaticRecovery.backup ? [cfg.automaticRecovery.backup] : []
-        : [];
+      const plan = configuredRecoveryPlan(current);
+      const backups = plan.steps;
       const nextIndex = backups.findIndex((candidate, index) => index >= (opts?.automaticRecoveryIndex ?? 0) &&
         registry.get(candidate.instanceId)?.enabled && (e instanceof TurnUsageLimitRefusedError ? limitBackupAllowed(instance, registry.get(candidate.instanceId)!, instanceConfigs(cfg)[candidate.instanceId])
           : !(e instanceof TurnAuthenticationRefusedError) || candidate.instanceId !== instanceId) &&
@@ -8857,7 +8866,7 @@ async function startTurn(
             assertWithinBudget(cfg, DATA_DIR);
             const { coordination, onSettled, onTurnSettled, onDispatchError, recovery: _recovery, ...serializable } = opts ?? {};
             const recovery: QueuedAutomaticRecovery = {
-              selection: checked.selection, from: current.modelSelection, userMessage, recoveryUserMessageId,
+              selection: checked.selection, plan, from: current.modelSelection, userMessage, recoveryUserMessageId,
               generation: dispatchClaimId,
               activity: e instanceof TurnUsageLimitRefusedError ? `recovery: ${failoverLine(engineName(instanceId), engineName(target.instanceId), e.resetsAt)}` : `recovery: Automatic recovery: ${instance.displayName || instance.driverKind} ${e instanceof TurnAuthenticationRefusedError ? "is signed out" : "could not start"}. Trying ${target.displayName || target.driverKind} · ${checked.selection.model} once in this thread.`,
               ...(e instanceof TurnUsageLimitRefusedError ? { limit: { resetsAt: e.resetsAt ?? null } } : {}),
@@ -9919,9 +9928,8 @@ const approvalBus: ApprovalBus = { store, broadcast, notify, autoApply: fullAcce
     kind: "peer-approval", bot: from, threadId: sourceThreadId, gate: peerApprovalGate(action, target.name), reason: message, alreadyNotified: true }) };
 
 const { quotaSwitch, harnessCardOutcome } = createQuotaSwitchHost({ store, coordinator, registry, turnStops, approvalBus, hostedModels, providerConfigs, policyModelRefusal, checkedTaskModelSwitch, threadBusy, directRequestOwners,
-  startOrQueueDirectMessage: (botId, threadId, text, replyTo, sendId, sender, trigger, via, callId, dataContext) =>
-    startOrQueueDirectMessage(botId, threadId, text, replyTo, sendId, sender, trigger, via, callId, dataContext, undefined,
-      directRequestOwners.get(threadId)?.capacity),
+  startOrQueueDirectMessage: (botId, threadId, text, replyTo, sendId, sender, trigger, via, callId, dataContext, capacity) =>
+    startOrQueueDirectMessage(botId, threadId, text, replyTo, sendId, sender, trigger, via, callId, dataContext, undefined, capacity),
 });
 
 // Peer approvals live only in memory: settle every peer card still open on disk, or it locks the composer forever.

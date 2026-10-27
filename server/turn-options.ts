@@ -41,6 +41,7 @@ export interface SerializableTurnOptions {
 
 export interface QueuedAutomaticRecovery {
   selection: ModelSelection;
+  plan: { source: "task" | "global" | "disabled"; steps: ModelSelection[] };
   from: ModelSelection;
   userMessage: Message;
   recoveryUserMessageId: string | undefined;
