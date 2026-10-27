@@ -27,7 +27,9 @@ changing model does not widen permissions.
 
 Applied changes appear in the proposing conversation with **Undo**. Undo
 revalidates authority and the previous selection, and refuses a stale card if
-someone changed the selection meanwhile. It restores an explicit task pin even
+the stored override or effective selection differs from the card's applied
+result. A newer pin-to-follow or follow-to-pin change invalidates the older Undo
+even when the effective model is unchanged. Undo restores an explicit task pin even
 when that pin equals the current default; later default changes still leave the
 pin alone. Restoring a task that followed its default keeps that behavior.
 Selecting the current default clears an explicit task pin, even when today's
@@ -71,8 +73,10 @@ conversation text and artifacts, self-task/default change and restoration, and
 a held running turn whose current model remains unchanged until its next turn.
 The fake records settings at `session/prompt`, not merely the saved API alias.
 The persisted-store regressions cover stale confirmation after a default change
-and exact Undo restoration across reload and subsequent default changes. The
-renderer regressions verify the conversation/default outcome distinction and
+and exact Undo restoration across reload and subsequent default changes. They
+also cover both pin/follow directions between older and newer cards: stale Undo
+leaves persisted selections and cards untouched, while the newer Undo remains valid.
+The renderer regressions verify the conversation/default outcome distinction and
 that Undo is present before restoration and absent afterwards.
 
 Evidence is written beside the persistent fixture server log as

@@ -251,7 +251,9 @@ export class ThreadModelRequestService {
     if (!owner || !task) return cannot(NO_SUCH_THREAD, 404);
     const refusal = this.authorize(payload.botId, owner, task, payload.threadId);
     if (refusal) return cannot(refusal, 403);
-    if (!sameSelection(task.modelSelection ?? owner.modelSelection, payload.selection)) {
+    const appliedOverride = sameSelection(payload.selection, payload.beforeDefault) ? undefined : payload.selection;
+    if (!sameOverride(task.modelSelection, appliedOverride)
+      || !sameSelection(task.modelSelection ?? owner.modelSelection, payload.selection)) {
       return { claimed: true, state: "invalid", error: UNDO_STALE, status: 409, stale: true };
     }
     const restore = payload.before ?? payload.beforeDefault;

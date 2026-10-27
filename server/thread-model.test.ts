@@ -157,6 +157,44 @@ describe("threads follow their bot's model", () => {
     expect(reloaded.bot(bot.id)?.modelSelection).toEqual(sonnet);
   });
 
+  it.each(["pin-to-follow", "follow-to-pin"] as const)("rejects stale Undo across a newer %s selection with the same effective model", (transition) => {
+    const store = open();
+    const bot = store.createBot();
+    const threadId = bot.threadId;
+    store.switchTaskModel(bot.id, threadId, opus, false, false);
+    const serviceFor = (current: Store) => new ThreadModelRequestService({
+      store: current, autoApply: () => "level", authorize: () => null,
+      checkSwitch: (_current, raw) => ({ ok: true, selection: raw as ModelSelection }),
+    });
+    const service = serviceFor(store);
+    const selection = transition === "pin-to-follow" ? codex : sonnet;
+    const oldOverride = transition === "pin-to-follow" ? codex : undefined;
+    const newerOverride = transition === "pin-to-follow" ? undefined : sonnet;
+    const first = service.submit({ botId: bot.id, threadId, targetThreadId: threadId, selection, reason: "First selection" });
+    expect(ownModel(store, bot.id, threadId)).toEqual(oldOverride);
+    store.applyModelDefault(bot.id, codex);
+    const second = service.submit({ botId: bot.id, threadId, targetThreadId: threadId, selection, reason: "New selection semantics" });
+    const reloaded = open();
+    expect(ownModel(reloaded, bot.id, threadId)).toEqual(newerOverride);
+    expect(runsOn(reloaded, bot.id, threadId)).toEqual(selection);
+    const before = readFileSync(join(DATA_DIR, "bots.json"), "utf8");
+    const messages = structuredClone(reloaded.messagesFor(threadId));
+    expect(serviceFor(reloaded).undo({ botId: bot.id, threadId, requestId: first.requestId }))
+      .toMatchObject({ state: "invalid", status: 409, stale: true });
+    expect(readFileSync(join(DATA_DIR, "bots.json"), "utf8")).toBe(before);
+    expect(open().messagesFor(threadId)).toEqual(messages);
+    reloaded.applyModelDefault(bot.id, opus);
+    expect(ownModel(open(), bot.id, threadId)).toEqual(newerOverride);
+    expect(runsOn(open(), bot.id, threadId)).toEqual(newerOverride ?? opus);
+    reloaded.applyModelDefault(bot.id, codex);
+    expect(serviceFor(reloaded).undo({ botId: bot.id, threadId, requestId: second.requestId }))
+      .toMatchObject({ state: "undone" });
+    const restored = open();
+    expect(ownModel(restored, bot.id, threadId)).toEqual(oldOverride);
+    restored.applyModelDefault(bot.id, sonnet);
+    expect(runsOn(open(), bot.id, threadId)).toEqual(oldOverride ?? sonnet);
+  });
+
   it("a thread opened from a thread with its own model starts on that model; one opened from a follower follows", () => {
     const store = open();
     const bot = store.createBot();
