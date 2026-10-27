@@ -89,7 +89,7 @@ describe("threads follow their bot's model", () => {
     });
     expect(service.submit({ botId: bot.id, threadId, targetThreadId: threadId, selection: opus, reason: "Follow the default" }).state).toBe("applied");
     expect(ownModel(store, bot.id, threadId)).toBeUndefined();
-    expect(bot.modelSelection).toEqual(opus);
+    expect(store.bot(bot.id)?.modelSelection).toEqual(opus);
     const reloaded = open();
     expect(ownModel(reloaded, bot.id, threadId)).toBeUndefined();
     reloaded.applyModelDefault(bot.id, codex);
