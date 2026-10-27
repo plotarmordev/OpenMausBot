@@ -5,6 +5,10 @@ import { beforeEach, describe, expect, it } from "vitest";
 
 import { DATA_DIR } from "./config.ts";
 import { closeMessageDb,
+  appendMessage,
+  hasQueuedInputAfter,
+  saveChatFollowup,
+  settleChatFollowups,
   deleteThread,
   deleteThreads,
   indexMemoryFile,
@@ -49,6 +53,30 @@ describe("message-db", () => {
     closeMessageDb();
     rmSync(DATA_DIR, { recursive: true, force: true });
     mkdirSync(DATA_DIR, { recursive: true });
+  });
+
+  it("orders equal-ms input durably without reusing deleted queue positions", () => {
+    const original = msg("original", "original");
+    saveChatFollowup({ id: "older", kind: "bot", ownerId: "bot", threadId: "thread", payload: { text: "older", queuedAt: original.at } });
+    appendMessage("thread", original);
+    expect(hasQueuedInputAfter("bot", "bot", "thread", original.id)).toBe(false);
+    settleChatFollowups(["older"], null);
+    closeMessageDb();
+    saveChatFollowup({ id: "newer", kind: "bot", ownerId: "bot", threadId: "thread", payload: { text: "newer", queuedAt: original.at } });
+    expect(hasQueuedInputAfter("bot", "bot", "thread", original.id)).toBe(true);
+    updateMessage("thread", { ...original, text: "edited" });
+    closeMessageDb();
+    expect(hasQueuedInputAfter("bot", "bot", "thread", original.id)).toBe(true);
+    expect(hasQueuedInputAfter("bot", "other", "thread", original.id)).toBe(false);
+    settleChatFollowups(["newer"], null);
+    expect(hasQueuedInputAfter("bot", "bot", "thread", original.id)).toBe(false);
+  });
+
+  it("fails closed for saved user lines without durable admission proof", () => {
+    insertMessage("thread", msg("legacy", "legacy"));
+    closeMessageDb();
+    expect(hasQueuedInputAfter("bot", "bot", "thread", "legacy")).toBe(true);
+    expect(hasQueuedInputAfter("bot", "bot", "thread", "missing")).toBe(true);
   });
 
   it("persists inserts, updates, and the active leaf across a reopen", () => {
