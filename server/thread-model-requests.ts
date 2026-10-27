@@ -307,7 +307,10 @@ export class ThreadModelRequestService {
         return { claimed: true, state: "already_settled", behavior: "allow" };
       }
       const before = payload.before ?? payload.beforeDefault;
-      if (!sameOverride(payload.before, task.modelSelection) || !sameSelection(before, task.modelSelection ?? owner.modelSelection)) {
+      const currentAppliedOverride = sameSelection(payload.selection, owner.modelSelection) ? undefined : payload.selection;
+      if (!sameOverride(appliedOverride, currentAppliedOverride)
+        || !sameOverride(payload.before, task.modelSelection)
+        || !sameSelection(before, task.modelSelection ?? owner.modelSelection)) {
         throw new ThreadModelRequestError("This conversation's model changed after this card was prepared. Ask the bot to review it and propose again.", 409);
       }
       const checked = this.checkSwitch({ ...owner, threadId: payload.targetThreadId, modelSelection: task.modelSelection ?? owner.modelSelection }, payload.selection);

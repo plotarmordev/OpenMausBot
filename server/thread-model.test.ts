@@ -77,10 +77,11 @@ describe("threads follow their bot's model", () => {
     expect(runsOn(store, bot.id, bot.threadId)).toEqual(opus);
   });
 
-  it("refuses a stale pending request when the default moves to its requested model", () => {
+  it.each([undefined, codex])("refuses a stale pending request when the default moves to its requested model, with prior pin %j", (pin) => {
     const store = open();
     const bot = store.createBot();
     const threadId = bot.threadId;
+    if (pin) store.switchTaskModel(bot.id, threadId, pin, false, false);
     const service = new ThreadModelRequestService({
       store, autoApply: () => null, authorize: () => null,
       checkSwitch: (_current, raw) => ({ ok: true, selection: raw as ModelSelection }),
@@ -91,9 +92,10 @@ describe("threads follow their bot's model", () => {
       .toMatchObject({ state: "invalid", status: 409 });
     expect(store.messagesFor(threadId).find((message) => message.card?.requestId === request.requestId)?.card?.answered).toBeUndefined();
     const reloaded = open();
-    expect(ownModel(reloaded, bot.id, threadId)).toBeUndefined();
-    reloaded.applyModelDefault(bot.id, codex);
-    expect(runsOn(reloaded, bot.id, threadId)).toEqual(codex);
+    expect(ownModel(reloaded, bot.id, threadId)).toEqual(pin);
+    reloaded.applyModelDefault(bot.id, sonnet);
+    expect(ownModel(reloaded, bot.id, threadId)).toEqual(pin);
+    expect(runsOn(reloaded, bot.id, threadId)).toEqual(pin ?? sonnet);
   });
 
   it("Undo restores an explicit pin equal to the default across reload and later default changes", () => {

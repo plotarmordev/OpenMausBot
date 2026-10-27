@@ -32,9 +32,11 @@ when that pin equals the current default; later default changes still leave the
 pin alone. Restoring a task that followed its default keeps that behavior.
 An owner-confirmation-required Cloud request remains pending rather than
 silently applying. Confirmation checks stored overrides, not just effective
-model equality: moving the default to a pending request's model does not settle
-that request. Confirmed task changes are labeled as conversation changes, not
-default changes.
+model equality. If default drift would change the requested result between an
+explicit pin and following the default, confirmation refuses as stale and leaves
+the card unanswered, whether the task previously followed its default or had a
+pin. Confirmed task changes are labeled as conversation changes, not default
+changes.
 
 `currentExecution.model` and `.effort` are native session evidence, or null when
 unconfirmed. `nextTurn.resolved` is false: a stored choice is not runtime proof.
