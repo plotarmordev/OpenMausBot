@@ -194,7 +194,7 @@ pnpm exec vitest run src/state/store.test.ts src/components/ChatView.follow.test
 optional `OMB_UI_E2E=1` gate. It verifies profile-only role creation, closing
 and reopening the dialog during a slow creation without duplicate submissions, recovery
 when the preset PATCH fails after creation, the composer’s Tools shortcut,
-optional setup ideas, Paste config importing disabled servers, refreshed
+optional setup ideas, a pasted config added from Add MCP server that stays off when it doesn't answer, refreshed
 per-bot MCP switches and saved opt-outs, and modal Tab/Escape containment.
 The MCP command is an inert fixture command; no real accounts are connected.
 The advisory renderer job runs both recipes. Runtime mounting, direct/channel

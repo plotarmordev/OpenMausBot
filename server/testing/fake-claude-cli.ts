@@ -584,15 +584,41 @@ child.on("exit", () => process.exit(1));
 child.stdin.write(JSON.stringify(request) + "\\n");
 `;
 
+// A URL server, as Claude Code reaches one: initialize, list its tools, and call the one asked for, with the headers
+// its config gives.
+const MCP_HTTP_CALL_PROGRAM = `
+const { url, headers, name, input } = JSON.parse(process.argv[1]);
+let session;
+const send = async (body) => {
+  const response = await fetch(url, { method: "POST", body: JSON.stringify(body), headers: {
+    "content-type": "application/json", accept: "application/json, text/event-stream", ...headers, ...(session ? { "mcp-session-id": session } : {}) } });
+  session = response.headers.get("mcp-session-id") ?? session;
+  if (!response.ok) throw new Error("the server answered HTTP " + response.status);
+  const text = await response.text();
+  if (!text.trim()) return null;
+  if (!(response.headers.get("content-type") ?? "").includes("text/event-stream")) return JSON.parse(text);
+  return text.split("\\n").filter((line) => line.startsWith("data:")).map((line) => JSON.parse(line.slice(5))).find((frame) => frame.id !== undefined);
+};
+(async () => {
+  await send({ jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "fake-claude", version: "1" } } });
+  await send({ jsonrpc: "2.0", method: "notifications/initialized" });
+  const names = ((await send({ jsonrpc: "2.0", id: 2, method: "tools/list", params: {} }))?.result?.tools ?? []).map((tool) => tool.name);
+  if (!names.includes(name)) return { error: { message: name + " is not one of this server's tools: " + names.join(", ") } };
+  return await send({ jsonrpc: "2.0", id: 3, method: "tools/call", params: { name, arguments: input } });
+})().catch((error) => ({ error: { message: String(error.message ?? error) } })).then((reply) => process.stdout.write(JSON.stringify(reply) + "\\n"));
+`;
+
 const mcpToolCall = (serverName: string, name: string, input: Record<string, unknown>): { ok: boolean; content: unknown } => {
   launchFiles ??= readLaunchFiles();
-  const server = (launchFiles.mcpConfig as { mcpServers?: Record<string, { command?: string; args?: string[]; env?: Record<string, string> }> } | null)
+  const server = (launchFiles.mcpConfig as { mcpServers?: Record<string, { command?: string; args?: string[]; env?: Record<string, string>; url?: string; headers?: Record<string, string> }> } | null)
     ?.mcpServers?.[serverName];
-  if (!server?.command) return { ok: false, content: `no ${serverName} MCP server was launched for this turn` };
+  if (!server?.command && !server?.url) return { ok: false, content: `no ${serverName} MCP server was launched for this turn` };
   const request = { jsonrpc: "2.0", id: 1, method: "tools/call", params: { name, arguments: input } };
-  const ran = spawnSync(process.execPath, ["-e", MCP_CALL_PROGRAM, JSON.stringify({ command: server.command, args: server.args ?? [], env: server.env ?? {}, request })], {
-    encoding: "utf8", timeout: 120_000,
-  });
+  const ran = server.url
+    ? spawnSync(process.execPath, ["-e", MCP_HTTP_CALL_PROGRAM, JSON.stringify({ url: server.url, headers: server.headers ?? {}, name, input })], { encoding: "utf8", timeout: 120_000 })
+    : spawnSync(process.execPath, ["-e", MCP_CALL_PROGRAM, JSON.stringify({ command: server.command, args: server.args ?? [], env: server.env ?? {}, request })], {
+      encoding: "utf8", timeout: 120_000,
+    });
   let reply: { result?: { isError?: boolean; content?: unknown }; error?: { message?: string } } = {};
   try { reply = JSON.parse(ran.stdout.trim().split("\n")[0] ?? ""); } catch { reply = { error: { message: ran.stderr || "no answer" } }; }
   return { ok: !reply.error && !reply.result?.isError, content: reply.result?.content ?? reply.error?.message ?? "" };

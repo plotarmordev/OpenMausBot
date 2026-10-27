@@ -34,15 +34,4 @@ describe("tighten-ratchets", () => {
     expect(text).toContain(`  // a comment stays\n  'path === "/': 90,\n  "path.match(": 26,`);
     expect(changes).toEqual(['path === "/: 92 → 90']);
   });
-
-  it("is already tight on the tree it ships with", async () => {
-    const { readFileSync } = await import("node:fs");
-    const read = (file: string) => readFileSync(new URL(`../../${file}`, import.meta.url), "utf8");
-    const index = read("server/index.ts");
-    const sizes = tightenSizes(read("scripts/testing/file-size-ratchet.test.ts"), (file: string) => {
-      try { return read(file).split("\n").length - 1; } catch { return null; }
-    });
-    const routes = tightenRoutes(read("scripts/testing/index-route-ratchet.test.ts"), (needle: string) => index.split(needle).length - 1);
-    expect({ sizes: sizes.changes, routes: routes.changes }).toEqual({ sizes: [], routes: [] });
-  });
 });

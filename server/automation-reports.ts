@@ -81,7 +81,7 @@ export interface AutomationReportDeps {
   routines(): Pick<RoutineManager, "listRuns" | "noteReport" | "runForThread"> | null;
   /** A turn runs or settles in this conversation. */
   busy(botId: string, threadId: string): boolean;
-  /** After a line this conversation's session did not write: it marks the chat unread and reaches the next turn. */
+  /** After a line this conversation's session did not write: it reaches the next turn. The chat is marked unread here. */
   wrote(bot: BotRecord, threadId: string): void;
   notify(kind: "done" | "question", bot: BotRecord, threadId: string, detail: string): void;
   /** A run that delivers to the brief completed: its answer is the brief's to read. */
@@ -137,7 +137,7 @@ export function createAutomationReports(deps: AutomationReportDeps) {
     const automation = lineOf(line.run, { needsYou: true, copyOf: original.id });
     store.appendMessage(target.threadId, named ? { role: "bot", kind: "text", text: named, automation } : { role: "bot", kind: "options", card: { ...original.card! }, automation });
     if (named) deps.wrote(target.bot, target.threadId);
-    else store.patchTask(target.bot.id, target.threadId, { unread: true });
+    store.patchTask(target.bot.id, target.threadId, { unread: true });
   };
 
   /** False while the chat it goes to is busy. */
@@ -175,6 +175,7 @@ export function createAutomationReports(deps: AutomationReportDeps) {
     });
     deps.routines()?.noteReport(run.id, { state: "posted", threadId: target.threadId, messageId: posted.id });
     deps.wrote(target.bot, target.threadId);
+    store.patchTask(target.bot.id, target.threadId, { unread: true });
     if (line.kind === "reply" && !recovered) deps.notify(reply.question ? "question" : "done", target.bot, target.threadId, `${run.routineName}: ${reply.question ?? reply.text}`);
     return true;
   };

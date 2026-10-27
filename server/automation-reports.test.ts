@@ -109,7 +109,9 @@ describe("automation reports", () => {
   it("writes a run's reply into the chat it reports to as one bot line named after the automation", () => {
     const f = fixture();
     const run = f.finished("Acme replied about the order.");
+    f.store.patchTask(f.bot.id, f.main, { unread: false });
     f.reports.runSettled(run, `turn-${run.id}`);
+    expect(f.store.taskByThread(f.bot.id, f.main)?.unread, "the chat it reports to shows unread").toBe(true);
     expect(f.lines()).toEqual([expect.objectContaining({
       role: "bot", kind: "text", text: "Acme replied about the order.",
       automation: { routineId: "routine-Inbox brief", runId: run.id, name: "Inbox brief", trigger: "schedule", executionThreadId: run.threadId, scheduledFor: run.scheduledFor },
@@ -123,8 +125,10 @@ describe("automation reports", () => {
   it("writes nothing, marks nothing and notifies nobody for a run with nothing new", () => {
     const f = fixture();
     const run = f.finished("Checked 14 emails.\nNOTHING NEW");
+    f.store.patchTask(f.bot.id, f.main, { unread: false });
     f.reports.runSettled(run, `turn-${run.id}`);
     expect(f.added()).toEqual([]);
+    expect(f.store.taskByThread(f.bot.id, f.main)?.unread).toBe(false);
     expect(f.runs.get(run.id)!.report).toEqual({ state: "quiet" });
     expect(f.wrote).toEqual([]);
     expect(f.notified).toEqual([]);

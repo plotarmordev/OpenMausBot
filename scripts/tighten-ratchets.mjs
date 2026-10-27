@@ -1,4 +1,3 @@
-#!/usr/bin/env node
 // Lowers the numbers in the two ratchet tests to what the tree has now, so a pull request that shrinks a file never
 // edits those lines. prepare-release.yml runs it on each release.
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
