@@ -133,7 +133,7 @@ describe.skipIf(process.platform === "win32")("deployment controller primitives"
       try {
         restarted = spawn(process.execPath, ["--experimental-strip-types", fileURLToPath(new URL("./index.ts", import.meta.url))], {
           cwd: fileURLToPath(new URL("..", import.meta.url)),
-          env: verificationServerEnvironment({ ...process.env, FAKE_CLAUDE_MODE: "happy" }, dataDir, Number(new URL(url).port)),
+          env: verificationServerEnvironment({ ...process.env, FAKE_CLAUDE_MODE: "slow", FAKE_CLAUDE_SLOW_FINISH_GATE: join(fixture, "finish.gate") }, dataDir, Number(new URL(url).port)),
           stdio: ["ignore", log, log],
         });
       } finally { closeSync(log); }
