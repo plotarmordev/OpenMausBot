@@ -21,7 +21,7 @@ const primary = { instanceId: "opencodeGo", model: "fixture/recovery" };
 const backup = { instanceId: "claude", model: "claude-sonnet-5" };
 const lines = (path: string): Array<{ method?: string }> => existsSync(path) ? readFileSync(path, "utf8").split("\n").filter(Boolean).map(line => JSON.parse(line)) : [];
 
-it.each(["equal-ms-before", "equal-ms-restart", "disabled", "dispatching", "pending", "superseded", "stopped", "stopped-restart",
+it.each(["missing-order-restart", "equal-ms-before", "equal-ms-restart", "disabled", "dispatching", "pending", "superseded", "stopped", "stopped-restart",
   "global-changed", "global-changed-restart", "fallback-changed", "fallback-changed-restart",
   "fallback-reordered", "fallback-reordered-restart", "fallback-removed", "fallback-removed-restart"] as const)("settles %s recovery without replaying the original line", async mode => {
   const equalMs = mode.startsWith("equal-ms");
@@ -100,7 +100,7 @@ it.each(["equal-ms-before", "equal-ms-restart", "disabled", "dispatching", "pend
     const failovers = () => existsSync(join(dataDir, "limit-failovers.json")) ? readFileSync(join(dataDir, "limit-failovers.json"), "utf8") : null;
     const beforeFailovers = failovers();
     const changedPlan = mode.startsWith("global-") || mode.startsWith("fallback-");
-    const cancelled = equalMs || changedPlan || mode === "disabled" || mode === "superseded" || mode === "stopped" || mode === "stopped-restart";
+    const cancelled = mode === "missing-order-restart" || equalMs || changedPlan || mode === "disabled" || mode === "superseded" || mode === "stopped" || mode === "stopped-restart";
     if (changedPlan) {
       if (mode.startsWith("global-")) {
         await api("PATCH", "/api/config", { automaticRecovery: { enabled: true, backup: alternate } });
@@ -113,6 +113,14 @@ it.each(["equal-ms-before", "equal-ms-restart", "disabled", "dispatching", "pend
         await server.stop();
         await server.start();
       }
+      writeFileSync(holderGate, "");
+    } else if (mode === "missing-order-restart") {
+      await server.stop();
+      const db = new DatabaseSync(join(dataDir, "messages.db"));
+      try {
+        db.prepare("UPDATE messages SET input_order = NULL WHERE thread_id = ?").run(threadId);
+      } finally { db.close(); }
+      await server.start();
       writeFileSync(holderGate, "");
     } else if (mode === "disabled") {
       await api("PATCH", "/api/config", { automaticRecovery: { enabled: false, backup } });
