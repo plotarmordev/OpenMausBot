@@ -7,6 +7,7 @@ import { DATA_DIR } from "./config.ts";
 import { closeMessageDb,
   appendMessage,
   hasQueuedInputAfter,
+  reserveInputOrder,
   saveChatFollowup,
   settleChatFollowups,
   deleteThread,
@@ -78,6 +79,16 @@ describe("message-db", () => {
     expect(hasQueuedInputAfter("bot", "bot", "thread", "legacy")).toBe(true);
     expect(hasQueuedInputAfter("bot", "bot", "thread", "missing")).toBe(true);
     expect(hasQueuedInputAfter("bot", "bot", "thread", undefined)).toBe(true);
+  });
+
+  it("persists ordering proof for coordinated work without a user line", () => {
+    const order = reserveInputOrder();
+    closeMessageDb();
+    expect(hasQueuedInputAfter("bot", "bot", "thread", undefined, order)).toBe(false);
+    saveChatFollowup({ id: "newer", kind: "bot", ownerId: "bot", threadId: "thread", payload: { text: "newer" } });
+    closeMessageDb();
+    expect(hasQueuedInputAfter("bot", "bot", "thread", undefined, order)).toBe(true);
+    expect(hasQueuedInputAfter("bot", "bot", "thread", "missing", order)).toBe(true);
   });
 
   it("persists inserts, updates, and the active leaf across a reopen", () => {

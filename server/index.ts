@@ -241,7 +241,7 @@ import { createOneOnOneGoals } from "./host/one-on-one-goals.ts";
 
 import { BUILT_IN_DRIVERS } from "./drivers/builtIn.ts";
 import { openCodeProviderKeysAllowed, setOpenCodeProviderKeyPolicy } from "./drivers/acp/opencode-go.ts";
-import { readMessageText, recallMessages, recentMessages, closeMessageSearch, closeMessageDb, chatFollowups, hasQueuedInputAfter, cancelledChatFollowup, settleChatFollowups, threadsReferencing, logNotification, lastRowAt } from "./message-db.ts";
+import { readMessageText, recallMessages, recentMessages, closeMessageSearch, closeMessageDb, chatFollowups, hasQueuedInputAfter, reserveInputOrder, cancelledChatFollowup, settleChatFollowups, threadsReferencing, logNotification, lastRowAt } from "./message-db.ts";
 import { briefCrossingLabel, claimRecallCrossings, recallCrossingLabel } from "./recall-disclosure.ts";
 import { parseSince, parseUntil, recentWork, recentWorkPrompt, turnOutcomeLine } from "./recent-work.ts";
 import { chiefEscalationsEnabled, NEEDS_INPUT_GATE, peerApprovalGate, RAISED_GATE } from "./escalations.ts";
@@ -7426,7 +7426,7 @@ function drainQueuedSendsNow() {
       const stale = cfg.automaticRecovery?.enabled !== true || !current || !store.taskByThread(botId, threadId)?.cwd ||
         directRequestOwners.get(threadId)?.stopped ||
         latestInput?.id !== recovery.recoveryUserMessageId || latestInput?.requestCancelled ||
-        hasQueuedInputAfter("bot", botId, threadId, recovery.recoveryUserMessageId) ||
+        hasQueuedInputAfter("bot", botId, threadId, recovery.recoveryUserMessageId, recovery.coordinatedInputOrder) ||
         JSON.stringify(current.modelSelection) !== JSON.stringify(recovery.from) ||
         JSON.stringify(plan) !== JSON.stringify(recovery.plan) ||
         !checked?.ok || JSON.stringify(checked.selection) !== JSON.stringify(recovery.selection) ||
@@ -8014,6 +8014,7 @@ async function startTurn(
   const recoveryUserMessageId = opts?.coordination
     ? store.activePath(threadId).findLast(m => m.role === "user" && m.kind === "text")?.id
     : userMessage.id;
+  const coordinatedInputOrder = opts?.coordination && !recoveryUserMessageId ? reserveInputOrder() : undefined;
   if (opts?.trigger) turnTriggers.set(threadId, opts.trigger);
   if (!opts?.cardContinuation) {
     if (commsDepth === 0 && opts?.automationSource === undefined && !opts?.unattended && !userMessage.peerAsk) {
@@ -8862,7 +8863,7 @@ async function startTurn(
         (candidate.instanceId !== instanceId || candidate.model !== model));
       const backup = backups[nextIndex];
       if (mayRecover && backup && current && (!opts?.cardContinuation || opts.coordination) &&
-          !directRequestOwners.get(threadId)?.stopped && !hasQueuedInputAfter("bot", bot.id, threadId, recoveryUserMessageId) &&
+          !directRequestOwners.get(threadId)?.stopped && !hasQueuedInputAfter("bot", bot.id, threadId, recoveryUserMessageId, coordinatedInputOrder) &&
           JSON.stringify(current.modelSelection) === JSON.stringify(bot.modelSelection) &&
           (backup.instanceId !== instanceId || backup.model !== model) &&
           store.activePath(threadId).findLast(m => m.role === "user" && m.kind === "text")?.id === recoveryUserMessageId) {
@@ -8881,7 +8882,7 @@ async function startTurn(
             assertWithinBudget(cfg, DATA_DIR);
             const { coordination, onSettled, onTurnSettled, onDispatchError, recovery: _recovery, ...serializable } = opts ?? {};
             const recovery: QueuedAutomaticRecovery = {
-              selection: checked.selection, plan, from: current.modelSelection, userMessage, recoveryUserMessageId,
+              selection: checked.selection, plan, from: current.modelSelection, userMessage, recoveryUserMessageId, coordinatedInputOrder,
               generation: dispatchClaimId,
               activity: e instanceof TurnUsageLimitRefusedError ? `recovery: ${failoverLine(engineName(instanceId), engineName(target.instanceId), e.resetsAt)}` : `recovery: Automatic recovery: ${instance.displayName || instance.driverKind} ${e instanceof TurnAuthenticationRefusedError ? "is signed out" : "could not start"}. Trying ${target.displayName || target.driverKind} · ${checked.selection.model} once in this thread.`,
               ...(e instanceof TurnUsageLimitRefusedError ? { limit: { resetsAt: e.resetsAt ?? null } } : {}),

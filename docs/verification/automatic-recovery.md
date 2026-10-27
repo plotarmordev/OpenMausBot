@@ -28,8 +28,9 @@ checks the selected step's index and the source selection.
 It checks the original line's persisted cancellation and newer pending input
 in the durable queue. User-line appends and queue admissions share a transactional
 SQLite sequence, so equal millisecond timestamps retain their strict admission
-order across restart. Older queued input does not supersede a newer original
-line. Saved lines or pending input without ordering proof fail closed: recovery
+order across restart. Coordinated work without a user line reserves its sequence
+at admission and carries it in the durable recovery payload. Older queued input
+does not supersede a newer original line. Saved lines or pending input without ordering proof fail closed: recovery
 settles without backup work. Stop remains effective across restart; a newer queued
 message supersedes recovery without being replayed or reordered. Disabling recovery while it waits settles the item
 without selecting the backup or recording a recovery switch.

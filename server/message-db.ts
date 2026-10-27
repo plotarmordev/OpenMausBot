@@ -385,13 +385,18 @@ export function chatFollowups(kind?: ChatFollowup["kind"]): ChatFollowup[] {
     status: row.status, payload: JSON.parse(row.payload) as FollowupPayload }));
 }
 
-export function hasQueuedInputAfter(kind: ChatFollowup["kind"], ownerId: string, threadId: string, messageId: string | undefined): boolean {
-  if (!messageId) return true;
-  const original = db().prepare("SELECT input_order FROM messages WHERE thread_id = ? AND id = ?").get(threadId, messageId);
-  if (original?.input_order == null) return true;
+export function reserveInputOrder(): number {
+  return transaction(database => Number(database.prepare("UPDATE input_order SET value = value + 1 WHERE id = 1 RETURNING value").get()!.value));
+}
+
+export function hasQueuedInputAfter(kind: ChatFollowup["kind"], ownerId: string, threadId: string, messageId: string | undefined, coordinatedInputOrder?: number): boolean {
+  const order = messageId
+    ? db().prepare("SELECT input_order FROM messages WHERE thread_id = ? AND id = ?").get(threadId, messageId)?.input_order
+    : coordinatedInputOrder;
+  if (order == null) return true;
   return Boolean(db().prepare(
     "SELECT 1 FROM chat_followups WHERE kind = ? AND owner_id = ? AND thread_id = ? AND status = 'pending' AND (input_order IS NULL OR input_order > ?) AND json_extract(payload, '$.recovery') IS NULL LIMIT 1",
-  ).get(kind, ownerId, threadId, original.input_order));
+  ).get(kind, ownerId, threadId, order));
 }
 
 export function cancelledChatFollowup(kind: ChatFollowup["kind"], ownerId: string, threadId: string, sendId: string): boolean {

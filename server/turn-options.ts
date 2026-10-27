@@ -45,6 +45,7 @@ export interface QueuedAutomaticRecovery {
   from: ModelSelection;
   userMessage: Message;
   recoveryUserMessageId: string | undefined;
+  coordinatedInputOrder?: number;
   activity: string;
   limit?: { resetsAt: number | null };
   generation: string;
