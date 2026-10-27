@@ -542,6 +542,17 @@ export function workingGoalRunMessages(): Array<{ threadId: string; message: Mes
   return rows.map((row) => ({ threadId: row.thread_id, message: JSON.parse(row.json) as Message }));
 }
 
+/** First-reply rescue rows that never settled or ended: at boot, every one of them belongs to a turn that is gone. */
+export function openRescueMessages(): Array<{ threadId: string; message: Message }> {
+  const rows = db()
+    .prepare(
+      "SELECT thread_id, json FROM messages WHERE kind = 'activity' AND json_extract(json, '$.tool.rescue') IS NOT NULL " +
+      "AND json_extract(json, '$.tool.rescue.settled') IS NULL AND json_extract(json, '$.tool.rescue.over') IS NULL",
+    )
+    .all() as Array<{ thread_id: string; json: string }>;
+  return rows.map((row) => ({ threadId: row.thread_id, message: JSON.parse(row.json) as Message }));
+}
+
 const MULTI_EXECUTE_INPUT = "CASE WHEN json_extract(json, '$.tool.name') LIKE '%MULTI\\_EXECUTE%' ESCAPE '\\' THEN json_extract(json, '$.tool.input') END AS input";
 
 /** One tool call or turn summary in a time window, with only the fields the Today page reads. JSON booleans read as 1 or 0. */

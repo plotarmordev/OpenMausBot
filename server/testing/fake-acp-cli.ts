@@ -54,6 +54,8 @@
 //   FAKE_ACP_IGNORE_CANCEL=1  session/cancel is ignored: a hanging prompt keeps running
 //   FAKE_ACP_TOOL_LIMIT  session/prompt lists the session's MCP tools and refuses, as OpenCode Zen does, past this many;
 //     under it the reply is "tools: <server>=<count>,…"
+//   FAKE_ACP_CANCEL_STOP_REASON  the stopReason a cancelled hanging prompt answers (default cancelled; OpenCode answers end_turn)
+//   FAKE_ACP_HANG_ONCE_FILE  with FAKE_ACP_HANG_ON, only the first matching prompt hangs; it writes this file
 import { AsyncLocalStorage } from "node:async_hooks";
 import { spawn } from "node:child_process";
 import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
@@ -568,7 +570,10 @@ function handle(msg: any) {
   if (msg.id !== undefined && (msg.result !== undefined || msg.error !== undefined) && msg.id === pendingAskQuestionId) {
     pendingAskQuestionId = null;
     if (process.env.FAKE_ACP_ASK_ANSWER) {
-      writeFileSync(process.env.FAKE_ACP_ASK_ANSWER, JSON.stringify(msg.error !== undefined ? { error: msg.error } : { result: msg.result }));
+      // Written aside and renamed in, so a test that sees the file never reads it half-written.
+      const partial = `${process.env.FAKE_ACP_ASK_ANSWER}.partial`;
+      writeFileSync(partial, JSON.stringify(msg.error !== undefined ? { error: msg.error } : { result: msg.result }));
+      renameSync(partial, process.env.FAKE_ACP_ASK_ANSWER);
     }
     onAskQuestionAnswered?.();
     return;
@@ -850,7 +855,10 @@ function handle(msg: any) {
         return;
       }
       const fullPrompt = (Array.isArray(msg.params?.prompt) ? msg.params.prompt : []).map((block: any) => block?.text ?? "").join("");
-      if (mode === "hang" || (process.env.FAKE_ACP_HANG_ON && fullPrompt.includes(process.env.FAKE_ACP_HANG_ON))) {
+      const hangOn = process.env.FAKE_ACP_HANG_ON, hangOnce = process.env.FAKE_ACP_HANG_ONCE_FILE;
+      const held = Boolean(hangOn) && fullPrompt.includes(hangOn!) && !(hangOnce && existsSync(hangOnce));
+      if (held && hangOnce) writeFileSync(hangOnce, String(Date.now()));
+      if (mode === "hang" || held) {
         hangingPromptId = msg.id;
         hangKeepAlive = setInterval(() => {}, 1_000);
         return;
@@ -1318,7 +1326,7 @@ function handle(msg: any) {
     }
     case "session/cancel":
       if (hangingPromptId !== null && process.env.FAKE_ACP_IGNORE_CANCEL !== "1") {
-        result(hangingPromptId, { stopReason: "cancelled", _meta: {} });
+        result(hangingPromptId, { stopReason: process.env.FAKE_ACP_CANCEL_STOP_REASON ?? "cancelled", _meta: {} });
         if (hangKeepAlive) clearInterval(hangKeepAlive);
         hangingPromptId = null;
         hangKeepAlive = null;

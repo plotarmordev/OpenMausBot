@@ -319,7 +319,7 @@ function appliedText(r: Json, done: string): ToolCallResult {
   const attention = r.settlementPending && typeof r.message === "string" ? `\n\nNeeds attention: ${r.message}`
     : jsonRecord(r.result) && typeof r.result.message === "string" ? `\n\nNeeds attention: ${r.result.message}` : "";
   return {
-    text: `${done}${id ? ` (trigger id ${id})` : ""}. It applied at once; the person sees it on a card with Edit, Pause and Undo.${summary}${detail}${attention}${addressText(r)}\n\nDo not ask for confirmation. Tell the person in one sentence what will happen.`,
+    text: `${done}${id ? ` (trigger id ${id})` : ""}. It applied at once; the person sees it right here in the chat, with Pause, Edit and Undo.${summary}${detail}${attention}${addressText(r)}\n\nDo not ask for confirmation. Tell the person in one sentence what will happen.`,
   };
 }
 

@@ -5,6 +5,7 @@ import { ArrowDown, ArrowUp, Check, Copy, Download, Maximize2, Search, WrapText,
 import { isTableNumber, tableCsv, tableRowOrder, type TableSort } from "@/lib/table-data";
 import { t } from "@/lib/i18n";
 import { copyText } from "@/lib/copy-text";
+import { columnMinimums, fitsColumns } from "@/lib/table-fit";
 
 export interface TableCell { text: string; content?: ReactNode; align?: TableAlign; vAlign?: "top" | "middle" | "bottom" }
 export type TableAlign = "left" | "center" | "right" | "start" | "end";
@@ -79,7 +80,7 @@ export function RichTable({ columns, rows, name = t("table.title"), expanded = f
         {!large && <button type="button" className="table-action" aria-label={t("table.expand")} title={t("table.expand")} onClick={(event) => { trigger.current = event.currentTarget; setOpen(true); }}><Maximize2 size={14} /></button>}
     </>;
     return (
-    <div className="rich-table min-w-0 max-w-full overflow-hidden rounded-xl border border-hairline/50 bg-panel text-ink" dir="ltr">
+    <div className="rich-table w-fit min-w-[min(100%,var(--chat-prose-max))] max-w-full overflow-hidden rounded-xl border border-hairline/50 bg-panel text-ink" dir="ltr">
       {!small && <div className="flex flex-wrap items-center gap-1 border-b border-hairline/40 px-2 py-1.5">
         <label className="flex min-w-24 flex-1 items-center gap-2 px-1 text-ink-secondary">
           <Search size={13} aria-hidden="true" />
@@ -100,7 +101,7 @@ export function RichTable({ columns, rows, name = t("table.title"), expanded = f
     </div>
     );
   };
-  return <><div hidden={open}>{surface(expanded)}</div>{open && <TableDialog title={name} returnFocus={trigger.current} onClose={() => setOpen(false)}>{surface(true)}</TableDialog>}</>;
+  return <><div hidden={open} className="chat-table">{surface(expanded)}</div>{open && <TableDialog title={name} returnFocus={trigger.current} onClose={() => setOpen(false)}>{surface(true)}</TableDialog>}</>;
 }
 
 function TableViewport({ columns, rows, order, name, wrap, large, sort, onSort, direction, headless = false }: RichTableProps & {
@@ -116,6 +117,16 @@ function TableViewport({ columns, rows, order, name, wrap, large, sort, onSort, 
     return () => observer.disconnect();
   }, []);
   const virtual = order.length > 80;
+  const minimums = useMemo(() => columnMinimums(columns.map((column) => column.text), rows.map((row) => row.map((cell) => cell.text))), [columns, rows]);
+  const [available, setAvailable] = useState<number | null>(null);
+  useEffect(() => {
+    const element = scroll.current;
+    if (!element || typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(() => setAvailable(element.clientWidth || null));
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, []);
+  const fit = fitsColumns({ wrap, virtual, minimums, available });
   const widths = useMemo(() => columns.map((column, index) => column.width ?? Math.min(320, Math.max(140,
     Math.max(column.text.length, ...rows.slice(0, 100).map((row) => Math.min(40, row[index]?.text.length ?? 0))) * 7 + 40,
   ))), [columns, rows]);
@@ -132,15 +143,15 @@ function TableViewport({ columns, rows, order, name, wrap, large, sort, onSort, 
   const after = virtual && items.length ? Math.max(0, virtualizer.getTotalSize() - items.at(-1)!.end + headingHeight) : 0;
   const alignment = (column: TableColumn, index: number) => column.align ?? (numeric[index] || direction === "rtl" ? "right" : "left");
   return <div ref={scroll} tabIndex={0} role="region" aria-label={name} className="overflow-auto overscroll-x-contain focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent/60"
-    style={{ maxHeight: large ? "65dvh" : 400 }}>
-    <table dir={direction} aria-label={name} aria-rowcount={order.length + 1} className="w-full table-fixed border-separate border-spacing-0 text-[14px]" style={{ minWidth: widths.reduce((a, b) => a + b, 0) }}>
-      <colgroup>{widths.map((width, index) => <col key={index} style={{ width }} />)}</colgroup>
+    style={{ maxHeight: large ? "65dvh" : virtual || !wrap ? 400 : undefined }} data-fit={fit || undefined}>
+    <table dir={direction} aria-label={name} aria-rowcount={order.length + 1} className={`w-full ${fit ? "table-auto" : "table-fixed"} border-separate border-spacing-0 text-[14px]`} style={fit ? undefined : { minWidth: widths.reduce((a, b) => a + b, 0) }}>
+      {!fit && <colgroup>{widths.map((width, index) => <col key={index} style={{ width }} />)}</colgroup>}
       <thead ref={heading} hidden={headless} className="sticky top-0 z-10 bg-raised"><tr aria-rowindex={1}>
         {columns.map((column, index) => <th key={index} scope="col" aria-sort={sort?.column === index ? sort.descending ? "descending" : "ascending" : "none"}
           className="h-10 border-b border-hairline/60 px-3 py-2 font-medium" style={{ textAlign: alignment(column, index) }}>
-          <div className="flex items-center gap-1">
-            <span dir="auto" className="min-w-0 flex-1 break-words">{column.content ?? (column.text || t("table.column", { number: index + 1 }))}</span>
-            <button type="button" className="table-action shrink-0" aria-label={t("table.sort", { column: column.text || index + 1 })} title={t("table.sort", { column: column.text || index + 1 })} onClick={() => onSort(index)}>
+          <div className="break-words [overflow-wrap:anywhere]" style={fit ? { minWidth: minimums[index] } : undefined}>
+            <span dir="auto">{column.content ?? (column.text || t("table.column", { number: index + 1 }))}</span>
+            <button type="button" className="table-action ms-1 inline-flex align-middle" aria-label={t("table.sort", { column: column.text || index + 1 })} title={t("table.sort", { column: column.text || index + 1 })} onClick={() => onSort(index)}>
               {sort?.column === index && sort.descending ? <ArrowDown size={12} /> : <ArrowUp size={12} className={sort?.column === index ? "" : "opacity-35"} />}
             </button>
           </div>

@@ -152,6 +152,7 @@ export function LmStudioServer() {
         displayName: "LM Studio",
         url,
         key: token.trim() || LM_STUDIO_PLACEHOLDER_KEY,
+        catalog: "lmstudio",
       }),
     }).then(
       async (created) => {

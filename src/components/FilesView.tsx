@@ -35,7 +35,12 @@ export function refusalText(refusal: string, listed = false): string {
   return t(listed && refusal === "not-a-folder" ? "files.refusal.notAFolderListed" : REFUSAL[refusal] ?? "files.refusal.other");
 }
 
-export function folderStatus(folder: SharedFolder): string {
+/** A bot's change that met one of the person's is said for a week: theirs kept, the bot's beside it. */
+const KEPT_SHOWN_MS = 7 * 24 * 60 * 60_000;
+
+export function folderStatus(folder: SharedFolder, now = Date.now()): string {
+  const kept = folder.kept?.[0];
+  if (kept && now - kept.at < KEPT_SHOWN_MS && (folder.status === "synced" || folder.status === "copying")) return t("files.status.keptBoth", { file: kept.path, copy: kept.beside });
   if (folder.status === "copying") return t("files.status.copying", { done: count(folder.done), files: count(folder.files) });
   if (folder.status === "confirm-deletes") return t(folder.pendingDeletes === 1 ? "files.status.deletesOne" : "files.status.deletes", { count: count(folder.pendingDeletes) });
   if (folder.status === "problem") return folder.problem || t("files.status.problem");

@@ -473,5 +473,48 @@
       "find_tool",
       "use_tool"
     ]
+  },
+  "default+mausbot": {
+    "bytes": 16273,
+    "sha256": "6e513a277ef32da710ba166c2f371b095cf490bf7441be64028ba249c698d52e",
+    "tools": [
+      "tool_result_read",
+      "list_room_targets",
+      "coordinate_bots",
+      "list_bots",
+      "list_rooms",
+      "select_computer",
+      "attach_file",
+      "publish_page",
+      "post_to_room",
+      "request_credential",
+      "request_sign_in",
+      "fill_login",
+      "memory_update",
+      "find_tool",
+      "use_tool"
+    ]
+  },
+  "skills+shared+voice+mausbot": {
+    "bytes": 17152,
+    "sha256": "25033519fb47a4b22d20b8a87fdfcc659acbccec3cc3f05f20afb0ed01a2e5f8",
+    "tools": [
+      "tool_result_read",
+      "list_room_targets",
+      "coordinate_bots",
+      "list_bots",
+      "list_rooms",
+      "select_computer",
+      "attach_file",
+      "publish_page",
+      "post_to_room",
+      "request_credential",
+      "request_sign_in",
+      "fill_login",
+      "send_voice_note",
+      "memory_update",
+      "find_tool",
+      "use_tool"
+    ]
   }
 }

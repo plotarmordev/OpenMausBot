@@ -47,7 +47,8 @@ export interface OpenAICompatConfig {
   tools?: boolean;
   url: string;
   apiKeyEnv: string;
-  catalog?: "openai";
+  /** Which model list the server serves besides /models: OpenAI's own, or LM Studio's native /api/v1/models. */
+  catalog?: "openai" | "lmstudio";
   key?: string;
   model?: string;
   provider?: string;
@@ -94,7 +95,7 @@ function decodeConfig(raw: unknown): OpenAICompatConfig {
   if (config.tools !== undefined && typeof config.tools !== "boolean") throw new Error("tools must be a boolean");
   if (config.managedModels !== undefined && (!Array.isArray(config.managedModels) || !config.managedModels.length || config.managedModels.some(model => typeof model !== "string" || !model.trim()))) throw new Error("Invalid managed models.");
   const ownKey = typeof config.apiKeyEnv === "string" && OWN_KEY_ENVS.has(config.apiKeyEnv);
-  if (config.catalog !== undefined && config.catalog !== "openai") throw new Error("catalog must be \"openai\"");
+  if (config.catalog !== undefined && config.catalog !== "openai" && config.catalog !== "lmstudio") throw new Error("catalog must be \"openai\" or \"lmstudio\"");
   const envUrl = ownKey ? undefined : process.env.OPENAI_COMPAT_URL;
   return {
     ...(config.tools !== undefined ? { tools: config.tools as boolean } : {}),
@@ -104,7 +105,7 @@ function decodeConfig(raw: unknown): OpenAICompatConfig {
     apiKeyEnv: typeof config.apiKeyEnv === "string" && config.apiKeyEnv
       ? config.apiKeyEnv
       : DEFAULT_KEY_ENV,
-    ...(config.catalog === "openai" ? { catalog: "openai" as const } : {}),
+    ...(config.catalog === "openai" || config.catalog === "lmstudio" ? { catalog: config.catalog } : {}),
     key: typeof config.key === "string" && config.key ? config.key : undefined,
     model: typeof config.model === "string" && config.model
       ? config.model
@@ -164,7 +165,8 @@ export const OpenAICompatDriver: ProviderDriver<OpenAICompatConfig> = {
       if (config.managedModels) return;
       if (!apiKey) return;
       try {
-        const nativeUrl = loopbackLmStudioV1Url(config.url);
+        // Only a server added as LM Studio: any other local server would get a request it never serves.
+        const nativeUrl = config.catalog === "lmstudio" ? loopbackLmStudioV1Url(config.url) : null;
         if (nativeUrl) {
           try {
             const native = await fetch(nativeUrl, {

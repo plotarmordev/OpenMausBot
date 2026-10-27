@@ -56,6 +56,7 @@ import { showWorkingDots } from "@/lib/turn-tail";
 import { lastNonReceipt } from "@/lib/receipts";
 import { turnNowPhrases } from "@/lib/live-activity"; import { useTurnLive } from "@/state/turn-status";
 import { ChatMarkdown } from "./ChatMarkdown";
+import { liveToolIds } from "@/lib/tool-liveness";
 import { VoiceNoteBubble, type VoiceNoteAttachment } from "./VoiceNoteBubble";
 import { RawMarkdownView, RawToggleAction } from "./RawMarkdownToggle";
 import { ThreadChip } from "./ThreadChip";
@@ -121,7 +122,7 @@ import { EmptyChat } from "./ChatEmptyState";
 import { PinnedBanner } from "./ChatPinnedBanner";
 import { highlightCitationSource } from "@/lib/citations-dom";
 import { useCanWriteIn, useReactor } from "@/lib/cloud-guest";
-import { isFormattedReply } from "@/lib/formatted-reply";
+import { formattedReplyWidth, isFormattedReply } from "@/lib/formatted-reply";
 import { otherSpeaker } from "@/lib/own-profile";
 import { latestFailure, latestReply, type TranscriptSnapshot } from "@/lib/transcript-announcer";
 import { pendingApprovals } from "./PendingApproval";
@@ -133,15 +134,9 @@ const USER_COLLAPSE_LINES = 8;
 export const SIMPLE_BUBBLE = "rounded-[23px] font-normal";
 
 interface ChatRows {
-  botId: string;
-  threadId: string;
-  botName: string;
-  voiceId?: string;
-  tts: ConfigStatus["tts"];
-  localVoice: boolean;
-  busy: boolean;
-  hasMore: boolean;
-  bots: readonly Bot[];
+  botId: string; threadId: string; botName: string; voiceId?: string;
+  tts: ConfigStatus["tts"]; localVoice: boolean; busy: boolean; liveTools: ReadonlySet<string>;
+  hasMore: boolean; bots: readonly Bot[];
   mentionPeers: readonly MentionPeer[]; mentionPerson: { profileName?: string };
   /** On a Team Cloud, the viewer's person key: another person's line carries their name. */
   speakerViewer?: string | null;
@@ -502,7 +497,7 @@ const Bubble = memo(function Bubble({
                 : user
                   ? cn("bg-bubble-user px-4 py-2.5 whitespace-pre-wrap text-ink", bubbleStyle && "user-bubble-colored", simple && cn(SIMPLE_BUBBLE, bubbleStyle && "antialiased"))
                   : formatted
-                    ? "w-full max-w-[min(var(--chat-prose-max),var(--chat-card-pct))] px-1 text-ink"
+                    ? cn(formattedReplyWidth(text), "px-1 text-ink")
                     : cn("bg-card px-4 py-2.5 text-ink", simple && SIMPLE_BUBBLE),
           )}
           style={user && !webhookView && !attachmentsOnly ? bubbleStyle : undefined}
@@ -673,7 +668,7 @@ function PeerLabel({ peer }: { peer: PeerLine }) {
 }
 
 const ActivityChip = memo(function ActivityChip({ message, place = "auto" }: { message: Message; place?: EffectivePlace }) {
-  const { bots, dispatch } = useChatRows();
+  const { bots, dispatch, liveTools } = useChatRows();
   const tool = message.tool;
   if (!tool) return null;
   if (message.threadRef) return <ThreadChip message={message} />; if (message.relay) return <TeammateChip message={message} />;
@@ -682,7 +677,7 @@ const ActivityChip = memo(function ActivityChip({ message, place = "auto" }: { m
     return <HandoffChip message={message} bots={bots} title={t("chat.openConversationWith", { name: comm.withName })}
       onClick={() => dispatch({ type: "select", id: comm.groupId })} />;
   }
-  return <ToolActivity tool={tool} place={toolPlace(tool.name, place)} />;
+  return <ToolActivity tool={tool} live={liveTools.has(message.id)} place={toolPlace(tool.name, place)} />;
 });
 
 const MessagesList = memo(function MessagesList({
@@ -747,46 +742,17 @@ const MessagesList = memo(function MessagesList({
         const first = item.kind === "message" ? item.message : item.messages[0];
         const newDay = !prev || localDay(prev.at) !== localDay(first.at);
         const divider = dividerAbove(item.kind === "message" ? [item.message] : item.messages);
-        if (item.kind === "turn") {
-          return (
-            <div key={item.id} className="contents">
-              {newDay && <DaySeparator at={first.at} today={today} />}
-              {divider}
-              <TurnNarrationRun
-                label={item.label}
-                forceOpen={item.messages.some((message) => message.id === focusedId)}
-              >
-                {item.messages.map((message) => (
-                  <div key={message.id} className="contents" data-mid={message.id}>
-                    <Bubble
-                      message={message}
-                      editing={false}
-                      pinned={message.id === pinnedMessageId}
-                      onStartEdit={onStartEdit}
-                      onCancelEdit={onCancelEdit}
-                      onSubmitEdit={onSubmitEdit}
-                      replyTarget={lookups.replyTarget(message)}
-                      onReply={onReply}
-                    />
-                  </div>
-                ))}
-              </TurnNarrationRun>
-            </div>
-          );
-        }
-        if (item.kind === "run") {
+        if (item.kind === "turn" || item.kind === "run") {
           if (!showToolCalls) return divider && <div key={item.id} className="contents">{divider}</div>;
+          const forceOpen = item.messages.some((step) => step.id === focusedId);
+          const steps = item.messages.map((step) => <div key={step.id} className="contents" data-mid={step.id}><ActivityChip message={step} place={place} /></div>);
           return (
             <div key={item.id} className="contents">
               {newDay && <DaySeparator at={first.at} today={today} />}
               {divider}
-              <ActivityRun messages={item.messages} forceOpen={item.messages.some((step) => step.id === focusedId)}>
-                {item.messages.map((step) => (
-                  <div key={step.id} className="contents" data-mid={step.id}>
-                    <ActivityChip message={step} place={place} />
-                  </div>
-                ))}
-              </ActivityRun>
+              {item.kind === "turn"
+                ? <TurnNarrationRun label={item.label} title={t("chat.run.showSteps")} forceOpen={forceOpen}>{steps}</TurnNarrationRun>
+                : <ActivityRun messages={item.messages} forceOpen={forceOpen}>{steps}</ActivityRun>}
             </div>
           );
         }
@@ -795,7 +761,7 @@ const MessagesList = memo(function MessagesList({
           if (isCancelledTranscriptRow(m)) {
             return (
               <CancelledTurnRow
-                onRetry={m.id === lookups.retryableId && canRetryLast ? onRegenerate : undefined}
+                onRetry={m.id === lookups.retryableId && canRetryLast ? onRegenerate : undefined} name={m.tool?.name}
               />
             );
           }
@@ -915,13 +881,14 @@ export function ChatView({ bot: profile }: { bot: Bot }) {
   const { messages: allMessages, activeLeafId } = bot;
   const messages = useMemo(() => visibleMessages({ messages: allMessages, activeLeafId }), [allMessages, activeLeafId]);
   const lookups = useMemo(() => transcriptLookups(allMessages, messages), [allMessages, messages]);
-  const recordedRun = useMemo(() => runSteps(messages), [messages]);
+  const liveTools = useMemo(() => liveToolIds(messages, bot), [messages, bot.busy, bot.turnStartedAt]);
+  const recordedRun = useMemo(() => runSteps(messages, liveTools), [messages, liveTools]);
   const recordedRunCounts = runSummary(recordedRun);
   const engineSupportsAgents = Boolean(
     state.instances.find((instance) => instance.instanceId === bot.modelSelection.instanceId)?.capabilities?.agentsMcp,
   );
   const canSaveRun =
-    skillAuthoringEnabled(state.config) && engineSupportsAgents && recordedRunCounts.passed > 0 && recordedRunCounts.running === 0 && !bot.busy;
+    skillAuthoringEnabled(state.config) && engineSupportsAgents && recordedRunCounts.passed > 0 && recordedRunCounts.running === 0 && recordedRunCounts.unverified === 0 && !bot.busy;
   const [runDismissed, setRunDismissed] = useState<ReadonlyMap<string, string>>(() => new Map());
   const lastRunStep = recordedRun.at(-1);
   const showRunCard = useShowRunCard();
@@ -972,8 +939,8 @@ export function ChatView({ bot: profile }: { bot: Bot }) {
   const reactor = useReactor();
   const speakerViewer = state.config?.team && reactor !== "user" ? reactor : null;
   const rows = useMemo<ChatRows>(
-    () => ({ botId: bot.id, threadId: bot.threadId, botName: bot.name, voiceId: bot.voice, tts, localVoice, busy, hasMore, bots, mentionPeers, mentionPerson: { profileName: state.config?.profile?.name }, focus, showToolCalls, locale, dispatch, onBranch, bubbleStyle, conversational: isConversational(bot.replyStyle), simple: !advanced, canReact: canWrite !== false, openedAt, speakerViewer }),
-    [bot.id, bot.threadId, bot.name, bot.voice, tts, localVoice, busy, hasMore, bots, mentionPeers, state.config?.profile?.name, focus, showToolCalls, locale, dispatch, onBranch, bubbleStyle, bot.replyStyle, advanced, canWrite, openedAt, speakerViewer],
+    () => ({ botId: bot.id, threadId: bot.threadId, botName: bot.name, voiceId: bot.voice, tts, localVoice, busy, liveTools, hasMore, bots, mentionPeers, mentionPerson: { profileName: state.config?.profile?.name }, focus, showToolCalls, locale, dispatch, onBranch, bubbleStyle, conversational: isConversational(bot.replyStyle), simple: !advanced, canReact: canWrite !== false, openedAt, speakerViewer }),
+    [bot.id, bot.threadId, bot.name, bot.voice, tts, localVoice, busy, liveTools, hasMore, bots, mentionPeers, state.config?.profile?.name, focus, showToolCalls, locale, dispatch, onBranch, bubbleStyle, bot.replyStyle, advanced, canWrite, openedAt, speakerViewer],
   );
   const currentTask = bot.tasks?.find((task) => task.threadId === bot.threadId), place = effectivePlace(bot, currentTask), team = state.config?.team, privateChat = Boolean(team) && currentTask?.private === true, sharedChat = Boolean(team) && !privateChat;
 

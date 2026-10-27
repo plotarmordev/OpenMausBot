@@ -20,7 +20,7 @@ import { runAcpOneShot } from "./background-text.ts";
 import { sanitizeAcpToolMessage } from "./tool-log.ts";
 import { stripLeakedSystemHarnessMessages } from "../../../shared/system-message-guard.ts";
 import {
-  classifyQuiet, describeQuiet, formatQuietLimit, lastSeenPhrase, LogTail, promptIdleTimeoutMs, quietKey, sampleProcessTree,
+  classifyQuiet, DEFAULT_QUIET_NOTICE_MS, describeQuiet, formatQuietLimit, lastSeenPhrase, LogTail, promptIdleTimeoutMs, quietKey, sampleProcessTree,
   type LogSignal, type ProcessSample, type QuietState,
 } from "./quiet-status.ts";
 import { readSessionReport } from "./session-reports.ts";
@@ -145,8 +145,8 @@ export interface AcpSupport {
   /** The approval mode is applied per turn by configureSession, which must throw unless the runtime
    * confirms it; an approval change never respawns the process. */
   sessionScopedApproval?: boolean;
-  /** False when this engine cannot run memory upkeep's one-shot text call cleanly. */
-  backgroundText?: false;
+  /** False when this engine cannot run memory upkeep's one-shot text call cleanly; oneShotFolder holds a one-shot's folder. */
+  backgroundText?: false; oneShotFolder?(): Promise<string>;
   /** Mutate the child env in place. `instanceEnvironment` tells a key put there on purpose from one
    *  riding along in the server's own env. */
   transformEnv?(
@@ -525,9 +525,8 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         createdAt: new Date().toISOString(),
       });
 
-
       const startQuietWatch = (threadId: string, session: AcpSession, current: AcpTurn) => {
-        const noticeAfterMs = envOr("OMB_ACP_QUIET_NOTICE_MS", 60_000);
+        const noticeAfterMs = envOr("OMB_ACP_QUIET_NOTICE_MS", DEFAULT_QUIET_NOTICE_MS);
         const tickMs = envOr("OMB_ACP_QUIET_TICK_MS", 15_000);
         const logPath = support.statusLog && session.sessionId
           ? support.statusLog.path(session.env, session.sessionId)
@@ -613,17 +612,17 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         session.current = null;
         active.delete(threadId);
         current.flushAssistantText();
-      // `end_turn` with nothing to show is a lost turn: a provider may cut a reasoning-only stream
-      // and still answer end_turn.
         let finalOk = ok;
         let finalStopReason = stopReason;
-        if (finalOk && finalStopReason === null && !current.state.producedItem) {
-          finalOk = false;
-          finalStopReason = "empty_turn";
+        // A Stop the agent answers with end_turn (OpenCode does) is the person's stop. Otherwise `end_turn` with
+        // nothing to show is a lost turn: a provider may cut a reasoning-only stream and still answer end_turn.
+        if (finalOk && finalStopReason === null && current.state.stopped) finalStopReason = "cancelled";
+        else if (finalOk && finalStopReason === null && !current.state.producedItem) {
+          finalOk = false; finalStopReason = "empty_turn";
           emit({
             ...base(threadId, current.turnId),
             type: "runtime.error",
-            message: `${DRIVER_KIND} ended the turn with no reply, image, or tool result`,
+            message: `${support.displayName} finished without replying.`,
           });
         }
         emit({ ...base(threadId, current.turnId), type: "turn.completed", ok: finalOk, stopReason: finalStopReason, cost: null });
@@ -771,7 +770,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             emit({
               ...base(threadId, current.turnId),
               type: "runtime.error",
-              message: `${DRIVER_KIND} offered no "${want}" permission option — cancelling the request instead of guessing`,
+              message: `${support.displayName} offered no "${want}" permission option — cancelling the request instead of guessing`,
             });
 
           const toolCall = params.toolCall ?? {};
@@ -1018,12 +1017,12 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             const current = session.current;
             if (current?.state.cancelling) return;
             if (current) {
-              emit({
+              if (!current.state.stopped) emit({
                 ...base(threadId, current.turnId),
                 type: "runtime.error",
-                message: `${DRIVER_KIND} exited ${code} before the prompt result${session.stderr ? `: ${session.stderr.trim().slice(-300)}` : ""}`,
+                message: `${support.displayName} exited ${code} before the prompt result${session.stderr ? `: ${session.stderr.trim().slice(-300)}` : ""}`,
               });
-              settle(threadId, session, false, "exit_before_result");
+              settle(threadId, session, current.state.stopped, current.state.stopped ? "cancelled" : "exit_before_result");
             } else if (sessions.get(threadId) === session) {
               // The identity check keeps an old child's exit from unlinking its replacement.
               sessions.delete(threadId);
@@ -1496,9 +1495,8 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
               promptIdleMs,
               () => {
                 const last = quiet.lastState();
-                return `${DRIVER_KIND} sent nothing for ${formatQuietLimit(promptIdleMs)} with no tool running, so the turn was stopped as stuck` +
-                  `${last ? ` (last seen: ${lastSeenPhrase(last)})` : ""}. ` +
-                  "Send the message again to retry. On a self-hosted server, OPENMAUS_ACP_PROMPT_IDLE_TIMEOUT_MS sets this limit (0 turns it off).";
+                return `${support.displayName} sent nothing for ${formatQuietLimit(promptIdleMs)} with no tool running, so the turn was stopped as stuck` +
+                  `${last ? ` (last seen: ${lastSeenPhrase(last)})` : ""}. Send the message again to retry.`;
               },
               );
             if (pendingSplitReceipt) {
@@ -1546,7 +1544,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             }
             const reason = result?.stopReason;
             if (reason === "end_turn") settle(threadId, session, true, null);
-            else if (reason === "cancelled") settle(threadId, session, true, "cancelled");
+            else if (reason === "cancelled" || state.stopped) settle(threadId, session, true, "cancelled");
             else {
               const errorMessage = typeof result?.error === "string" && result.error
                 ? result.error
@@ -1602,7 +1600,8 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
                   stopReason: state.stopped ? "cancelled" : "rpc_error", cost: null });
                 return;
               }
-              emit({
+              // After the person's Stop, a request the stop cut short is not an error.
+              if (!state.stopped) emit({
                 ...base(threadId, turnId), type: "runtime.error",
                 message: (accountError ? support.describeAccountError?.(code, cliTurn.model) : undefined) ?? engineFailureMessage(support.displayName, message) ?? message,
                 ...(needsAuth ? { setup: true } : {}), ...((e as any)?.acpPromptStall === true ? { stalled: true } : {}),
@@ -1616,7 +1615,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
               } else if (staleProcess && !state.promptSent && session.child.exitCode === null && !session.closing) {
                 closeSession(threadId, "stale-models");
               }
-              settle(threadId, session, false, needsAuth ? "auth_required" : "rpc_error");
+              settle(threadId, session, state.stopped, state.stopped ? "cancelled" : needsAuth ? "auth_required" : "rpc_error");
             }
           }
         })();
@@ -1659,7 +1658,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         if (support.requireAuthenticationBeforeSpawn && !(await support.isAuthenticated(env, turnConfig, instanceId))) {
           throw new Error(support.loginNote);
         }
-        const cwd = mkdtempSync(join(tmpdir(), "omb-acp-memory-"));
+        const cwd = mkdtempSync(join(await support.oneShotFolder?.() ?? tmpdir(), "omb-acp-memory-"));
         try {
           const turn = { threadId: `memory-text-${newId()}`, text: prompt, approvalMode: "ask", cwd } as SendTurnInput;
           support.applyTurnEnv?.(env, { fullAuto: false, cwd, threadId: turn.threadId, mcpServers: [] });

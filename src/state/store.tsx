@@ -54,6 +54,7 @@ import { firstUnreadMessageId, threadOpensUnread, threadReadCursor } from "@/lib
 import type { ComputerStart } from "@/lib/computer-start";
 import { parseComputerHelp } from "@/lib/computer-control";
 import { answerResponse, dismissResponse } from "@/lib/card-answer";
+import { forgetLiveTurns, noteRuntimeTurn, sendStop } from "@/lib/stop-turn";
 import { readLastConversation, rememberConversation } from "@/lib/last-conversation";
 import { readLastBotSection, rememberBotSection } from "@/lib/last-bot-section";
 import { showNotification } from "@/lib/notify";
@@ -149,7 +150,7 @@ export interface Message extends Pick<import("../../shared/wire").WireMessage, "
   goalRun?: GroupGoalRunCardData;
   call?: import("../../shared/wire").LiveCallRecord;
   channelMode?: "chat" | "goal";
-  tool?: { name: string; ok?: boolean; spoken?: string; setup?: boolean; claudeUpdate?: boolean; place?: PlaceRow; limitResetsAt?: number; summary?: string; input?: string; output?: string ; itemId?: string; outputPath?: string; fullResult?: boolean };
+  tool?: { name: string; ok?: boolean; spoken?: string; setup?: boolean; claudeUpdate?: boolean; place?: PlaceRow; limitResetsAt?: number; summary?: string; input?: string; output?: string ; itemId?: string; outputPath?: string; fullResult?: boolean; rescue?: import("../../shared/first-reply-rescue").FirstReplyRescue };
   steered?: boolean;
   via?: "api" | "call";
   callId?: string;
@@ -508,20 +509,19 @@ export interface InstanceInfo {
     reason?: string;
     authenticated?: boolean;
     chatgptPlan?: boolean;
+    /** Ready only through OpenCode's free no-login models: a backup, never "an AI already works". */
+    freeFallback?: boolean;
     authenticationUnavailableReason?: string;
     account?: { email?: string; organization?: string; method?: "login" | "api-key" };
     version?: string | null;
-    update?: {
-      title: string;
-      message: string;
-      command: string;
-    };
+    update?: { title: string; message: string; command: string };
     billing?: "metered" | "subscription";
-    warning?: {
-      title: string;
-      message: string;
-    };
+    warning?: { title: string; message: string };
   };
+  /** What one tiny test message through this AI showed, for its current sign-in; absent until one is sent. */
+  aiTest?: import("../../shared/ai-ranking").AiTestState;
+  /** Why it didn't answer, in plain words, when it said (signed out, a used-up limit…). */
+  aiTestError?: string;
   models: { default: string; options: Array<{ id: string; label: string; custom?: boolean; loaded?: boolean; provider?: string; variants?: ModelVariantOption[] }> };
   capabilities?: {
     computerMcp?: boolean;
@@ -2168,6 +2168,7 @@ export async function loadSnapshotBoundary<Key extends string>(
 }
 
 export function runtimeFrameAction(event: RuntimeEvent): Action | null {
+  noteRuntimeTurn(event);
   return event.type === "turn.started" || event.type === "session.model-variants" || event.type === "turn.completed"
     ? { type: "modelVariantRuntime", event }
     : null;
@@ -2911,13 +2912,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
             .catch((error) => { showError(error); action.onError?.(error instanceof Error ? error.message : String(error)); });
           break;
         case "interrupt":
-          api(`/api/bots/${action.botId}/interrupt`, {
-            method: "POST",
-            body: action.threadId ? JSON.stringify({ threadId: action.threadId }) : undefined,
-          }).catch((error) => {
-            showError(error);
-            action.onError?.();
-          });
+          sendStop(api, action, showError);
           break;
         case "newTask":
         case "switchTask": {
@@ -3249,7 +3244,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           const selected = stateRef.current.bots.find((candidate) => candidate.id === bot.id);
           const shown = selected?.switchingTo ?? selected?.threadId;
           const selectedTask = bot.tasks?.find((task) => task.threadId === shown);
-          if (bot.id === stateRef.current.selectedId && stateRef.current.activeView === "chat" &&
+          if (bot.id === stateRef.current.selectedId && stateRef.current.activeView === "chat" && document.hasFocus() &&
               (selectedTask?.unread || (!bot.tasks && bot.unread))) {
             if (selectedTask) selectedTask.unread = false;
             bot.unread = botShowsUnread(bot);
@@ -3263,7 +3258,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         }
         case "group": {
           const group = frame.group as Partial<Group> & { id: string };
-          if (group.unread && group.id === stateRef.current.selectedId) {
+          if (group.unread && group.id === stateRef.current.selectedId && document.hasFocus()) {
             group.unread = false;
             fetch(`/api/groups/${group.id}/read`, { method: "POST" }).catch(() => {});
           }
@@ -3367,8 +3362,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       onSnapshotRequired: () => {
         clearTimeout(hydrationFallback);
         publishMissedFrames();
-        // Frames buffered before a non-resumable stream belong to an abandoned generation.
+        // Frames buffered before a non-resumable stream belong to an abandoned generation, and so do the turns they named.
         pendingFrames.splice(0);
+        forgetLiveTurns();
         return hydrate();
       },
       onFrame: (frame) => {

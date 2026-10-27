@@ -151,6 +151,7 @@ export function cloudHomePrompt(sharedComputerTools: boolean, synced: ReadonlyAr
   const { theirs, device } = theirComputer(lent);
   return ` You run on ${CLOUD_HOME_PLACE}.` + (sharedComputerTools
     ? ` If they ask for something on ${theirs}, check list_shared_computers: a computer they share with the Cloud is reachable through shared_computer, within the folders and apps it allows. If none is online, say so in one sentence: use its say field when it has one (it names the computer and when it was last online), otherwise give them ${useMyComputerLink(device)} to press in OpenMausBot on that ${device}: it asks them once and shares that ${device} with you.${device === "computer" ? " Call it their computer: never assume it is a Mac." : ` It is a ${device}: call it that, never a Mac unless it is one.`}`
+      + ` While that ${device} is away, each folder it lends that the Cloud keeps a copy of still works from that copy: list_shared_computers lists them under away_computers (copy null means a folder only on the ${device}), every read says how fresh the copy is, and a write to a folder lent with editing is saved here and reaches the ${device} when it's on (tell them so in a few words). A file or folder that isn't in the copy is only on the ${device}: say you'll get it when it's on.`
     : ` You cannot see or use ${theirs}, its screen or its files from here. If they ask for something on it, say so in one sentence.`)
     + " Offer what works here: the built-in browser and their cloud computer, a desktop in the cloud. Call it their cloud computer, as the app does. Never ask them to set up this computer or a Local VM; neither exists here."
     + syncedFoldersPrompt(synced);
@@ -162,7 +163,7 @@ function syncedFoldersPrompt(synced: ReadonlyArray<{ computerName: string; pcPat
   const clean = (value: string, max: number) => value.replace(/[\u0000-\u001f\u007f\u202a-\u202e\u2066-\u2069]/g, " ").slice(0, max);
   const shown = synced.slice(0, 20).map((folder) => `${clean(folder.pcPath, 300)} on ${clean(folder.computerName, 80)} → ${clean(folder.cloudPath, 300)}`).join("; ");
   return ` Folders the person shares from their computer, as read-only copies kept up to date here: ${shown}${synced.length > 20 ? `; and ${synced.length - 20} more` : ""}.`
-    + " A path on that computer inside one of these means its copy here. Read from these copies, never change or delete files in them: save your work in your own working folder; the person gets it on their computer in Documents › MausBot.";
+    + " A path on that computer inside one of these means its copy here. Read from these copies, never change or delete files in them directly: to change a file in a folder lent with editing, use shared_computer write_file, which reaches their computer; save other work in your own working folder; the person gets it on their computer in Documents › MausBot.";
 }
 
 export const COMPOSIO_PROMPT =

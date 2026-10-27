@@ -159,7 +159,7 @@ describe("LM Studio and Bionic setup", () => {
     for (let i = 0; i < 20; i++) await Promise.resolve();
     expect(fixture.api).toHaveBeenCalledExactlyOnceWith("/api/instances/openai-compat", {
       method: "POST",
-      body: JSON.stringify({ displayName: "LM Studio", url: "http://127.0.0.1:1234/v1", key: "lm-studio" }),
+      body: JSON.stringify({ displayName: "LM Studio", url: "http://127.0.0.1:1234/v1", key: "lm-studio", catalog: "lmstudio" }),
     });
     expect(JSON.stringify(fixture.track.mock.calls)).not.toContain("lm-studio");
   });

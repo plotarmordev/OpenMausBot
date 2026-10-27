@@ -1,5 +1,5 @@
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { isFormattedReply } from "@/lib/formatted-reply";
+import { formattedReplyWidth, isFormattedReply } from "@/lib/formatted-reply";
 import { activeLocale, t } from "@/lib/i18n";
 import { useShowThreads } from "@/lib/thread-preferences";
 import { useReactor } from "@/lib/cloud-guest";
@@ -69,6 +69,8 @@ import { TurnNarrationRun } from "./TurnNarrationRun";
 import { ActivityRun } from "./ActivityRun";
 import { cn } from "@/lib/cn";
 import { useMenuMotion } from "./MenuMotion";
+import { liveToolIds } from "@/lib/tool-liveness";
+import { roomNeedsSetup } from "@/lib/room-setup";
 import { useComposerDockPad } from "@/lib/composer-dock";
 import { GlassBar, GlassScrollFrame } from "./GlassScrollFrame";
 import { awaitedMemberId, showWorkingDots } from "@/lib/turn-tail";
@@ -96,7 +98,7 @@ import { RoomHeader } from "./RoomHeader";
 import { useChatFindRequests } from "@/lib/chat-find";
 import { simpleRoomHeader } from "@/lib/room-panel";
 
-export function RoomToolChip({ message, roomId }: { message: Message; roomId?: string }) {
+export function RoomToolChip({ message, roomId, live = false }: { message: Message; roomId?: string; live?: boolean }) {
   const { state, dispatch } = useStore();
   const tool = message.tool;
   if (!tool) return null;
@@ -114,7 +116,7 @@ export function RoomToolChip({ message, roomId }: { message: Message; roomId?: s
       }
     }} />;
   }
-  if (!comm) return <ToolActivity tool={tool} />;
+  if (!comm) return <ToolActivity tool={tool} live={live} />;
   return (
     <div className="flex justify-start">
       <div
@@ -203,7 +205,7 @@ function RoomTextMessage({
             !user && !m.text?.trim() && !m.replyToId && m.attachments?.length
               ? "text-ink"
               : !user && isFormattedReply(m.text ?? "")
-                ? "w-full max-w-[min(var(--chat-prose-max),var(--chat-card-pct))] px-1 text-ink"
+                ? cn(formattedReplyWidth(m.text ?? ""), "px-1 text-ink")
                 : cn(user ? "chat-text whitespace-pre-wrap bg-bubble-user px-4 py-2.5 text-ink" : "bg-card px-4 py-2.5 text-ink", simple && SIMPLE_BUBBLE),
           )}
           title={new Date(m.at).toLocaleString()}
@@ -344,6 +346,7 @@ export const Transcript = memo(function Transcript({
     const newest = transcript[retryableIndex];
     return newest && isCancelledTranscriptRow(newest) ? roomRetryRequest(transcript, retryableIndex) : null;
   }, [transcript, retryableIndex]);
+  const liveTools = useMemo(() => liveToolIds(transcript, { busy: roomBusy, turnStartedAt: group.turnStartedAt }), [transcript, roomBusy, group.turnStartedAt]);
   const retryRoom = useCallback(() => {
     if (!retryRequest || roomBusy) return;
     dispatch({
@@ -389,7 +392,7 @@ export const Transcript = memo(function Transcript({
               <ActivityRun messages={item.messages} forceOpen={item.messages.some((step) => step.id === focusedId)}>
                 {item.messages.map((step) => (
                   <div key={step.id} className="contents" data-mid={step.id}>
-                    <RoomToolChip message={step} />
+                    <RoomToolChip message={step} live={liveTools.has(step.id)} />
                   </div>
                 ))}
               </ActivityRun>
@@ -447,7 +450,7 @@ export const Transcript = memo(function Transcript({
             </div>
           ) : m.kind === "activity" && m.tool ? (
             roomActivityVisible(m, showToolCalls) ? (
-              m.dataResult ? <DataResultChip message={m} /> : isStatusActivity(m) ? <StatusActivityRow message={m} /> : <RoomToolChip message={m} roomId={group.id} />
+              m.dataResult ? <DataResultChip message={m} /> : isStatusActivity(m) ? <StatusActivityRow message={m} /> : <RoomToolChip message={m} roomId={group.id} live={liveTools.has(m.id)} />
             ) : null
           ) : m.kind === "screen" ? (
             <ScreenFrame threadId={group.threadId} message={m} />
@@ -514,39 +517,10 @@ export const Transcript = memo(function Transcript({
   );
 });
 
-type RoomSetupFields = {
-  setupPending?: boolean;
-  setupRequired?: boolean;
-  setupState?: "required" | "completed" | "skipped";
-  setupCompletedAt?: number | string | null;
-  setupSkippedAt?: number | string | null;
-};
-
 type RoomResponderMode = "lead" | "everyone" | "mentions" | "auto";
 
 function setupResponderMode(responder: GroupDefaultResponder): RoomResponderMode {
   return responder.kind === "member" ? "lead" : responder.kind;
-}
-
-function roomNeedsSetup(group: Group): boolean {
-  if (group.dm || group.messages.length > 0) return false;
-  // SAFETY: setup fields are additive server metadata; the existing Group shape remains valid when absent.
-  const marker = group as Group & RoomSetupFields;
-  const hasSetupMarker =
-    Object.prototype.hasOwnProperty.call(marker, "setupCompletedAt") ||
-    Object.prototype.hasOwnProperty.call(marker, "setupSkippedAt");
-  if (!hasSetupMarker) return false;
-  if (
-    marker.setupPending === false ||
-    marker.setupRequired === false ||
-    marker.setupState === "completed" ||
-    marker.setupState === "skipped" ||
-    marker.setupCompletedAt != null ||
-    marker.setupSkippedAt != null
-  ) {
-    return false;
-  }
-  return true;
 }
 
 function RoomSetup({ group, members }: { group: Group; members: Bot[] }) {

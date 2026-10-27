@@ -498,8 +498,8 @@ export interface WireMessage extends HelperIntroField {
   tool?: {
     name: string; ok?: boolean; spoken?: string; setup?: boolean; terminal?: boolean; summary?: string; input?: string; output?: string;
     /** error rows: the installed Claude Code is too old for the model, and
-     * the UI can offer to update it in place. */
-    claudeUpdate?: boolean;
+     * the UI can offer to update it in place. notice rows: `rescue`, a turn that heard nothing from its AI for a while. */
+    claudeUpdate?: boolean; rescue?: import("./first-reply-rescue.ts").FirstReplyRescue;
   /** error rows: the place this turn could not use. */
     place?: PlaceRow;
     /** error rows: epoch ms when the usage limit that stopped the turn resets. */
@@ -925,6 +925,7 @@ export interface SkillsLibrarySkillWire {
   description: string;
   source: string;
   enabled: boolean;
+  everyBot: boolean;
   tags: string[];
   version: string | null;
   importedAt: string;

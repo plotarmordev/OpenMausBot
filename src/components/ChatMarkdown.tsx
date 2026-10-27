@@ -338,8 +338,8 @@ export function CodeBlock({ code, lang, initialWrap = false }: CodeBlockProps) {
   const lineCount = countLines(code);
 
   return (
-    <div dir="ltr" className="my-2 overflow-hidden rounded-lg border border-hairline/40 bg-inset">
-      <div className="flex items-center justify-between gap-2 border-b border-hairline/30 bg-raised/30 px-3 py-1.5 text-xs">
+    <div dir="ltr" className="chat-code-block my-2 overflow-hidden rounded-lg border border-hairline/40 bg-inset">
+      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-hairline/30 bg-raised/30 px-3 py-1.5 text-xs">
         <div className="flex min-w-0 flex-1 items-center gap-2">
           <span title={displayLanguage} className="min-w-0 truncate rounded border border-hairline/40 bg-raised px-1.5 py-0.5 text-[11px] font-medium tracking-wide text-ink select-none">
             {displayLanguage}
@@ -350,7 +350,7 @@ export function CodeBlock({ code, lang, initialWrap = false }: CodeBlockProps) {
             </span>
           )}
         </div>
-        <div className="flex shrink-0 items-center gap-1 whitespace-nowrap">
+        <div className="chat-code-actions flex shrink-0 items-center gap-1 whitespace-nowrap">
           <button
             type="button"
             onClick={() => setWrapLines((w) => !w)}
@@ -364,7 +364,7 @@ export function CodeBlock({ code, lang, initialWrap = false }: CodeBlockProps) {
             aria-pressed={wrapLines}
           >
             <WrapText size={12} aria-hidden="true" />
-            <span className="hidden sm:inline">{wrapLines ? "Unwrap" : "Wrap"}</span>
+            <span>{wrapLines ? "Unwrap" : "Wrap"}</span>
           </button>
           <button
             type="button"
@@ -374,7 +374,7 @@ export function CodeBlock({ code, lang, initialWrap = false }: CodeBlockProps) {
             aria-label="Download snippet as file"
           >
             <Download size={12} aria-hidden="true" />
-            <span className="hidden sm:inline">Save</span>
+            <span>Save</span>
           </button>
           <button
             type="button"
@@ -383,22 +383,13 @@ export function CodeBlock({ code, lang, initialWrap = false }: CodeBlockProps) {
             title={copied === "copied" ? "Copied to clipboard" : copied === "failed" ? t("common.copyFailed") : "Copy code"}
             aria-label={copied === "copied" ? "Code copied to clipboard" : copied === "failed" ? t("common.copyFailed") : "Copy code to clipboard"}
           >
-            {copied === "failed" ? (
-              <>
-                <X size={12} className="text-danger" aria-hidden="true" />
-                <span className="text-danger font-medium hidden sm:inline">{t("common.copyFailed")}</span>
-              </>
-            ) : copied === "copied" ? (
-              <>
-                <Check size={12} className="text-success" aria-hidden="true" />
-                <span className="text-success font-medium hidden sm:inline">Copied!</span>
-              </>
-            ) : (
-              <>
-                <Copy size={12} aria-hidden="true" />
-                <span className="hidden sm:inline">Copy</span>
-              </>
-            )}
+            {copied === "failed" ? <X size={12} className="text-danger" aria-hidden="true" />
+              : copied === "copied" ? <Check size={12} className="text-success" aria-hidden="true" />
+                : <Copy size={12} aria-hidden="true" />}
+            <span aria-hidden="true" className="hidden max-sm:inline touch:inline">Copy</span>
+            <span role="status" className={`max-sm:sr-only touch:sr-only ${copied === "failed" ? "text-danger font-medium" : copied === "copied" ? "text-success font-medium" : ""}`}>
+              {copied === "failed" ? t("common.copyFailed") : copied === "copied" ? "Copied!" : "Copy"}
+            </span>
           </button>
         </div>
       </div>

@@ -1,9 +1,9 @@
 # cloudflared release provenance
 
-OpenMausBot stages the official `cloudflared` 2026.8.2 executable as a separate
+OpenMausBot stages the official `cloudflared` 2026.10.3 executable as a separate
 process. The binaries come from Cloudflare's official GitHub release:
 
-<https://github.com/cloudflare/cloudflared/releases/tag/2026.8.2>
+<https://github.com/cloudflare/cloudflared/releases/tag/2026.10.3>
 
 `scripts/prepare-cloudflared.mjs` verifies these SHA-256 digests before an
 executable can be staged:

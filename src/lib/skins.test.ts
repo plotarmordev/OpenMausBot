@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { SKINS, SKIN_IDS, DEFAULT_SKIN, PRIOR_INSTALL_SKIN } from "./skins";
+import { SKINS, SKIN_IDS, DEFAULT_SKIN_CHOICE, PRIOR_INSTALL_SKIN, THEME_SKINS, resolveSkin } from "./skins";
 
 const css = readFileSync(
   join(dirname(fileURLToPath(import.meta.url)), "../styles.css"),
@@ -49,8 +49,15 @@ describe("skins", () => {
     expect(SKIN_IDS.slice(0, 8)).toEqual([
       "midnight", "atelier", "foundry", "lagoon", "graphite", "linen", "dusk", "daylight",
     ]);
-    expect(DEFAULT_SKIN).toBe("meadow");
     expect(PRIOR_INSTALL_SKIN).toBe("midnight");
+  });
+
+  it("follows the computer between Daylight and Midnight by default", () => {
+    expect(DEFAULT_SKIN_CHOICE).toBe("system");
+    expect(THEME_SKINS).toEqual({ light: "daylight", dark: "midnight" });
+    expect(resolveSkin("system", false)).toBe("daylight");
+    expect(resolveSkin("system", true)).toBe("midnight");
+    expect(resolveSkin("meadow", true)).toBe("meadow");
   });
 
   it("keeps Meadow's own bubble light, in the page's ink", () => {

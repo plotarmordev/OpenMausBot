@@ -72,7 +72,9 @@ describe("the chat card a bot-made automation leaves", () => {
     const html = render(scheduleCard);
     expect(html).toContain('data-trigger-card="routine-1"');
     expect(html).toContain(`Set up: ${sentence}`);
-    expect(html).toContain("Next: ");
+    expect(html).toMatch(/First run (today|tomorrow|[A-Z][a-z]+day) \d/);
+    expect(html).not.toContain("Next: ");
+    expect(html).not.toMatch(/hasn(&#x27;|')t run yet/);
     for (const label of ["Pause", "Edit", "Undo"]) expect(html).toContain(`${label}</button>`);
     expect(html).not.toMatch(/TRIGGER ON|Trigger on|Open in Triggers|Confirm/);
   });

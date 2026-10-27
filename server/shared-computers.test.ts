@@ -69,6 +69,49 @@ describe("shared computer authority and lifecycle", () => {
     await expect(broker.request(operation, alice.person, () => true)).rejects.toThrow(/offline/);
     broker.close();
   });
+  it("waits for a command as long as the command may run, and a non-command action still 45 seconds", async () => {
+    vi.useFakeTimers();
+    const lent = () => {
+      const broker = new SharedComputers(() => true);
+      const computer = { ...registration({ terminal: true, computer: true }), commandTimeouts: true as const }; broker.register(computer, alice, secret);
+      const run = async (operation: Omit<Parameters<SharedComputers["request"]>[0], "computer_id">) => {
+        const result = broker.request({ computer_id: computer.id, ...operation }, alice.person, () => true);
+        result.catch(() => {});
+        const job = await broker.poll(computer.id, alice.session, secret);
+        broker.liveJob(computer.id, alice.session, secret, job!.id);
+        return { result, job: job!, complete: (value: unknown) => broker.complete(computer.id, alice.session, secret, job!.id, value), close: () => broker.close() };
+      };
+      return run;
+    };
+    const long = await lent()({ action: "run_command", command: "./weekly-scan", timeout_seconds: 200 });
+    expect(long.job.operation).toMatchObject({ timeout_seconds: 200 });
+    await vi.advanceTimersByTimeAsync(199_000);
+    long.complete({ exitCode: 0 });
+    await expect(long.result).resolves.toEqual({ exitCode: 0 });
+    long.close();
+    const defaulted = await lent()({ action: "run_command", command: "./scan" });
+    await vi.advanceTimersByTimeAsync(134_000);
+    defaulted.complete({ exitCode: 0 });
+    await expect(defaulted.result).resolves.toEqual({ exitCode: 0 });
+    defaulted.close();
+    const tools = await lent()({ action: "computer_tools" });
+    await vi.advanceTimersByTimeAsync(45_000);
+    await expect(tools.result).rejects.toThrow(/timed out/);
+    tools.close();
+  });
+  it("never sends a timeout to a desktop that did not say it takes one, and waits for it as before", async () => {
+    const broker = new SharedComputers(() => true);
+    const computer = registration({ terminal: true }); broker.register(computer, alice, secret);
+    vi.useFakeTimers();
+    const command = broker.request({ computer_id: computer.id, action: "run_command", command: "./scan", timeout_seconds: 200 }, alice.person, () => true);
+    const rejection = expect(command).rejects.toThrow(/timed out/);
+    const job = await broker.poll(computer.id, alice.session, secret);
+    expect(job?.operation).toEqual({ computer_id: computer.id, action: "run_command", command: "./scan" });
+    broker.liveJob(computer.id, alice.session, secret, job!.id);
+    await vi.advanceTimersByTimeAsync(45_000);
+    await rejection;
+    broker.close();
+  });
   it("turn cancellation rejects queued and already delivered actions", async () => {
     vi.useFakeTimers();
     const broker = new SharedComputers(() => true);

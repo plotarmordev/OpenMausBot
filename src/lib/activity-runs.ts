@@ -42,7 +42,11 @@ function foldable(message: Message): boolean {
 
 type TurnFold = Extract<TranscriptItem, { kind: "turn" }>;
 
-function assistantTurnFolds(messages: Message[]): {
+const isNarration = (message: Message, turnId: string) =>
+  message.role === "bot" && message.kind === "text" && message.turnId === turnId && !message.turnTerminal;
+
+/** Once a turn has its answer, the rows `folded` picks go behind one "Worked for 29s" chip at the first of them. */
+function settledTurnFolds(messages: Message[], folded: (message: Message, turnId: string) => boolean): {
   byAnchorId: Map<string, TurnFold>;
   hiddenIds: Set<string>;
 } {
@@ -56,19 +60,14 @@ function assistantTurnFolds(messages: Message[]): {
       !terminal.turnId ||
       !terminal.turnTerminal
     ) return;
+    const turnId = terminal.turnId;
+    const before = messages.slice(0, terminalIndex);
+    const rows = before.filter((message) => folded(message, turnId));
+    if (!rows.length) return;
 
-    const narration = messages.slice(0, terminalIndex).filter((message) =>
-      message.role === "bot" &&
-      message.kind === "text" &&
-      message.turnId === terminal.turnId &&
-      !message.turnTerminal
-    );
-    if (!narration.length) return;
-
-    const anchor = narration[0];
-    const anchorIndex = messages.findIndex((message) => message.id === anchor.id);
-    let startedAt = anchor.at;
-    for (let i = anchorIndex - 1; i >= 0; i -= 1) {
+    const firstIndex = before.findIndex((message) => message.turnId === turnId);
+    let startedAt = before[firstIndex]?.at ?? rows[0].at;
+    for (let i = firstIndex - 1; i >= 0; i -= 1) {
       if (messages[i].role === "user") {
         startedAt = messages[i].at;
         break;
@@ -79,18 +78,21 @@ function assistantTurnFolds(messages: Message[]): {
       elapsed >= 1_000
         ? t("chat.run.workedFor", { elapsed: formatElapsed(elapsed) })
         : t("chat.run.worked");
-    const fold: TurnFold = {
-      kind: "turn",
-      id: `turn:${terminal.turnId}`,
-      turnId: terminal.turnId,
-      label,
-      messages: narration,
-    };
-    byAnchorId.set(anchor.id, fold);
-    for (const message of narration) hiddenIds.add(message.id);
+    byAnchorId.set(rows[0].id, { kind: "turn", id: `turn:${turnId}`, turnId, label, messages: rows });
+    for (const message of rows) hiddenIds.add(message.id);
   });
 
   return { byAnchorId, hiddenIds };
+}
+
+/** A room shows a member's answer, not its working notes. */
+function assistantTurnFolds(messages: Message[]) {
+  return settledTurnFolds(messages, isNarration);
+}
+
+/** A conversation keeps the bot's own progress lines and folds only its finished tool steps. */
+function toolStepFolds(messages: Message[]) {
+  return settledTurnFolds(messages, (message, turnId) => message.turnId === turnId && foldable(message));
 }
 
 export function roomTurnFolds(messages: Message[]): {
@@ -113,7 +115,7 @@ export function roomTurnFolds(messages: Message[]): {
 function group(messages: Message[], foldAssistantTurns: boolean): TranscriptItem[] {
   const items: TranscriptItem[] = [];
   const folds = foldAssistantTurns
-    ? assistantTurnFolds(messages)
+    ? toolStepFolds(messages)
     : { byAnchorId: new Map<string, TurnFold>(), hiddenIds: new Set<string>() };
   let run: Message[] = [];
   const flush = () => {

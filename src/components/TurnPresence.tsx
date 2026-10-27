@@ -38,11 +38,10 @@ export function useRotatingPhrase(
 }
 
 // 2s matches --animate-shimmer.
-function ShimmerPhrase({ text, className, hidden }: { text: string; className?: string; hidden?: boolean }) {
+function ShimmerPhrase({ text, className }: { text: string; className?: string }) {
   const [delay] = useState(() => `-${Date.now() % 2000}ms`);
   return (
     <span
-      aria-hidden={hidden || undefined}
       className={cn("thinking-shimmer animate-shimmer [grid-area:1/1]", className)}
       style={{ animationDelay: `${delay}, 0ms` }}
     >
@@ -129,15 +128,8 @@ export function TurnPresence({
             {now && (
               <>
                 <Dot />
+                {/* One phrase at a time: a fading old phrase sat out of flow and a longer one drew over the size beside it. */}
                 <span className="turn-phrase relative grid text-[13px]" data-turn-now>
-                  {previous && previous !== current && (
-                    <ShimmerPhrase
-                      key={`out:${previous}`}
-                      text={previous}
-                      className="turn-phrase-out absolute start-0 top-0 whitespace-nowrap"
-                      hidden
-                    />
-                  )}
                   <ShimmerPhrase
                     key={`in:${current}`}
                     text={current}

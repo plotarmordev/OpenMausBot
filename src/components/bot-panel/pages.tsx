@@ -1,7 +1,7 @@
 import { useState, type ReactNode } from "react";
 import { FolderOpen, Plus } from "lucide-react";
 
-import { withBotApp } from "@/lib/bot-app-access";
+import { appSwitchPatch } from "@/lib/bot-app-access";
 import { skillsLibraryEnabled } from "@/lib/feature-flags";
 import { t } from "@/lib/i18n";
 import { MEMORY_INDEX, saveMemoryDoc } from "@/lib/memory";
@@ -40,22 +40,13 @@ function errorText(error: unknown, fallback: string): string {
   return error instanceof Error && error.message ? error.message : fallback;
 }
 
-/** One switch per connected app; the first app switched on while apps are off for the bot turns them on with only
- * that app granted. */
 export function AppsPage({ bot, derived }: PageContext) {
   const { dispatch } = useStore();
   const apps = useBotApps(bot);
-  const { patch, canUseConnectedApps, connectedAppsEnabled } = derived;
+  const { patch, canUseConnectedApps } = derived;
 
   const toggle = (app: BotApp) => {
-    const on = app.scope === null;
-    const connectorScopes = on && !connectedAppsEnabled && !bot.connectorScopes
-      ? { apps: { [app.slug]: "write" as const } }
-      : withBotApp(bot.connectorScopes, apps.connectedSlugs, app.slug, on);
-    const next = {
-      ...(connectorScopes ? { connectorScopes } : {}),
-      ...(on && !connectedAppsEnabled ? { composio: true } : {}),
-    };
+    const next = appSwitchPatch(bot, apps.connectedSlugs, app.slug, app.scope === null);
     if (Object.keys(next).length > 0) patch(next);
   };
   const note = !canUseConnectedApps

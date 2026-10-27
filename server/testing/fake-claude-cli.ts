@@ -27,6 +27,8 @@
 //   FAKE_CLAUDE_TEXT_LOG  JSON-lines file every one-shot prompt is appended to
 //   FAKE_CLAUDE_TEXT_HANG  set: the one-shot text mode never replies
 //   FAKE_CLAUDE_TEXT_RESULT  raw --output-format json one-shot response
+//   FAKE_CLAUDE_CHECK_LOG  JSON-lines file every connection check is appended to (checks touch no other knob)
+//   FAKE_CLAUDE_CHECK  fail | hang: how the connection check answers (default OK)
 //   FAKE_CLAUDE_REPLIES  JSON array of replies (string, or string[] for several items) used in order
 //   FAKE_CLAUDE_REPLY_STATE  counter file keeping FAKE_CLAUDE_REPLIES in order across processes
 //   FAKE_CLAUDE_TOOL_CALLS  JSON [{name, input?, ok?}] each turn calls before its reply (unset: one Bash call)
@@ -360,6 +362,29 @@ if (["text", "json"].includes(argAfter("--output-format") ?? "")) {
     }));
     process.exit(0);
   }
+  const replyText = (text: string, code = 0, raw: string | null = process.env.FAKE_CLAUDE_TEXT_RESULT ?? null) => {
+    const model = argAfter("--model") ?? "claude-haiku-4-5";
+    process.stdout.write(argAfter("--output-format") === "json"
+      ? raw ?? JSON.stringify({
+          type: "result", is_error: code !== 0, result: text,
+          usage: { input_tokens: 10, cache_read_input_tokens: 2, cache_creation_input_tokens: 3, output_tokens: 5 },
+          total_cost_usd: 0.01,
+          modelUsage: { [model]: { inputTokens: 10, cacheReadInputTokens: 2, cacheCreationInputTokens: 3, outputTokens: 5, costUSD: 0.01 } },
+        })
+      : code === 0 ? text : "");
+    process.exit(code);
+  };
+  // The server's connection check (server/engine-check.ts) stays out of every turn and one-shot capture and knob
+  // above, so a test sees only the calls it makes: FAKE_CLAUDE_CHECK_LOG records it, FAKE_CLAUDE_CHECK fail | hang scripts it.
+  if (prompt.startsWith("This is a connection check.")) {
+    if (process.env.FAKE_CLAUDE_CHECK_LOG) appendFileSync(process.env.FAKE_CLAUDE_CHECK_LOG, `${JSON.stringify({ prompt })}\n`);
+    if (process.env.FAKE_CLAUDE_CHECK === "hang") await new Promise(() => setInterval(() => {}, 1 << 30));
+    if (process.env.FAKE_CLAUDE_CHECK === "fail") {
+      process.stderr.write("fake connection check failed\n");
+      replyText("fake connection check failed", 1, null);
+    }
+    replyText("OK", 0, null);
+  }
   // Background one-shots never overwrite the shared turn dump; FAKE_CLAUDE_TEXT_DUMP records them.
   const upkeepCall = /You are the (?:CAPTURE|TIDY|ORGANIZE) step of a memory system|You are the SKILL REVIEW step/.test(prompt);
   const oneShotDump = process.env.FAKE_CLAUDE_TEXT_DUMP ?? (upkeepCall ? undefined : process.env.FAKE_CLAUDE_DUMP);
@@ -374,18 +399,6 @@ if (["text", "json"].includes(argAfter("--output-format") ?? "")) {
     // An unsettled top-level await is fatal in Node; a repeating timer keeps the loop alive.
     await new Promise(() => setInterval(() => {}, 1 << 30));
   }
-  const replyText = (text: string, code = 0) => {
-    const model = argAfter("--model") ?? "claude-haiku-4-5";
-    process.stdout.write(argAfter("--output-format") === "json"
-      ? process.env.FAKE_CLAUDE_TEXT_RESULT ?? JSON.stringify({
-          type: "result", is_error: code !== 0, result: text,
-          usage: { input_tokens: 10, cache_read_input_tokens: 2, cache_creation_input_tokens: 3, output_tokens: 5 },
-          total_cost_usd: 0.01,
-          modelUsage: { [model]: { inputTokens: 10, cacheReadInputTokens: 2, cacheCreationInputTokens: 3, outputTokens: 5, costUSD: 0.01 } },
-        })
-      : code === 0 ? text : "");
-    process.exit(code);
-  };
   if (process.env.FAKE_CLAUDE_TEXT_ROUTES && existsSync(process.env.FAKE_CLAUDE_TEXT_ROUTES)) {
     try {
       const routes = JSON.parse(readFileSync(process.env.FAKE_CLAUDE_TEXT_ROUTES, "utf8")) as Record<string, string>;

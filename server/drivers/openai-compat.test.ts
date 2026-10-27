@@ -286,7 +286,7 @@ describe("OpenAICompatDriver", () => {
       instanceId: "lm-studio",
       displayName: "LM Studio",
       enabled: true,
-      config: { url: "http://127.0.0.1:1234/v1", key: "lm-studio", apiKeyEnv: "OPENAI_COMPAT_API_KEY" },
+      config: { url: "http://127.0.0.1:1234/v1", key: "lm-studio", apiKeyEnv: "OPENAI_COMPAT_API_KEY", catalog: "lmstudio" },
       environment: {},
     });
     await inst.refreshModels?.();
@@ -315,12 +315,31 @@ describe("OpenAICompatDriver", () => {
         key: "lm-studio",
         apiKeyEnv: "OPENAI_COMPAT_API_KEY",
         model: "my-loaded-instance",
+        catalog: "lmstudio",
       },
       environment: {},
     });
     await inst.refreshModels?.();
     expect(inst.models.default).toBe("my-loaded-instance");
     expect(inst.models.options.map((option) => option.id)).toEqual(["my-loaded-instance", "other/model"]);
+    await inst.dispose();
+  });
+
+  it("asks only a server added as LM Studio for LM Studio's own catalog", async () => {
+    const fetchMock = vi.fn(async (_input: string | URL | Request) => Response.json({ data: [{ id: "local/model" }] }));
+    vi.stubGlobal("fetch", fetchMock);
+    const inst = await OpenAICompatDriver.create({
+      instanceId: "local-server",
+      displayName: "llama.cpp",
+      enabled: true,
+      config: { url: "http://127.0.0.1:8080/v1", key: "local", apiKeyEnv: "OPENAI_COMPAT_API_KEY" },
+      environment: {},
+    });
+    await inst.refreshModels?.();
+    const asked = fetchMock.mock.calls.map(([input]) => String(input));
+    expect(asked).toContain("http://127.0.0.1:8080/v1/models");
+    expect(asked.filter((url) => url.includes("/api/v1/models"))).toEqual([]);
+    expect(inst.models.options.map((option) => option.id)).toContain("local/model");
     await inst.dispose();
   });
 
@@ -336,7 +355,7 @@ describe("OpenAICompatDriver", () => {
       instanceId: "lm-studio",
       displayName: "LM Studio",
       enabled: true,
-      config: { url: "http://127.0.0.1:1234/v1", key: "lm-studio", apiKeyEnv: "OPENAI_COMPAT_API_KEY" },
+      config: { url: "http://127.0.0.1:1234/v1", key: "lm-studio", apiKeyEnv: "OPENAI_COMPAT_API_KEY", catalog: "lmstudio" },
       environment: {},
     });
     await inst.refreshModels?.();
@@ -356,7 +375,7 @@ describe("OpenAICompatDriver", () => {
       instanceId: "lm-studio",
       displayName: "LM Studio",
       enabled: true,
-      config: { url: "http://127.0.0.1:1234/v1", key: "lm-studio", apiKeyEnv: "OPENAI_COMPAT_API_KEY" },
+      config: { url: "http://127.0.0.1:1234/v1", key: "lm-studio", apiKeyEnv: "OPENAI_COMPAT_API_KEY", catalog: "lmstudio" },
       environment: {},
     });
     await inst.refreshModels?.();

@@ -35,7 +35,7 @@ async function scratch(t) {
   return dir;
 }
 
-function cloudHome({ cloudHome = true, scopes = ["admin", "client"], details = false } = {}) {
+function cloudHome({ cloudHome = true, scopes = ["admin", "client"], details = false, timeouts = false } = {}) {
   const json = (value, status = 200) => ({ ok: status < 400, status, body: (async function* () { yield Buffer.from(JSON.stringify(value)); })() });
   const state = { paired: true, environmentId: randomUUID(), sessionId: randomUUID(), connects: [], disconnects: 0, disconnectBodies: [], results: [], queue: [], waiting: null };
   const nextJob = () => new Promise(resolve => { state.waiting = resolve; });
@@ -46,7 +46,7 @@ function cloudHome({ cloudHome = true, scopes = ["admin", "client"], details = f
   state.fetch = async (url, init) => {
     const route = new URL(url).pathname;
     if (route === "/api/auth/session") return state.paired ? json({ kind: "session", id: state.sessionId, scopes, ...(cloudHome ? { cloudHome: true } : {}) }) : json({ error: "unauthorized" }, 401);
-    if (route === "/.well-known/openmausbot/environment") return json({ environmentId: state.environmentId, capabilities: { sharedComputers: true, ...(details ? { lendingDetails: true } : {}) } });
+    if (route === "/.well-known/openmausbot/environment") return json({ environmentId: state.environmentId, capabilities: { sharedComputers: true, ...(details ? { lendingDetails: true } : {}), ...(timeouts ? { commandTimeouts: true } : {}) } });
     const body = init?.body ? JSON.parse(init.body) : {};
     if (route === "/api/shared-computers/connect") { state.connects.push(body); return json({ ok: true }); }
     if (route.endsWith("/poll")) {
@@ -452,6 +452,15 @@ test("tells My Cloud its platform only when that Cloud takes it, so its bots say
     await connected(sharing, 1, home);
     if (details) assert.equal(home.connects[0].platform, process.platform);
     else assert.equal("platform" in home.connects[0], false, "an older Cloud refuses fields it does not know");
+  }
+});
+
+test("says it takes a command's timeout only to a Cloud that sends one, since an older Cloud refuses fields it does not know", async t => {
+  for (const timeouts of [true, false]) {
+    const { folderPath, home, sharing } = await lendingFixture(t, { home: { timeouts } });
+    await sharing.saveCloud(env, { folders: [{ id: randomUUID(), path: folderPath, write: false }], screen: false });
+    await connected(sharing, 1, home);
+    assert.equal(home.connects[0].commandTimeouts, timeouts ? true : undefined);
   }
 });
 

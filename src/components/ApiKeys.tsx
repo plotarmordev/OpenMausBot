@@ -18,13 +18,12 @@ const SECTIONS: Record<
     body: (value: string, firstKey: boolean) => unknown;
     flag: (config: ConfigStatus) => boolean;
     included?: (config: ConfigStatus) => boolean;
-    ownKey?: (config: ConfigStatus) => boolean;
   }
 > = {
   composio: {
     body: (v) => ({ composio: { apiKey: v } }),
-    flag: (c) => c.composio.configured,
-    ownKey: (c) => c.composio.mode === "self-hosted",
+    // Only a project key of the person's own: the managed connection has its own "ready" line and nothing to clear.
+    flag: (c) => c.composio.configured && (c.composio.mode ?? "self-hosted") === "self-hosted",
   },
   box: {
     body: (v) => ({ box: { token: v } }),
@@ -318,7 +317,6 @@ export function ApiKeyRow({
 
   const configured = state.config ? SECTIONS[section].flag(state.config) : false;
   const included = state.config ? SECTIONS[section].included?.(state.config) === true : false;
-  const ownKey = state.config ? (SECTIONS[section].ownKey ?? SECTIONS[section].flag)(state.config) : false;
   const clearing = !value.trim() && configured;
   const credential = credentialCopy(section);
 
@@ -371,7 +369,7 @@ export function ApiKeyRow({
         onSaved?.(nowConfigured);
         const provider = SECTION_PROVIDER[section];
         if (!next) {
-          if (ownKey) keyRemoved(provider, via);
+          if (configured) keyRemoved(provider, via);
         } else if (testProvider && nowConfigured) void test().then((result) => keySaved(provider, via, result));
         else keySaved(provider, via, savedKeyResult(provider));
       })

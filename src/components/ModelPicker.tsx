@@ -19,6 +19,8 @@ import { useOwnerOrAdmin } from "@/lib/use-owner-or-admin";
 
 import { t } from "@/lib/i18n";
 import { COMPACT_SQUARE } from "@/lib/compact-chip";
+import { useAiSwitch } from "@/lib/ai-switch";
+import { usePickerPane } from "@/lib/model-picker-pane";
 import { threadsOnOwnModel } from "../../shared/thread-model";
 import { ThreadModelsLine } from "./ThreadModelsLine";
 import { Select } from "./Select";
@@ -449,7 +451,7 @@ export const SIMPLE_POPOVER_WIDTH = 380;
 const SIMPLE_SEARCH_AFTER = 12;
 
 export function ModelPicker({
-  bot,
+  bot: shown,
   threadId,
   className,
   contained = false,
@@ -461,11 +463,11 @@ export function ModelPicker({
   contained?: boolean;
   label?: ReactNode;
 }) {
-  const { state, dispatch, refreshInstances, refreshModels: refreshInstanceModels } = useStore();
+  const { state, dispatch: storeDispatch, refreshInstances, refreshModels: refreshInstanceModels } = useStore();
   const [open, setOpen] = useState(false);
+  const { bot, dispatch } = useAiSwitch({ bot: shown, threadId, contained, dispatch: storeDispatch, setOpen: (next) => (next ? openPicker(false) : setOpen(false)) });
   const motion = useMenuMotion(open && !bot.busy);
   const [railId, setRailId] = useState<string | null>(null);
-  const [pane, setPane] = useState<"main" | "custom">("main");
   const [query, setQuery] = useState("");
   const [showAll, setShowAll] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
@@ -525,15 +527,8 @@ export function ModelPicker({
   // never local models.
   const hasOfficialModels = Boolean(railInstance?.snapshot.chatgptPlan || railInstance?.models.options.some((option) => !option.custom));
   const customOnly = isCustomOnly(railInstance);
-  useEffect(() => {
-    if (railId !== null && railId !== displayedInstanceId) {
-      setPane(customOnly || !hasOfficialModels ? "custom" : "main");
-      setQuery("");
-      setShowAll(false);
-    } else if (customOnly || !hasOfficialModels) {
-      setPane("custom");
-    }
-  }, [railId, displayedInstanceId, hasOfficialModels, customOnly]);
+  const { pane, setPane, loading: loadingList } = usePickerPane({ instanceId: displayedInstanceId, railId, hasOfficialModels, customOnly, reading: open && refreshing,
+    selectedIsCustom: Boolean(railInstance?.models.options.some((option) => option.id === selection.model && option.custom)) }, () => resetList());
 
   const refreshLocalInstances = useCallback(() => {
     if (refreshingRef.current) return;
@@ -563,13 +558,12 @@ export function ModelPicker({
       });
   }, [displayedInstanceId, refreshInstanceModels, refreshInstances]);
 
+  // An engine with no models listed yet is asked for them, so the picker can say it is loading them, then show them.
   useEffect(() => {
-    if (open) refreshLocalInstances();
+    if (open) (hasOfficialModels || customOnly ? refreshLocalInstances : refreshModels)();
   }, [open, refreshLocalInstances]);
 
-  useEffect(() => {
-    if (bot.busy) setOpen(false);
-  }, [bot.busy]);
+  useEffect(() => { if (bot.busy) setOpen(false); }, [bot.busy]);
 
   useEffect(() => {
     if (!open) return;
@@ -696,12 +690,13 @@ export function ModelPicker({
   const canOpenCustom = Boolean(railInstance && !needsCli(railInstance));
   const canReturnToOfficial = official.length > 0 && !isCustomOnly(railInstance);
   const lookingForLocal = Boolean(railInstance && probingLocal === railInstance.instanceId);
-  const lookingForLocalStatus = (
+  const statusLine = (text: string) => (
     <span role="status" className="flex items-center justify-center gap-2">
       <Loader2 size={12} className="animate-spin" aria-hidden="true" />
-      {t("model.lookingLocal")}
+      {text}
     </span>
   );
+  const lookingForLocalStatus = statusLine(t("model.lookingLocal"));
 
   const simpleOpensOn = (accounts: InstanceInfo[], lastId: string | null) =>
     accounts.find((account) => account.instanceId === lastId)
@@ -736,7 +731,7 @@ export function ModelPicker({
     lookForLocalIn(instance);
   };
   const activeLevels = active?.capabilities?.effortLevels ?? [];
-  const simpleEffort = activeLevels.length > 0 ? {
+  const simpleEffort = activeLevels.length > 0 && !shown.busy ? {
     levels: [...activeLevels],
     current: selection.effort,
     onPick: (level: EffortLevel) => dispatch({ type: "setModel", botId: bot.id, threadId,
@@ -763,26 +758,28 @@ export function ModelPicker({
     : selection.model;
   const followLine = follows === true ? `\n${t("model.followsBot", { name: profile.name })}` : follows === false ? `\n${t("model.ownModel")}` : "";
 
+  // The chip toggles the picker and Switch AI opens it; either way it opens on the bot's own engine.
+  function openPicker(toggle: boolean) {
+    if (bot.busy) return;
+    if (active && isClaudeAccount(active)) lastClaudeIdRef.current = active.instanceId;
+    if (active && signInFamily(active) === "openai") lastOpenaiIdRef.current = active.instanceId;
+    const initial = pickerInstances.find((instance) => instance.instanceId === selection.instanceId) ?? pickerInstances[0];
+    setRailId(initial?.instanceId ?? null);
+    setChangedBotModel(false);
+    setOpen((wasOpen) => {
+      const next = !wasOpen || !toggle;
+      if (next) {
+        openFor(initial);
+        setFullView(false);
+      }
+      return next;
+    });
+  }
   const trigger = (
     <button data-tour="model"
       type="button"
       disabled={Boolean(bot.busy)}
-      onClick={() => {
-        if (bot.busy) return;
-        if (active && isClaudeAccount(active)) lastClaudeIdRef.current = active.instanceId;
-        if (active && signInFamily(active) === "openai") lastOpenaiIdRef.current = active.instanceId;
-        const initial = pickerInstances.find((instance) => instance.instanceId === selection.instanceId) ?? pickerInstances[0];
-        setRailId(initial?.instanceId ?? null);
-        setChangedBotModel(false);
-        setOpen((wasOpen) => {
-          const next = !wasOpen;
-          if (next) {
-            openFor(initial);
-            setFullView(false);
-          }
-          return next;
-        });
-      }}
+      onClick={() => openPicker(true)}
       aria-expanded={open && !bot.busy}
       aria-haspopup="dialog"
       className={cn(
@@ -897,7 +894,7 @@ export function ModelPicker({
               botModelId={botModelId}
               onPick={(model) => railInstance && pick(railInstance, model)}
               variantsRow={active?.capabilities?.modelVariants ? (
-                <ModelVariantRow compact wide bot={bot} threadId={threadId} updateBotDefault={Boolean(threadId) && simpleUpdatesBotDefault}
+                <ModelVariantRow compact wide bot={shown} threadId={threadId} updateBotDefault={Boolean(threadId) && simpleUpdatesBotDefault}
                   label={<span className="shrink-0 text-[12px] font-medium text-ink-secondary">{t("model.simple.reasoning")}</span>} />
               ) : undefined}
               effort={simpleEffort}
@@ -1035,7 +1032,7 @@ export function ModelPicker({
                     )}
 
                     <div data-model-list className="min-h-[min(180px,30dvh)] flex-1 overflow-y-auto px-2 pb-2">
-                      {pane === "main" ? (
+                      {pane === "main" && loadingList ? <div className="px-2 py-5 text-[13px] text-ink-secondary">{statusLine(t("model.loadingModels", { name: railInstance.displayName }))}</div> : pane === "main" ? (
                         <>
                           {railInstance.snapshot.update && (
                             <EngineUpdateNotice update={railInstance.snapshot.update} instance={railInstance} className="mx-1 mb-2" />
@@ -1113,7 +1110,7 @@ export function ModelPicker({
                 {!contained && (
                   <EffortRow
                     compact
-                    bot={bot}
+                    bot={shown}
                     threadId={threadId}
                     updateBotDefault={Boolean(threadId && scope === "bot")}
                     className="shrink-0 border-t border-hairline/40 px-4 py-2"

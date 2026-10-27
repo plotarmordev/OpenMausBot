@@ -36,6 +36,9 @@ it("applies a level picked while the bot is working to its next tool call, and l
       res.end(JSON.stringify({ data: [{ id: "fixture-model" }] }));
       return;
     }
+    // Only chat completions carry a body; anything else the server asks the endpoint (its context window, say) is not
+    // this fixture's to answer.
+    if (req.method !== "POST") { res.statusCode = 404; res.end(); return; }
     let text = "";
     for await (const chunk of req) text += chunk;
     const body = JSON.parse(text) as { messages: Array<{ role: string }>; tools?: Array<{ function: { name: string; description?: string } }> };

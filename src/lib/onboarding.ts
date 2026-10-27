@@ -1,4 +1,5 @@
 import { ONBOARDING_CLOUD_HINT, WELCOME_VERSION } from "../../electron/onboarding-record.mjs";
+import { freeFallback, rankAis, type AiTestState, type RankableAi } from "../../shared/ai-ranking";
 
 export interface OnboardingStatus {
   completedAt: string;
@@ -203,15 +204,36 @@ interface AiChoice {
   driverKind: string;
   access?: string;
   readOnly?: boolean;
+  snapshot?: { freeFallback?: boolean };
 }
 
-/** The one way the welcome recommends to connect an AI (a Claude account first, then a ChatGPT plan), and every other way. */
+/** The one way the welcome recommends to connect an AI, in the new-bot default's own order (shared/ai-ranking.ts: a Claude
+ * account first, then a ChatGPT plan), and every other way. */
 export function aiChoices<Instance extends AiChoice>(instances: readonly Instance[]): { recommended?: Instance; others: Instance[] } {
   const plan = (instance: Instance) => !instance.readOnly && instance.access !== "api" && instance.access !== "custom";
-  const recommended = instances.find((instance) => plan(instance) && instance.driverKind === "claudeAgent")
-    ?? instances.find((instance) => plan(instance) && instance.driverKind === "codex")
-    ?? instances.find((instance) => !instance.readOnly);
+  const recommended = rankAis(instances.filter(plan))[0] ?? instances.find((instance) => !instance.readOnly);
   return { recommended, others: instances.filter((instance) => instance !== recommended) };
+}
+
+/** The AI the welcome's Connect an AI step stands on: the best ready AI (the same ranking) that isn't OpenCode's free
+ * backup, passing over one whose test message got no answer. An AI not tested yet is `testing`; none ready is null. */
+export function welcomeAi<Instance extends RankableAi>(
+  instances: readonly Instance[],
+  ready: (instance: Instance) => boolean,
+  test: (instance: Instance) => AiTestState | undefined,
+): { instance: Instance; state: AiTestState } | null {
+  let silent: Instance | undefined;
+  for (const instance of rankAis(instances.filter((candidate) => ready(candidate) && !freeFallback(candidate)))) {
+    const state = test(instance) ?? "testing";
+    if (state !== "failed") return { instance, state };
+    silent ??= instance;
+  }
+  return silent ? { instance: silent, state: "failed" } : null;
+}
+
+/** It answered its test, or has no way to be tested and is trusted as before. */
+export function aiWorks(found: { state: AiTestState } | null): boolean {
+  return found?.state === "passed" || found?.state === "untestable";
 }
 
 interface SignInStep {

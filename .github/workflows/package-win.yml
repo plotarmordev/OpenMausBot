@@ -82,7 +82,7 @@ jobs:
             actual=$(sha256sum "$res/cloudflared/cloudflared.exe" | cut -d' ' -f1)
             [ "$actual" = "$expected" ] || {
               echo "::error::packaged cloudflared hash is $actual"; fail=1; }
-            "$res/cloudflared/cloudflared.exe" version | grep -Fq "cloudflared version 2026.8.2 " || {
+            "$res/cloudflared/cloudflared.exe" version | grep -Fq "cloudflared version 2026.10.3 " || {
               echo "::error::packaged cloudflared has the wrong version"; fail=1; }
           fi
           [ -f "$res/app-update.yml" ] || { echo "::error::missing $res/app-update.yml"; fail=1; }

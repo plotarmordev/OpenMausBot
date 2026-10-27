@@ -4,7 +4,7 @@ import path from "node:path";
 import os from "node:os";
 import { randomBytes, randomUUID } from "node:crypto";
 import { setTimeout as delay } from "node:timers/promises";
-import { createSharedCua, executeSharedOperation, personalSecretPaths, sharedComputerError } from "./shared-computer-access.mjs";
+import { createSharedCua, executeSharedOperation, personalSecretPaths, sharedComputerError, validCommandSeconds } from "./shared-computer-access.mjs";
 import { sharedCuaConnection } from "./shared-cua-connection.mjs";
 export { sharedCuaConnection };
 import { createLendingActivity, describeSharedOperation } from "./lending-activity.mjs";
@@ -91,7 +91,7 @@ export async function validateSharedFolders(folders) {
   return result;
 }
 
-const JOB_KEYS = new Set(["computer_id", "action", "folder_id", "path", "content", "encoding", "expected_sha256", "command", "tool_name", "arguments"]);
+const JOB_KEYS = new Set(["computer_id", "action", "folder_id", "path", "content", "encoding", "expected_sha256", "command", "timeout_seconds", "tool_name", "arguments"]);
 const JOB_ACTIONS = new Set(["list_files", "read_file", "write_file", "run_command", "computer_tools", "computer_call"]);
 const optionalText = (value, max) => value === undefined || (typeof value === "string" && value.length <= max);
 /** Refuses malformed input only; the grant still decides whether the operation is allowed. */
@@ -103,7 +103,7 @@ export function validSharedOperation(operation, computerId) {
     optionalText(operation.path, 2048) && optionalText(operation.content, 350_000) &&
     (operation.encoding === undefined || operation.encoding === "utf8" || operation.encoding === "base64") &&
     (operation.expected_sha256 === undefined || (typeof operation.expected_sha256 === "string" && /^[a-f0-9]{64}$/.test(operation.expected_sha256))) &&
-    optionalText(operation.command, 8000) && optionalText(operation.tool_name, 100) &&
+    optionalText(operation.command, 8000) && validCommandSeconds(operation.timeout_seconds) && optionalText(operation.tool_name, 100) &&
     (operation.arguments === undefined || (Boolean(operation.arguments) && typeof operation.arguments === "object" && !Array.isArray(operation.arguments)));
 }
 
@@ -262,7 +262,7 @@ export function createComputerSharing({ file, fetch: fetchImpl, environments, cu
       .catch(error => { throw error.status === 401 || error.status === 403 ? Object.assign(error, { problem: "connect-first" }) : error; });
     if (auth.kind !== "session" || !uuid(auth.id) || !uuid(descriptor.environmentId)) throw Object.assign(new Error("Complete server pairing or sign-in first"), { problem: "connect-first" });
     if (descriptor.capabilities?.sharedComputers !== true) throw new Error("Update this server to enable computer sharing");
-    return { auth, info: { sessionId: auth.id, environmentId: descriptor.environmentId }, details: descriptor.capabilities?.lendingDetails === true, link: descriptor.capabilities?.deviceLink === true, chrome: descriptor.capabilities?.myChromeLink === true };
+    return { auth, info: { sessionId: auth.id, environmentId: descriptor.environmentId }, details: descriptor.capabilities?.lendingDetails === true, link: descriptor.capabilities?.deviceLink === true, chrome: descriptor.capabilities?.myChromeLink === true, timeouts: descriptor.capabilities?.commandTimeouts === true };
   };
   const identity = async env => {
     await requireEnabled();
@@ -271,17 +271,19 @@ export function createComputerSharing({ file, fetch: fetchImpl, environments, cu
     return info;
   };
   const cloudIdentity = async env => {
-    const { auth, info, details, link, chrome: takesChrome } = await describe(env);
+    const { auth, info, details, link, chrome: takesChrome, timeouts } = await describe(env);
     if (auth.cloudHome !== true || !Array.isArray(auth.scopes) || !auth.scopes.includes("admin")) throw Object.assign(new Error("This server is not My Cloud"), { problem: "not-cloud" });
     if (details) supportsDetails.add(env.id); else supportsDetails.delete(env.id);
     if (link) supportsLink.add(env.id); else supportsLink.delete(env.id);
     if (takesChrome) supportsChrome.add(env.id); else supportsChrome.delete(env.id);
+    if (timeouts) supportsTimeouts.add(env.id); else supportsTimeouts.delete(env.id);
     return info;
   };
   const supportsDetails = new Set();
   const supportsLink = new Set();
   /** The Clouds that take the person's Chrome over the device link. */
   const supportsChrome = new Set();
+  const supportsTimeouts = new Set();
   /** My Cloud's browsers reach the web through this computer while lending runs; never while My Cloud sleeps, so a
    * sleeping Cloud is never dialled. */
   const keepLink = async (env, grant, signal) => {
@@ -348,6 +350,7 @@ export function createComputerSharing({ file, fetch: fetchImpl, environments, cu
             ...(supportsDetails.has(env.id) && LENT_PLATFORMS.has(process.platform) ? { platform: process.platform } : {}),
             ...(grant.cloud && supportsLink.has(env.id) ? { internet: lendsInternet(grant) } : {}),
             ...(grant.cloud && supportsChrome.has(env.id) ? { chrome: grant.chrome === true } : {}),
+            ...(supportsTimeouts.has(env.id) ? { commandTimeouts: true } : {}),
           }, signal, grant.secret);
           if (signal.aborted) break;
           status.set(env.id, { connected: true });
@@ -526,6 +529,14 @@ export function createComputerSharing({ file, fetch: fetchImpl, environments, cu
       store({ ...records, [env.id]: grant }); run(env, grant); changed(); return state(env.id);
     },
     cloudState,
+    /** What Files copies to My Cloud (electron/lent-folders.mjs): the folders lent to it, with this grant's id and the
+     * places no grant reaches; `{ off: true }` while nothing is lent to it. */
+    lentToCloud(env) {
+      const grant = env ? records[env.id] : undefined;
+      const lent = grant?.cloud ? grant : grant?.enabled === true ? grant : null;
+      if (lent?.enabled !== true || !Array.isArray(lent.folders)) return { off: true };
+      return { lendingId: lent.id, folders: lent.folders.map(({ id, path: where, name, write }) => ({ id, path: where, name, write: write === true })), protectedPaths: protectedRoots };
+    },
     /** Lending to My Cloud is running, so it calls My Cloud whenever it is awake. */
     lendingToCloud: () => [...running.keys()].some(id => Boolean(records[id]?.cloud)),
     /** A server is using this computer now: a job running on it, or its browsing going through this computer. */

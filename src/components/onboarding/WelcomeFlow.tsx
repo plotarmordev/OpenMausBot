@@ -2,7 +2,6 @@ import { useCallback, useEffect, useRef, useState, type KeyboardEvent as ReactKe
 import type { CloudOffer } from "../../../electron/cloud-home.mjs";
 import { MausAvatar } from "@/components/Avatar";
 import { useDesktopCapabilities } from "@/components/DesktopCapabilities";
-import { engineReady } from "@/components/EngineLibrary";
 import { setEmailGateDone, track } from "@/lib/analytics";
 import { brand } from "@/lib/brand";
 import { cn } from "@/lib/cn";
@@ -10,6 +9,7 @@ import { t } from "@/lib/i18n";
 import type { MausMotion, MausState } from "@/lib/mascot";
 import { detectSetupWithin, localSetupImport, setupImportApi, type SetupImportClient } from "@/lib/setup-import";
 import {
+  aiWorks,
   beatWidth,
   beatsFor,
   completionPatch,
@@ -26,6 +26,7 @@ import { api, useStore } from "@/state/store";
 import { CloudBeat, useCloudBeatOffer } from "./beats/CloudBeat";
 import type { SetupDetection, SetupImportResult } from "../../../shared/setup-import";
 import { EnginesBeat } from "./beats/EnginesBeat";
+import { useWelcomeAi } from "./welcome-ai";
 import { HelloBeat } from "./beats/HelloBeat";
 import { ImportBeat } from "./beats/ImportBeat";
 import { PermissionsBeat } from "./beats/PermissionsBeat";
@@ -107,7 +108,9 @@ export function WelcomeFlow({
   const [importResult, setImportResult] = useState<SetupImportResult | null>(null);
   const [importBusy, setImportBusy] = useState(false);
   const aiStepShown = useRef(initialBeat === "engines");
-  const aiReady = !aiStepShown.current && state.instances.some(engineReady);
+  // An AI already works only once it answered a test message; OpenCode's free backup never counts.
+  const workingAi = useWelcomeAi(state.instances, !hosted);
+  const aiReady = !aiStepShown.current && aiWorks(workingAi);
   const beats = beatsFor({ dictation: dictation ?? capabilities.dictation.available, hosted, setupImport: detection !== null, cloud: offer !== null, aiReady });
   const [beat, setBeat] = useState<BeatId>(() => {
     const first = resumeBeat(beats, initialBeat);

@@ -2,6 +2,7 @@ import { randomUUID, timingSafeEqual } from "node:crypto";
 import { z } from "zod";
 import type { DeviceLinks, LinkedComputer } from "./device-links.ts";
 import { awayNotice, deviceWord, lendScreenSteps, LENT_PLATFORMS, type LentComputers } from "./lent-computers.ts";
+import type { LentCopies } from "./lent-copies.ts";
 export { LentComputers } from "./lent-computers.ts";
 
 const folder = z.object({ id: z.string().uuid(), name: z.string().min(1).max(120), write: z.boolean() }).strict();
@@ -14,6 +15,9 @@ export const sharedComputerRegistration = z.object({
   internet: z.boolean().optional(),
   /** Its real Chrome, for the bots' browser; sent only to a server that advertises myChromeLink. */
   chrome: z.boolean().optional(),
+  /** It takes and honours run_command's timeout_seconds; sent only to a server that advertises commandTimeouts. Older
+   * desktops refuse a job with a field they do not know, and stop every command at 30 seconds. */
+  commandTimeouts: z.literal(true).optional(),
 }).strict();
 export const sharedComputerOperation = z.object({
   computer_id: z.string().uuid(),
@@ -21,11 +25,15 @@ export const sharedComputerOperation = z.object({
   folder_id: z.string().uuid().optional(), path: z.string().max(2048).optional(),
   content: z.string().max(350_000).optional(), encoding: z.enum(["utf8", "base64"]).optional(),
   expected_sha256: z.string().regex(/^[a-f0-9]{64}$/).optional(),
-  command: z.string().max(8000).optional(), tool_name: z.string().max(100).optional(),
+  command: z.string().max(8000).optional(), timeout_seconds: z.number().int().min(1).max(240).optional(), tool_name: z.string().max(100).optional(),
   arguments: z.record(z.string(), z.unknown()).optional(),
 }).strict();
 type Registration = z.infer<typeof sharedComputerRegistration>;
 type Operation = z.infer<typeof sharedComputerOperation>;
+const COMMAND_SECONDS = 120;
+/** A command's deadline is its own limit on the desktop plus time for the result to come back. */
+const jobDeadlineMs = (registration: Registration, operation: Operation) =>
+  operation.action === "run_command" && registration.commandTimeouts ? (operation.timeout_seconds ?? COMMAND_SECONDS) * 1000 + 15_000 : 45_000;
 /** The registering session alone may poll, answer and disconnect; only that person's bot turns may see or use it. */
 export type SharedComputerOwner = { session: string; person: string };
 export type SharedComputerStatus = {
@@ -97,7 +105,11 @@ export class SharedComputers {
   private sessionLive: (id: string) => boolean;
   private lent: LentComputers | undefined;
   private links: Pick<DeviceLinks, "drop"> | undefined;
-  constructor(sessionLive: (id: string) => boolean, lent?: LentComputers, links?: Pick<DeviceLinks, "drop">) { this.sessionLive = sessionLive; this.lent = lent; this.links = links; }
+  /** A Cloud home's copies of lent folders: what a computer that is away still lends (server/lent-copies.ts). */
+  private copies: Pick<LentCopies, "away" | "answer"> | undefined;
+  constructor(sessionLive: (id: string) => boolean, lent?: LentComputers, links?: Pick<DeviceLinks, "drop">, copies?: Pick<LentCopies, "away" | "answer">) {
+    this.sessionLive = sessionLive; this.lent = lent; this.links = links; this.copies = copies;
+  }
   private static key(session: string, id: string) { return `${session}\n${id}`; }
   register(registration: Registration, owner: SharedComputerOwner, secret: string) {
     if (this.closed) throw failure(RESTARTING, 503);
@@ -158,7 +170,8 @@ export class SharedComputers {
   /** For a bot: which known computer is offline and since when, and the sentence to say; nothing while one is online. */
   away(principal: string | null) {
     if (!principal) return {};
-    return awayNotice(this.lent?.list(principal) ?? [], new Set(this.list(principal).map(registration => registration.id)));
+    const online = this.list(principal);
+    return { ...awayNotice(this.lent?.list(principal) ?? [], new Set(online.map(registration => registration.id))), ...this.copies?.away(principal, online) };
   }
   /** For a bot: how the person lends apps and screen, when an online computer of theirs lends neither. */
   screenNotLent(principal: string | null): { screen?: string } {
@@ -267,6 +280,9 @@ export class SharedComputers {
       const known = lent();
       if (known && this.online(known)) break;
       if (!known || Date.now() - known.seen > RECONNECTING_MS || Date.now() >= deadline || !active()) {
+        // Away: its lent folders answer from their copy here, a write to one lent with editing waits for it.
+        const copy = active() ? this.copies?.answer(operation, principal, this.list(principal)) : null;
+        if (copy) return copy;
         throw failure(known && this.sessionLive(known.owner.session)
           ? lentButOffline(known.registration.name, known.seen, deviceWord(known.registration.platform))
           : this.offline(principal, operation.computer_id));
@@ -278,9 +294,11 @@ export class SharedComputers {
     if (refusal) throw failure(refusal, 403);
     if (entry.jobs.size >= 1) throw failure("This shared computer is busy. Wait for its current action to finish.");
     if (!active()) throw failure("The requesting turn ended", 401);
+    const { timeout_seconds: _timeout, ...withoutTimeout } = operation;
+    const forDesktop = entry.registration.commandTimeouts ? operation : withoutTimeout;
     return new Promise((resolve, reject) => {
       const id = randomUUID();
-      const job: Job = { id, operation, active, sent: false, leased: false, resolve, reject, timer: setTimeout(() => this.finish(entry, job, failure("Computer action timed out. Its outcome is unknown; inspect before retrying.")), 45_000) };
+      const job: Job = { id, operation: forDesktop, active, sent: false, leased: false, resolve, reject, timer: setTimeout(() => this.finish(entry, job, failure("Computer action timed out. Its outcome is unknown; inspect before retrying.")), jobDeadlineMs(entry.registration, operation)) };
       entry.jobs.set(id, job); entry.wake?.();
     });
   }
