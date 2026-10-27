@@ -4,21 +4,26 @@ import { fileURLToPath } from "node:url";
 import { DatabaseSync } from "node:sqlite";
 import { expect, it } from "vitest";
 import { launchRestartableServer } from "./testing/restartable-server.ts";
+import { runControlOmb } from "../scripts/control-omb.ts";
 import { readHandoffs } from "./testing/handoff-rows.ts";
 import { z } from "zod";
 
 const taskSchema = z.object({ threadId: z.string(), busy: z.boolean().optional(), modelSelection: z.object({ instanceId: z.string(), model: z.string() }).optional() });
-const botSchema = z.object({ id: z.string(), chiefOfStaff: z.boolean().optional(), tasks: z.array(taskSchema).default([]) });
+const botSchema = z.object({ id: z.string(), activeTaskId: z.string().optional(), chiefOfStaff: z.boolean().optional(), tasks: z.array(taskSchema).default([]) });
 const responseSchema = z.object({
   bots: z.array(botSchema).default([]), bot: botSchema.optional(), task: taskSchema.optional(),
   routine: z.object({ id: z.string() }).optional(), botQueuedMessages: z.record(z.string(), z.array(z.unknown())).default({}),
   messages: z.array(z.object({ role: z.string(), at: z.number(), text: z.string().optional(), queueId: z.string().optional(),
-    requestCancelled: z.boolean().optional(), turnSucceeded: z.boolean().optional(), tool: z.object({ name: z.string() }).optional() })).default([]),
+    requestCancelled: z.boolean().optional(), turnSucceeded: z.boolean().optional(),
+    roomRequest: z.object({ id: z.string(), phase: z.string() }).optional(),
+    tool: z.object({ name: z.string(), ok: z.boolean().optional() }).optional() })).default([]),
 });
+const createdBotSchema = z.object({ bot: z.object({ id: z.string(), activeTaskId: z.string() }) });
 
 const primary = { instanceId: "opencodeGo", model: "fixture/recovery" };
 const backup = { instanceId: "claude", model: "claude-sonnet-5" };
-const lines = (path: string): Array<{ method?: string }> => existsSync(path) ? readFileSync(path, "utf8").split("\n").filter(Boolean).map(line => JSON.parse(line)) : [];
+const lines = (path: string): Array<{ method?: string; cwd?: string; botId?: string; threadId?: string; model?: string; prompt?: unknown }> =>
+  existsSync(path) ? readFileSync(path, "utf8").split("\n").filter(Boolean).map(line => JSON.parse(line)) : [];
 
 it.each(["missing-order-restart", "equal-ms-before", "equal-ms-restart", "disabled", "dispatching", "pending", "superseded", "stopped", "stopped-restart",
   "global-changed", "global-changed-restart", "fallback-changed", "fallback-changed-restart",
@@ -198,3 +203,100 @@ it.each(["missing-order-restart", "equal-ms-before", "equal-ms-restart", "disabl
     console.info(JSON.stringify({ mode, logPath: server.logPath }));
   }
 }, 90_000);
+
+it("continues a coordinated recovery pending across a restart exactly once and reports it to the Chief", async () => {
+  const server = await launchRestartableServer({ scripted: true });
+  const { dataDir } = server;
+  const failure = join(dataDir, "failure.json");
+  const failureGate = join(dataDir, "failure-release");
+  const holderGate = join(dataDir, "holder-release");
+  const holderReady = join(dataDir, "holder-ready");
+  const rpc = join(dataDir, "primary.jsonl");
+  const api = async (method: string, path: string, body?: unknown) => {
+    const response = await fetch(server.url + path, { method, headers: { "content-type": "application/json", origin: server.url },
+      ...(body === undefined ? {} : { body: JSON.stringify(body) }), signal: AbortSignal.timeout(30_000) });
+    const result = await response.json();
+    expect(response.ok, JSON.stringify(result)).toBe(true);
+    return responseSchema.parse(result);
+  };
+  const control = async (...args: string[]) => createdBotSchema.parse(await runControlOmb([...args, "--url", server.url]));
+  try {
+    await server.stop();
+    const configPath = join(dataDir, "config.json");
+    const config = JSON.parse(readFileSync(configPath, "utf8"));
+    config.instances.opencodeGo = { driver: "opencodeGo", displayName: "Primary fixture",
+      config: { cli: fileURLToPath(new URL("./testing/fake-acp-cli.ts", import.meta.url)) },
+      environment: { FAKE_ACP_MODELS: primary.model, FAKE_ACP_RPC_APPEND_FILE: rpc,
+        FAKE_ACP_RPC_FAILURE_FILE: failure, FAKE_ACP_RPC_FAILURE_METHOD: "initialize", FAKE_ACP_RPC_FAILURE_GATE: failureGate } };
+    config.automaticRecovery = { enabled: true, backup };
+    config.threads = { maxConcurrentPerBot: 2 };
+    writeFileSync(configPath, JSON.stringify(config));
+    await server.start();
+    const starter = (await api("GET", "/api/bots")).bots.find(bot => bot.chiefOfStaff);
+    if (starter) await api("PATCH", `/api/bots/${starter.id}`, { chiefOfStaff: false });
+    const { bot: chief } = await control("new-bot", "--name", "Restart Chief", "--section", "Leadership");
+    const { bot: specialist } = await control("new-bot", "--name", "Restart specialist", "--section", "Engineering");
+    await api("PATCH", `/api/bots/${chief.id}`, { chiefOfStaff: true, managedSections: ["Engineering"], acknowledgePeerScope: true });
+    await api("PATCH", `/api/bots/${specialist.id}/tasks/${specialist.activeTaskId}`, { modelSelection: primary, updateBotDefault: true });
+    const holderThread = (await api("POST", `/api/bots/${specialist.id}/tasks`, { title: "Slot holder" })).task!.threadId;
+    await api("PATCH", `/api/bots/${specialist.id}/tasks/${holderThread}`, { modelSelection: backup });
+    const brief = "RESTARTED_COORDINATED_RECOVERY_4K";
+    const specialistReply = "SPECIALIST_RECOVERED_AFTER_RESTART_5L";
+    const finalReply = "Chief received the restarted specialist result";
+    writeFileSync(server.planPath, JSON.stringify({
+      [chief.id]: { turns: [
+        { steps: [{ arguments: { bot_ids: [specialist.id], request_key: "restart-recovery", message: brief } }], reply: "Assigned" },
+        { expectContextIncludes: [specialistReply], reply: finalReply },
+      ] },
+      [specialist.id]: { reply: specialistReply,
+        byPrompt: [{ promptIncludes: "HOLD_SPECIALIST_SLOT", plan: { gateFile: holderGate, readyFile: holderReady, reply: "Held" } }] },
+    }));
+    writeFileSync(failure, JSON.stringify({ code: -32603, message: "Internal error", data: { details: "Upstream connection timed out" } }));
+    const primaryTurns = () => lines(rpc).filter(call => call.method === "initialize" && !String(call.cwd ?? "").includes("discovery"));
+    await api("POST", `/api/bots/${chief.id}/messages`, { threadId: chief.activeTaskId, text: "Ask Engineering to verify this and report back." });
+    await expect.poll(() => readHandoffs(dataDir).find(node => node.parentId)?.status, { timeout: 30_000 }).toBe("running");
+    const child = readHandoffs(dataDir).find(node => node.parentId)!;
+    await expect.poll(() => primaryTurns().length, { timeout: 20_000 }).toBe(1);
+    await api("POST", `/api/bots/${specialist.id}/messages`, { threadId: holderThread, text: "HOLD_SPECIALIST_SLOT" });
+    await expect.poll(() => existsSync(holderReady), { timeout: 20_000 }).toBe(true);
+    await api("PATCH", "/api/config", { threads: { maxConcurrentPerBot: 1 } });
+    writeFileSync(failureGate, "");
+    const journal = () => {
+      const db = new DatabaseSync(join(dataDir, "messages.db"), { readOnly: true });
+      try { return db.prepare("SELECT status, json_extract(payload, '$.recovery.coordination.id') AS node FROM chat_followups WHERE thread_id = ?").all(child.threadId); }
+      finally { db.close(); }
+    };
+    await expect.poll(journal, { timeout: 20_000 }).toEqual([{ status: "pending", node: child.id }]);
+    await server.stop();
+    await server.start();
+    writeFileSync(holderGate, "");
+    const chiefMessages = async () => (await api("GET", `/api/threads/${chief.activeTaskId}/messages?limit=100`)).messages;
+    await expect.poll(async () => (await chiefMessages()).some(message => message.text === finalReply), { timeout: 40_000 }).toBe(true);
+    await expect.poll(() => readHandoffs(dataDir).find(node => node.id === child.id)?.status, { timeout: 20_000 }).toBe("completed");
+    await expect.poll(journal, { timeout: 20_000 }).toEqual([]);
+    const nodes = readHandoffs(dataDir);
+    const turns = lines(`${server.planPath}.evidence.jsonl`);
+    const specialistMessages = (await api("GET", `/api/threads/${child.threadId}/messages?limit=100`)).messages;
+    const final = await chiefMessages();
+    writeFileSync(`${server.logPath}.coordinated-recovery.json`, JSON.stringify({ nodes, turns, final, specialistMessages }, null, 2));
+    expect(nodes.find(node => node.id === child.id)).toMatchObject({ status: "completed", result: specialistReply });
+    expect(nodes.filter(node => node.threadId === child.threadId)).toHaveLength(1);
+    expect(nodes.find(node => node.id === child.parentId)?.status).toBe("completed");
+    expect(primaryTurns()).toHaveLength(1);
+    const childTurns = turns.filter(turn => turn.botId === specialist.id && turn.threadId === child.threadId);
+    expect(childTurns).toMatchObject([{ model: backup.model }]);
+    expect(JSON.stringify(childTurns[0]?.prompt)).toContain(brief);
+    expect(JSON.stringify(childTurns[0]?.prompt)).not.toContain("OpenMausBot restarted while your previous turn");
+    expect(final.filter(message => message.text === finalReply)).toHaveLength(1);
+    expect(final.filter(message => message.roomRequest?.id === child.id && message.roomRequest.phase === "result")).toMatchObject([{ tool: { ok: true } }]);
+    expect(final.some(message => message.tool?.name.includes("interrupted"))).toBe(false);
+    expect(specialistMessages.filter(message => message.roomRequest?.id === child.id && message.roomRequest.phase === "request")).toHaveLength(1);
+    expect(specialistMessages.some(message => message.role === "user")).toBe(false);
+    expect(specialistMessages.filter(message => message.text === specialistReply)).toHaveLength(1);
+    expect(specialistMessages.filter(message => message.tool?.name.startsWith("recovery:"))).toHaveLength(1);
+  } finally {
+    writeFileSync(failureGate, ""); writeFileSync(holderGate, "");
+    await server.close();
+    console.info(JSON.stringify({ logPath: server.logPath }));
+  }
+}, 120_000);

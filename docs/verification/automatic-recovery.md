@@ -36,8 +36,18 @@ message supersedes recovery without being replayed or reordered. Disabling recov
 without selecting the backup or recording a recovery switch.
 Queued admission rechecks managed policy and the backup's recovery capabilities.
 A policy refusal settles the durable item without changing the selected model,
-recording a failover or publishing a recovery activity. The commit boundary also
-checks that the target is enabled and still permitted by managed policy.
+recording a failover or publishing a recovery activity. The same checks run
+again at the commit boundary, with no await before the commit: the request,
+plan, source and target selections, managed policy, recovery capabilities
+against the still-configured source engine, and, for a usage-limit recovery,
+that the backup is not another sign-in to the limited subscription after a
+provider reload. A queued recovery neither heals the source model nor restores
+an earlier limit failover before it commits, so the backup is the only model
+change and its activity the only recovery line.
+
+```sh
+pnpm exec vitest run --no-file-parallelism server/automatic-recovery.e2e.test.ts -t "same subscription|healing a source"
+```
 
 A pending recovery survives restart and dispatches once when admitted. A recovery
 already dispatching at shutdown is interrupted, not replayed: restart retains
@@ -46,6 +56,15 @@ another user message.
 A pending recovery owns its failed source across restart; settling that source
 does not publish an interrupted-turn notice. When stale recovery settles, queue
 draining continues so newer input does not wait for an unrelated turn event.
+A coordinated node whose recovery is pending at restart is neither failed nor
+rerun: the coordinator's resumed node takes over the durable queue row, the
+backup runs the original prompt once, and its result settles that node. Until
+the node resumes, the row waits; if the node ended, the row settles without
+backup work.
+
+```sh
+pnpm exec vitest run --no-file-parallelism server/automatic-recovery-restart.e2e.test.ts -t "coordinated recovery pending"
+```
 
 Direct bot threads, Chief and direct coordinated work use this path. Channels
 and drivers without the startup-proof contract do not. Credential-card

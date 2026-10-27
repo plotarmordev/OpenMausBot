@@ -12,6 +12,8 @@ import type { WireBot, WireTask, WireMessage } from "../shared/wire.ts";
 
 const primary = { instanceId: "opencodeGo", model: "fixture/recovery" };
 const backup = { instanceId: "claude", model: "claude-sonnet-5" };
+const limitBackup = { instanceId: "claudeWork", model: "claude-sonnet-5" };
+const holder = { instanceId: "holder", model: "fixture/holder" };
 const transient = { code: -32603, message: "Internal error", data: { details: "Upstream connection timed out" } };
 const jsonLines = (path: string): any[] => existsSync(path)
   ? readFileSync(path, "utf8").split("\n").filter(Boolean).map((line) => JSON.parse(line)) : [];
@@ -21,10 +23,10 @@ const CATALOG_PROBE_FOLDER = ["", "providers", "opencode", "discovery"].join(sep
 const turnCalls = (path: string) => jsonLines(path).filter((call) => !String(call.cwd ?? "").endsWith(CATALOG_PROBE_FOLDER));
 
 async function withRecoveryFixture(
-  options: { enabled?: boolean; method?: string; error?: unknown; afterOutput?: boolean; backupFails?: boolean; gated?: boolean; scripted?: boolean; codexBackup?: boolean; parentPort?: boolean; frozenNow?: number },
+  options: { enabled?: boolean; method?: string; error?: unknown; afterOutput?: boolean; backupFails?: boolean; gated?: boolean; scripted?: boolean; codexBackup?: boolean; parentPort?: boolean; frozenNow?: number; limitBackup?: boolean },
   check: (fixture: {
     api: (method: string, path: string, body?: unknown, expectedStatus?: number, token?: string) => Promise<any>;
-    applyPolicy: () => Promise<void>;
+    applyPolicy: (allowedEngines?: string[]) => Promise<void>;
     control: (...args: string[]) => Promise<any>;
     calls: () => Array<{ pid: number; method: string }>;
     backupPrompts: () => any[];
@@ -84,7 +86,15 @@ async function withRecoveryFixture(
       FAKE_CLAUDE_PROMPTS: backupFile, FAKE_CLAUDE_TOOL_CALLS: "[]",
       FAKE_CLAUDE_MODE: options.backupFails ? "not-logged-in" : "happy",
     };
-    config.automaticRecovery = { enabled: options.enabled !== false, backup };
+    config.automaticRecovery = { enabled: options.enabled !== false, backup: options.limitBackup ? limitBackup : backup };
+    if (options.limitBackup) {
+      config.instances.claudeWork = { ...config.instances.claude, displayName: "Second Claude sign-in",
+        environment: { ...config.instances.claude.environment, OMB_FIXTURE_ROLE: "backup" } };
+      config.instances.holder = { driver: "opencodeGo", displayName: "Holder fixture", config: { cli },
+        environment: { FAKE_ACP_MODELS: holder.model, FAKE_ACP_MODE: "echo-gated",
+          FAKE_ACP_GATE_FILE: join(dataDir, "holder-release"), FAKE_ACP_STARTED_FILE: join(dataDir, "holder-started") } };
+      config.anthropic = { key: "sk-ant-fixture-pay-per-use", everyClaudeBot: true };
+    }
     writeFileSync(configPath, JSON.stringify(config));
     const clockPath = join(dataDir, "frozen-clock.cjs");
     if (options.frozenNow !== undefined) writeFileSync(clockPath, `Date.now = () => ${JSON.stringify(options.frozenNow)};`);
@@ -116,11 +126,11 @@ async function withRecoveryFixture(
     writeFileSync(failureFile, JSON.stringify(options.error ?? transient));
     await check({
       api, control, calls: () => turnCalls(rpcFile), backupPrompts: () => jsonLines(backupFile),
-      applyPolicy: async () => {
+      applyPolicy: async (allowedEngines = ["opencodeGo"]) => {
         const acknowledgement = once(server!, "message", { signal: AbortSignal.timeout(10_000) });
         server!.send({ type: "openmausbot:managed-desktop-policy", requestId: "recovery-policy", policy: {
           organizationId: "11111111-1111-4111-8111-111111111111", organizationName: "Fixture Policy",
-          expiresAt: Date.now() + 60_000, version: 3, companyModelsOnly: false, allowedEngines: ["opencodeGo"],
+          expiresAt: Date.now() + 60_000, version: 3, companyModelsOnly: false, allowedEngines,
           mcp: { allowCustom: true, allowlist: [] },
           computers: { thisComputer: true, localVm: true, box: true, vps: true }, remoteAccess: true,
         } });
@@ -667,6 +677,118 @@ it.each(["Stop", "new message"])("does not recover a superseded turn after %s", 
     const { messages } = await control("messages", "--bot", bot.id, "--task", threadId, "--limit", "20");
     for (const text of ["SUPERSEDED_WORK_5U", "NEW_INTENT_6V"]) {
       expect(messages.filter((message: any) => message.role === "user" && message.text === text)).toHaveLength(1);
+    }
+  });
+}, 90_000);
+
+it("refuses a queued usage-limit recovery whose backup became the same subscription before it could start", async () => {
+  await withRecoveryFixture({ limitBackup: true }, async ({ api, backupPrompts, dataDir, evidence }) => {
+    const limitGate = join(dataDir, "limit-release");
+    const primaryPrompts = join(dataDir, "primary-claude-prompts.jsonl");
+    const wrapper = join(dataDir, "limit-claude.mjs");
+    writeFileSync(wrapper, [
+      "#!/usr/bin/env node",
+      'if (process.env.OMB_FIXTURE_ROLE !== "backup") {',
+      'process.env.FAKE_CLAUDE_MODE = "usage-limit";',
+      `process.env.FAKE_CLAUDE_LIMITED_GATE = ${JSON.stringify(limitGate)};`,
+      `process.env.FAKE_CLAUDE_PROMPTS = ${JSON.stringify(primaryPrompts)};`,
+      "}",
+      "// The fake CLI reads its environment at module initialization.",
+      `await import(${JSON.stringify(new URL("./testing/fake-claude-cli.ts", import.meta.url).href)});`,
+    ].join("\n"), { mode: 0o700 });
+    await api("PATCH", "/api/instances/claude", { cli: wrapper });
+    await api("PATCH", "/api/instances/claudeWork", { cli: wrapper });
+    await api("PATCH", "/api/config", { threads: { maxConcurrentPerBot: 2 } });
+    const { bot } = await api("POST", "/api/bots", { name: "Quota revalidation", modelSelection: backup }, 201);
+    const threadId = (await api("POST", `/api/bots/${bot.id}/tasks`, { title: "Limited work" }, 201)).task.threadId;
+    const holderThread = (await api("POST", `/api/bots/${bot.id}/tasks`, { title: "Slot holder" }, 201)).task.threadId;
+    await api("PATCH", `/api/bots/${bot.id}/tasks/${holderThread}`, { modelSelection: holder });
+    const tasks = async () => (await api("GET", "/api/bots?messages=0")).bots.find((entry: WireBot) => entry.id === bot.id).tasks as WireTask[];
+    const messages = async () => (await api("GET", `/api/threads/${threadId}/messages?limit=100`)).messages as WireMessage[];
+    const journal = () => {
+      const db = new DatabaseSync(join(dataDir, "messages.db"), { readOnly: true });
+      try { return db.prepare("SELECT status, json_extract(payload, '$.recovery.limit') IS NOT NULL AS limited FROM chat_followups WHERE thread_id = ?").all(threadId); }
+      finally { db.close(); }
+    };
+    const failovers = () => existsSync(join(dataDir, "limit-failovers.json")) ? readFileSync(join(dataDir, "limit-failovers.json"), "utf8") : null;
+    const beforeFailovers = failovers();
+    await api("POST", `/api/bots/${bot.id}/messages`, { threadId, text: "LIMITED_WORK_WAITS" }, 202);
+    await expect.poll(() => jsonLines(primaryPrompts).length, { timeout: 20_000 }).toBe(1);
+    await api("POST", `/api/bots/${bot.id}/messages`, { threadId: holderThread, text: "HOLD_THE_SLOT" }, 202);
+    await expect.poll(() => existsSync(join(dataDir, "holder-started")), { timeout: 20_000 }).toBe(true);
+    await api("PATCH", "/api/config", { threads: { maxConcurrentPerBot: 1 } });
+    writeFileSync(limitGate, "");
+    await expect.poll(journal, { timeout: 20_000 }).toEqual([{ status: "pending", limited: 1 }]);
+    expect((await tasks()).find(task => task.threadId === threadId)?.modelSelection).toEqual(backup);
+    await api("PATCH", "/api/config", { anthropic: { key: "sk-ant-fixture-pay-per-use", everyClaudeBot: false } });
+    writeFileSync(join(dataDir, "holder-release"), "");
+    await expect.poll(journal, { timeout: 20_000 }).toEqual([]);
+    await expect.poll(async () => (await tasks()).some(task => task.busy), { timeout: 20_000 }).toBe(false);
+    const final = await messages();
+    evidence.push({ final, journal: journal(), backupPrompts: backupPrompts() });
+    expect(backupPrompts()).toHaveLength(0);
+    expect(jsonLines(primaryPrompts)).toHaveLength(1);
+    expect((await tasks()).find(task => task.threadId === threadId)?.modelSelection).toEqual(backup);
+    expect(failovers()).toBe(beforeFailovers);
+    expect(final.filter(message => message.tool?.name.startsWith("recovery:"))).toHaveLength(0);
+    expect(final.filter(message => message.role === "user" && message.text === "LIMITED_WORK_WAITS")).toHaveLength(1);
+    expect(final.some(message => message.tool?.name.includes("Automatic recovery unavailable:"))).toBe(true);
+  });
+}, 90_000);
+
+it("commits a queued recovery without first healing a source the policy now refuses", async () => {
+  await withRecoveryFixture({ gated: true, parentPort: true }, async ({ api, control, calls, backupPrompts, applyPolicy, dataDir, gateFile, evidence }) => {
+    const { bot } = await control("new-bot", "--name", "Source revalidation");
+    const threadId = (await api("POST", `/api/bots/${bot.id}/tasks`, { title: "Ordinary recovery" })).task.threadId;
+    const holderGate = join(dataDir, "source-holder-release");
+    const wrapper = join(dataDir, "source-claude.mjs");
+    writeFileSync(wrapper, [
+      "#!/usr/bin/env node",
+      'import { basename } from "node:path";',
+      `if (basename(process.cwd()) !== ${JSON.stringify(threadId)}) {`,
+      'process.env.FAKE_CLAUDE_MODE = "slow";',
+      `process.env.FAKE_CLAUDE_SLOW_FINISH_GATE = ${JSON.stringify(holderGate)};`,
+      'delete process.env.FAKE_CLAUDE_PROMPTS;',
+      "}",
+      "// The fake CLI reads its environment at module initialization.",
+      `await import(${JSON.stringify(new URL("./testing/fake-claude-cli.ts", import.meta.url).href)});`,
+    ].join("\n"), { mode: 0o700 });
+    await api("PATCH", "/api/instances/claude", { cli: wrapper });
+    await api("PATCH", "/api/config", { threads: { maxConcurrentPerBot: 2 } });
+    await api("PATCH", `/api/bots/${bot.id}/tasks/${threadId}`, { modelSelection: primary });
+    const tasks = async () => (await api("GET", "/api/bots?messages=0")).bots.find((entry: WireBot) => entry.id === bot.id).tasks as WireTask[];
+    const messages = async () => (await api("GET", `/api/threads/${threadId}/messages?limit=100`)).messages as WireMessage[];
+    const journal = () => {
+      const db = new DatabaseSync(join(dataDir, "messages.db"), { readOnly: true });
+      try { return db.prepare("SELECT status FROM chat_followups WHERE thread_id = ?").all(threadId); }
+      finally { db.close(); }
+    };
+    await api("POST", `/api/bots/${bot.id}/messages`, { threadId, text: "RECOVER_FROM_REFUSED_SOURCE" }, 202);
+    await expect.poll(() => calls().some(call => call.method === "initialize"), { timeout: 20_000 }).toBe(true);
+    const { routine } = await api("POST", "/api/routines", {
+      name: "Source holder", prompt: "Hold the slot.", target: "bot", botId: bot.id, runOn: "maus", enabled: true,
+      schedule: { type: "daily", time: "23:00" },
+    });
+    try {
+      await api("POST", `/api/routines/${routine.id}/run`);
+      await expect.poll(async () => (await tasks()).some(task => task.threadId !== threadId && task.busy), { timeout: 20_000 }).toBe(true);
+      await api("PATCH", "/api/config", { threads: { maxConcurrentPerBot: 1 } });
+      writeFileSync(gateFile, "");
+      await expect.poll(journal, { timeout: 20_000 }).toEqual([{ status: "pending" }]);
+      await applyPolicy(["claudeAgent"]);
+      writeFileSync(holderGate, "");
+      await expect.poll(backupPrompts, { timeout: 20_000 }).toHaveLength(1);
+      await expect.poll(async () => (await tasks()).some(task => task.busy), { timeout: 20_000 }).toBe(false);
+      await expect.poll(journal, { timeout: 20_000 }).toEqual([]);
+      const final = await messages();
+      evidence.push({ final, tasks: await tasks() });
+      expect(final.filter(message => message.tool?.name.startsWith("notice:"))).toHaveLength(0);
+      expect(final.filter(message => message.tool?.name.startsWith("recovery:"))).toHaveLength(1);
+      expect(final.filter(message => message.role === "user" && message.text === "RECOVER_FROM_REFUSED_SOURCE")).toHaveLength(1);
+      expect((await tasks()).find(task => task.threadId === threadId)?.modelSelection).toEqual(backup);
+    } finally {
+      writeFileSync(holderGate, "");
+      await api("DELETE", `/api/routines/${routine.id}`);
     }
   });
 }, 90_000);

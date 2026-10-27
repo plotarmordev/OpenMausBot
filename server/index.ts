@@ -254,6 +254,7 @@ import type { DataContext } from "./data-context.ts";
 import { promptWithDataContext } from "../shared/data-context.ts";
 import { admit, roomTurnHolds } from "./admission.ts";
 import {
+  cancelSteeredMessage,
   drainSteeredMessages,
   hasQueuedSteeredMessages,
   isSteeredMessageQueued,
@@ -3981,16 +3982,39 @@ function runRootTurn(node: HandoffView, bot: BotRecord, signal: AbortSignal, com
   });
 }
 
+function ownRestoredRecovery(node: HandoffView, resumed: boolean, signal: AbortSignal, queueId: string): Promise<HostTurnResult> {
+  if (!isSteeredMessageQueued(node.botId, node.threadId, queueId)) {
+    return Promise.resolve({ ok: false, text: "Automatic recovery ended before the backup started." });
+  }
+  return new Promise<HostTurnResult>(resolve => {
+    let done = false;
+    const finish = (outcome: HostTurnResult) => {
+      if (done) return;
+      done = true; signal.removeEventListener("abort", abort); resolve(outcome);
+    };
+    const abort = () => {
+      if (!cancelSteeredMessage(node.botId, queueId, node.threadId)) void interruptDirectThread(node.botId, node.threadId).catch(() => {});
+      finish({ ok: false, text: "Coordinated work was stopped" });
+    };
+    queuedRecoveryCallbacks.set(queueId, { coordination: { id: node.id, resumed, settle: finish }, onDispatchError: error => finish({ ok: false, text: error }) });
+    signal.addEventListener("abort", abort, { once: true });
+    if (signal.aborted) abort();
+    else drainQueuedSends();
+  });
+}
+
 /** Read once, before boot recovery settles its rows: a `dispatched` follow-up's words never go to a model again. */
 let bootFollowups: Map<string, "dispatched" | "pending"> | undefined;
 const pendingRecoveryRootsAtBoot = new Set<string>();
+/** A coordinated node whose recovery was still queued at boot, and that queue row: the node resumes by owning the row, never by a rerun. */
+const coordinatedRecoveriesAtBoot = new Map<string, string>();
 function followupAtBoot(threadId: string): "dispatched" | "pending" | undefined {
   if (!bootFollowups) {
     bootFollowups = new Map();
     for (const row of chatFollowups("bot")) {
-      if (row.status === "pending" && row.payload.recovery) {
-        pendingRecoveryRootsAtBoot.add(row.payload.recovery.coordination?.id ?? row.payload.recovery.generation);
-      }
+      const recovery = row.status === "pending" ? row.payload.recovery : undefined;
+      if (recovery?.coordination) coordinatedRecoveriesAtBoot.set(recovery.coordination.id, row.id);
+      else if (recovery) pendingRecoveryRootsAtBoot.add(recovery.generation);
       if (row.status === "dispatching" || row.status === "interrupted") bootFollowups.set(row.threadId, "dispatched");
       else if (row.status === "pending" && !bootFollowups.has(row.threadId)) bootFollowups.set(row.threadId, "pending");
     }
@@ -4098,6 +4122,11 @@ const coordinator: Coordinator = createCoordinator({
     run: async (node, resumed, signal, composed: ComposedTurn) => {
       const group = node.groupId ? store.group(node.groupId) : undefined;
       const bot = store.bot(node.botId)!;
+      const restoredRecovery = coordinatedRecoveriesAtBoot.get(node.id);
+      if (restoredRecovery !== undefined) {
+        coordinatedRecoveriesAtBoot.delete(node.id);
+        return ownRestoredRecovery(node, resumed, signal, restoredRecovery);
+      }
       if (!node.parentId && !group && !resumed) return runRootTurn(node, bot, signal, composed);
       if (!node.parentId && group && !resumed) return runRoomRootTurn(node, group, bot, signal, composed);
       const parent = node.parentId ? coordinator.node(node.parentId) : undefined;
@@ -4210,8 +4239,9 @@ const coordinator: Coordinator = createCoordinator({
     chiefOf: address => chiefLevel(store.bot(address.botId)),
     // A person's cut root never reruns after a follow-up in its thread: that would hand the person's words to a model again, or redo an older request.
     outward: node => {
-      const followup = node.parentId || node.groupId ? undefined : followupAtBoot(node.threadId);
-      if (followup) {
+      const followup = followupAtBoot(node.threadId);
+      if (coordinatedRecoveriesAtBoot.has(node.id)) return [];
+      if (followup && !node.parentId && !node.groupId) {
         const recoveryWaiting = pendingRecoveryRootsAtBoot.has(node.id);
         followupEndedRoots.set(node.id, followup === "pending" && !recoveryWaiting ? "turn interrupted — OpenMausBot restarted" : undefined);
         return [recoveryWaiting ? "queued recovery waiting" : followup === "pending" ? "queued follow-up waiting" : "queued follow-up dispatched"];
@@ -7389,6 +7419,40 @@ function configuredRecoveryPlan(bot: BotRecord | null): QueuedAutomaticRecovery[
   return { source: "global", steps: cfg.automaticRecovery.backup ? [cfg.automaticRecovery.backup] : [] };
 }
 
+/** Reads only: the caller commits on an undefined result with no await in between. */
+function queuedRecoveryRefusal(botId: string, threadId: string, recovery: QueuedAutomaticRecovery): string | undefined {
+  const current = store.projectBotForTask(botId, threadId);
+  const plan = configuredRecoveryPlan(current);
+  const step = plan.steps[(recovery.options.automaticRecoveryIndex ?? 0) - 1];
+  const checked = current && step && checkedTaskModelSwitch(current, step, false, false, true);
+  const latestInput = store.activePath(threadId).findLast(m => m.role === "user" && m.kind === "text");
+  const target = registry.get(recovery.selection.instanceId);
+  if (cfg.automaticRecovery?.enabled !== true || !current || !store.taskByThread(botId, threadId)?.cwd ||
+      directRequestOwners.get(threadId)?.stopped ||
+      latestInput?.id !== recovery.recoveryUserMessageId || latestInput?.requestCancelled ||
+      hasQueuedInputAfter("bot", botId, threadId, recovery.recoveryUserMessageId, recovery.coordinatedInputOrder) ||
+      JSON.stringify(current.modelSelection) !== JSON.stringify(recovery.from) ||
+      JSON.stringify(plan) !== JSON.stringify(recovery.plan) ||
+      !checked?.ok || JSON.stringify(checked.selection) !== JSON.stringify(recovery.selection) ||
+      !target?.enabled) {
+    return "Automatic recovery cancelled: the request or backup selection is no longer current.";
+  }
+  const source = registry.get(recovery.from.instanceId);
+  const refusal = !source ? "The original AI is no longer configured, so the backup cannot be checked against it."
+    : policyModelRefusal(target) ?? recoveryCapabilityError(
+      { driverKind: source.driverKind, capabilities: source.adapter.capabilities },
+      { driverKind: target.driverKind, capabilities: target.adapter.capabilities })
+    ?? (recovery.limit && !limitBackupAllowed(source, target, instanceConfigs(cfg)[target.instanceId])
+      ? "The backup now uses the same subscription whose usage limit was reached." : undefined)
+    ?? (hostedModels && !hostedModels.allows(recovery.selection) ? hostedModels.error() : undefined);
+  return refusal ? `Automatic recovery unavailable: ${refusal}` : undefined;
+}
+
+function coordinationEnded(nodeId: string): boolean {
+  const node = coordinator.node(nodeId);
+  return !node || ENDED.has(node.status);
+}
+
 // One drain at a time: the coordinator's changed hook can re-enter it, which would append the same held line twice.
 let drainingQueuedSends = false, queuedSendsDrainOwed = false;
 function drainQueuedSends() {
@@ -7407,53 +7471,33 @@ function drainQueuedSendsNow() {
       const queueId = head.messageId!;
       const recovery = head.recovery;
       const callbacks = queuedRecoveryCallbacks.get(queueId);
-      const current = store.projectBotForTask(botId, threadId);
-      const plan = configuredRecoveryPlan(current);
-      const step = plan.steps[(recovery.options.automaticRecoveryIndex ?? 0) - 1];
-      const checked = current && step && checkedTaskModelSwitch(current, step, false, false, true);
-      const latestInput = store.activePath(threadId).findLast(m => m.role === "user" && m.kind === "text");
-      const stale = cfg.automaticRecovery?.enabled !== true || !current || !store.taskByThread(botId, threadId)?.cwd ||
-        directRequestOwners.get(threadId)?.stopped ||
-        latestInput?.id !== recovery.recoveryUserMessageId || latestInput?.requestCancelled ||
-        hasQueuedInputAfter("bot", botId, threadId, recovery.recoveryUserMessageId, recovery.coordinatedInputOrder) ||
-        JSON.stringify(current.modelSelection) !== JSON.stringify(recovery.from) ||
-        JSON.stringify(plan) !== JSON.stringify(recovery.plan) ||
-        !checked?.ok || JSON.stringify(checked.selection) !== JSON.stringify(recovery.selection) ||
-        !registry.get(recovery.selection.instanceId)?.enabled;
       const fail = (message: string) => {
         queuedRecoveryCallbacks.delete(queueId);
         store.appendMessage(threadId, { role: "bot", kind: "activity", turnSucceeded: false, tool: failedTurnTool(message) });
         settleDirectFollowup(recovery.generation, { ok: false, text: message });
         callbacks?.onDispatchError?.(message);
       };
-      if (stale) {
-        fail("Automatic recovery cancelled: the request or backup selection is no longer current.");
-        drainQueuedSends();
-        return;
-      }
-      const target = registry.get(recovery.selection.instanceId)!;
-      const primary = registry.get(recovery.from.instanceId);
-      const refusal = policyModelRefusal(target) ?? (primary ? recoveryCapabilityError(
-        { driverKind: primary.driverKind, capabilities: primary.adapter.capabilities },
-        { driverKind: target.driverKind, capabilities: target.adapter.capabilities }) : undefined);
+      const refusal = recovery.coordination && !callbacks
+        ? "Automatic recovery cancelled: the coordinated work it continued has ended."
+        : queuedRecoveryRefusal(botId, threadId, recovery);
       if (refusal) {
-        fail(`Automatic recovery unavailable: ${refusal}`);
+        fail(refusal);
+        drainQueuedSends();
         return;
       }
       return new Promise<void | "retry">((resolve) => {
         void startTurn(botId, prompt, {
           ...recovery.options, ...callbacks, threadId, userMessage: recovery.userMessage, recovery,
-          ...(recovery.coordination && !callbacks?.coordination ? {
-            coordination: { ...recovery.coordination, settle: outcome => settleDirectCoordination(recovery.coordination!.id, outcome) },
-          } : {}),
           onTurnSettled: () => { callbacks?.onTurnSettled?.(); resolve(); },
         }).then(() => {
           queuedRecoveryCallbacks.delete(queueId);
           directCoordinationSettlers.delete(recovery.generation);
           directFollowupSettlers.delete(recovery.generation);
         }).catch(error => {
-          if (error instanceof Error && "code" in error && error.code === "thread_limit") { resolve("retry"); return; }
-          fail(`Automatic recovery could not start: ${error instanceof Error ? error.message : String(error)}`);
+          const code = error instanceof Error && "code" in error ? error.code : undefined;
+          if (code === "thread_limit") { resolve("retry"); return; }
+          const message = error instanceof Error ? error.message : String(error);
+          fail(code === "recovery_refused" ? message : `Automatic recovery could not start: ${message}`);
           resolve();
         });
       });
@@ -7478,7 +7522,8 @@ function drainQueuedSendsNow() {
   },
     // Provider completion can precede its dispatch promise: keep the queue until that exact handshake releases its claim.
     (botId, threadId, head) => threadBusy(botId, threadId) || botAtThreadCapacity(botId, head.capacity) || roomTurnHolds(activeGroupTurnForBot(botId), threadId, !head.peerAsk)
-      || (head.capacity !== "person" && directRootQueued(threadId)) || (!head.peerAsk?.incident && parksBehindCoordination(botId, threadId)),
+      || (head.capacity !== "person" && directRootQueued(threadId)) || (!head.peerAsk?.incident && parksBehindCoordination(botId, threadId))
+      || Boolean(head.recovery?.coordination && !queuedRecoveryCallbacks.has(head.messageId ?? "") && !coordinationEnded(head.recovery.coordination.id)),
   );
 }
 
@@ -7602,7 +7647,7 @@ async function acceptDirectSend(
       }
 
       if (guardedStart) return guardedStart(currentAtStart);
-      const capacity = personPresent && threadId === botMainThread(botId) ? "person" : undefined;
+      const capacity = personPresent && !app?.fromApp && threadId === botMainThread(botId) ? "person" : undefined;
 
       if (currentAtStart.busy) {
         const typedStop = await stopOnTypedCommand({ botId, threadId, text, trigger, personPresent, fromApp: Boolean(app), row: { replyToId: replyTo?.id, sendId, sender, ...spokenLineFields(via, callId) } });
@@ -7865,8 +7910,11 @@ async function startTurn(
       },
     };
   }
-  healThreadModel(botId, threadId);
-  limitFailovers.restore(botId, threadId);
+  // A queued recovery commits its own model change; healing or restoring the source first would be a second, unvalidated one.
+  if (!opts?.recovery) {
+    healThreadModel(botId, threadId);
+    limitFailovers.restore(botId, threadId);
+  }
   let bot = store.projectBotForTask(botId, threadId);
   if (!bot) throw Object.assign(new Error("no such task"), { status: 404 });
   if (bot.approvalGrant) {
@@ -7894,9 +7942,8 @@ async function startTurn(
     throw Object.assign(new Error(`this bot has reached its limit of ${maxConcurrentBotThreads(cfg)} parallel threads — wait for one to finish`), { status: 409, code: "thread_limit" });
   }
   if (opts?.recovery) {
-    const target = registry.get(opts.recovery.selection.instanceId);
-    const refusal = !target?.enabled ? "The backup AI is unavailable." : policyModelRefusal(target);
-    if (refusal) throw Object.assign(new Error(refusal), { status: 409, code: "managed_policy" });
+    const refusal = queuedRecoveryRefusal(botId, threadId, opts.recovery);
+    if (refusal) throw Object.assign(new Error(refusal), { status: 409, code: "recovery_refused" });
     commitAutomaticRecovery(botId, threadId, opts.recovery);
     bot = store.projectBotForTask(botId, threadId)!;
     if (opts.coordination || opts.onSettled) directCoordinationSettlers.delete(opts.recovery.generation);

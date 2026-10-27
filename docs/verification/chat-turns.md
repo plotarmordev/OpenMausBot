@@ -226,7 +226,9 @@ authority. Peer work, including Chief retries and self-opened `start_thread`
 roots, remains capped even when archiving an older main chat promotes its thread
 to main. Recovery preserves the marker rather than inferring it from origin.
 Trusted ingress derives the marker only when both person provenance and the main
-target are known. Queued sends persist it; start, drain, coordinator admission,
+target are known; a message an app in the chat sends is never marked, so it
+queues at capacity like other work.
+Queued sends persist it; start, drain, coordinator admission,
 status and recursive recovery consume it without inferring provenance again.
 Manual one-on-one goals derive the same marker at authenticated main-chat
 ingress and retain it on their persisted goal cards and each continuation.

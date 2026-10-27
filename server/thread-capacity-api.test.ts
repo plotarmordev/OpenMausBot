@@ -9,6 +9,7 @@ import { pathToFileURL } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { launchVerificationServer, type VerificationServer } from "../scripts/control-omb.ts";
+import { APP_SAMPLES } from "../shared/app-samples.ts";
 import { removeTempDir } from "./testing/cleanup.ts";
 import { openSse } from "./testing/sse.ts";
 
@@ -259,6 +260,45 @@ describe("per-bot thread capacity through an isolated HTTP fixture", () => {
       for (const threadId of await busyThreads(botId)) finish(threadId);
       await api("DELETE", `/api/routines/${routineId}`).catch(() => undefined);
       await api("DELETE", `/api/bots/${botId}`).catch(() => undefined);
+    }
+  }, 90_000);
+
+  it("queues an app's message to the main chat behind a full bot like ordinary work", async () => {
+    await limit(1);
+    const { botId, threads: [main] } = await botWithThreads(1);
+    expect((await send(botId, main, "MAIN_APP_WARM_UP")).body.queued).toBeUndefined();
+    const launched = await dump(main);
+    const shown = await fetch(`${fixture.info.url}/api/internal/options-card`, {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: `Bearer ${launched.mcpConfig.mcpServers.agents.env.OMB_COMMS_TOKEN}` },
+      body: JSON.stringify({ tool: "show_html", ...APP_SAMPLES.counter }),
+    });
+    const app = await shown.json() as { messageId: string };
+    evidence.push({ showHtml: shown.status, app });
+    expect(shown.status).toBe(201);
+    finish(main);
+    await expect.poll(() => busyThreads(botId), { timeout: 10_000 }).toEqual([]);
+    const routine = (await api("POST", "/api/routines", {
+      name: "App slot holder", prompt: "Hold the capacity slot.", target: "bot", botId, runOn: "maus", enabled: true,
+      schedule: { type: "daily", time: "23:00" },
+    })).body.routine;
+    try {
+      await api("POST", `/api/routines/${routine.id}/run`);
+      await expect.poll(() => busyThreads(botId), { timeout: 15_000 }).toHaveLength(1);
+      const [holder] = await busyThreads(botId);
+      const sent = await api("POST", `/api/bots/${botId}/messages`, {
+        threadId: main, sendId: "app-capacity-send-0001", appMessage: { messageId: app.messageId, text: "APP_SENT_AT_CAPACITY" },
+      });
+      expect(sent.status, JSON.stringify(sent.body)).toBe(202);
+      expect(sent.body).toMatchObject({ queued: true, reason: "capacity", threadId: main });
+      expect(await busyThreads(botId)).toEqual([holder]);
+      expect((await messages(main)).some(message => message.text === "APP_SENT_AT_CAPACITY")).toBe(false);
+      finish(holder);
+      await expect.poll(async () => (await messages(main)).filter(message => message.role === "user" && message.text === "APP_SENT_AT_CAPACITY"),
+        { timeout: 15_000 }).toMatchObject([{ fromApp: { messageId: app.messageId } }]);
+    } finally {
+      for (const thread of await busyThreads(botId)) finish(thread);
+      await api("DELETE", `/api/routines/${routine.id}`);
     }
   }, 90_000);
 
