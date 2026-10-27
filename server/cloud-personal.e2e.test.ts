@@ -23,6 +23,7 @@ let child: ChildProcess | undefined;
 let cloud = false;
 /** From the first (self-hosted) run: a device with full access, a chat-only one, and what each opened. */
 const before = { device: "", deviceId: "", chatOnly: "", bot: { id: "", threadId: "" }, roomBot: { id: "", threadId: "" }, conversation: "", theirs: "",
+  budgetBot: { id: "", threadId: "" }, budgetGuest: "",
   lead: { id: "", threadId: "" }, member: { id: "", threadId: "" }, room: "", launch: "", plan: "", friends: "", routine: "", approved: "", full: { id: "", threadId: "" }, fullShared: "", stale: "", moved: "", fullOld: "", fullApproved: "" };
 const project = () => join(home, "projects", "site");
 
@@ -147,6 +148,15 @@ await import(${JSON.stringify(pathToFileURL(join(SERVER_DIR, "testing", "fake-cl
   await api("POST", `/api/bots/${before.roomBot.id}/interrupt`, { token: before.device, body: { threadId: before.theirs } });
   await idle(before.roomBot, before.device);
   expect((await api("GET", "/api/bots", { token: before.device })).body.bots.find((bot: any) => bot.id === before.roomBot.id).threadId).toBe(before.theirs);
+  before.budgetBot = await newBot("Proposal budget bot");
+  before.budgetGuest = (await api("POST", `/api/bots/${before.budgetBot.id}/tasks`, {
+    token: before.chatOnly, body: { title: "Guest proposal budget" },
+  })).body.task.threadId;
+  await turn(() => api("POST", `/api/bots/${before.budgetBot.id}/messages`, {
+    token: before.chatOnly, body: { text: "Preserve this guest conversation.", threadId: before.budgetGuest },
+  }));
+  await api("POST", `/api/bots/${before.budgetBot.id}/interrupt`, { token: before.device, body: { threadId: before.budgetGuest } });
+  await idle(before.budgetBot, before.device);
   before.lead = await newBot("Lead");
   before.member = await newBot("Member");
   before.room = (await api("POST", "/api/groups", { token: before.device, body: { memberIds: [before.lead.id, before.member.id], name: "Team", setup: { bulletin: "", defaultResponder: { kind: "everyone" } } } })).body.group.id;
@@ -788,8 +798,8 @@ it("Undo on a Cloud home keeps who a routine is: back to the owner's only if it 
 it("shares the pending proposal budget with thread models, restores it after settlement, and does not budget immediate applies", async () => {
   const owner = await adminPairing();
   await settleAll(owner);
-  const botId = before.roomBot.id;
-  const threadId = before.theirs;
+  const botId = before.budgetBot.id;
+  const threadId = before.budgetGuest;
   const botNow = async () => (await api("GET", "/api/bots", { token: owner })).body.bots.find((bot: any) => bot.id === botId);
   const originalBot = await botNow();
   const cards = async (id: string) => ((await api("GET", `/api/threads/${id}/messages`, { token: owner })).body.messages as any[])
