@@ -58,6 +58,7 @@ export function LiveBrowser({ bot, signIn, page }: { bot: Bot; signIn?: BrowserS
   const [showTyping, setShowTyping] = useState(false);
   const [masked, setMasked] = useState(false);
   const [fullscreen, setFullscreen] = useState(false);
+  const [maximized, setMaximized] = useState(false);
   const [passkeyDismissed, setPasskeyDismissed] = useState("");
   const floating = useBrowserPictureInPicture();
   const pageVisible = usePageVisible();
@@ -223,6 +224,18 @@ export function LiveBrowser({ bot, signIn, page }: { bot: Bot; signIn?: BrowserS
     const request = leaving ? document.exitFullscreen() : panel.current?.requestFullscreen();
     void request?.catch(() => setError(leaving ? "Could not leave full screen. Press Esc instead." : "Full screen is unavailable in this browser."));
   };
+  // The maximized panel swallows its Escape (defaultPrevented) so the same press cannot close a dialog beneath.
+  // Capture: listeners registered before this panel must see the key already refused.
+  useEffect(() => {
+    if (!maximized) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key !== "Escape" || event.defaultPrevented) return;
+      event.preventDefault();
+      setMaximized(false);
+    };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, [maximized]);
 
   const restart = () => {
     if (!window.confirm(t("browser.panel.confirmRestart"))) return;
@@ -252,7 +265,9 @@ export function LiveBrowser({ bot, signIn, page }: { bot: Bot; signIn?: BrowserS
   const typingReady = connected && you;
   const pipSupported = stream && supportsBrowserPictureInPicture();
   const passkeyWall = passkeyWallAt(nav.url);
-  return <div ref={panel} className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-2xl border border-hairline/40 bg-card text-ink" data-browser-transport={stream ? "stream" : "live"}>
+  return <div ref={panel} className={maximized
+    ? "fixed inset-0 z-50 flex flex-col overflow-hidden bg-card text-ink"
+    : "flex min-h-0 flex-1 flex-col overflow-hidden rounded-2xl border border-hairline/40 bg-card text-ink"} data-browser-transport={stream ? "stream" : "live"}>
     <ChromeRow
       ref={address}
       botName={bot.name}
@@ -264,6 +279,7 @@ export function LiveBrowser({ bot, signIn, page }: { bot: Bot; signIn?: BrowserS
       commandsReady={commandsReady}
       profileName={profileName}
       fullscreen={fullscreen}
+      maximized={maximized}
       onCommand={interact}
       onAddress={(text) => {
         const url = resolveAddressBarInput(text);
@@ -273,6 +289,7 @@ export function LiveBrowser({ bot, signIn, page }: { bot: Bot; signIn?: BrowserS
       onTake={takeControl}
       onHandBack={handBack}
       onFullscreen={toggleFullscreen}
+      onMaximize={() => setMaximized((value) => !value)}
       onProfiles={() => { browserControl.current?.handBack(); setShowProfiles(true); }}
       menu={<MoreMenu
         stream={stream}

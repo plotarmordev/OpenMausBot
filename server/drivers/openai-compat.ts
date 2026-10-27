@@ -1,6 +1,7 @@
 // Transcript-replay driver for OpenRouter, Groq, Together, llama.cpp, and
 // other endpoints that speak the OpenAI chat-completions contract.
 import type { ModelCatalog, ProviderDriver } from "../contracts.ts";
+import { lmStudioV1Catalog } from "./local-inject.ts";
 import { createOpenAIChatRuntime } from "./openai-chat.ts";
 import {
   freeDefault, freeFallbackCatalog, freeLabel, freeToolModels, freeToolsFirst, isOpenRouterOrigin, openRouterFreeTier,
@@ -73,6 +74,18 @@ function isOpenRouterUrl(url: string): boolean {
     return host === "openrouter.ai" || host.endsWith(".openrouter.ai");
   } catch {
     return false;
+  }
+}
+
+function loopbackLmStudioV1Url(baseUrl: string): string | null {
+  try {
+    const url = new URL(baseUrl);
+    const host = url.hostname.toLowerCase();
+    if (host !== "127.0.0.1" && host !== "localhost" && host !== "::1") return null;
+    if (url.pathname.replace(/\/+$/, "") !== "/v1") return null;
+    return `${url.origin}/api/v1/models`;
+  } catch {
+    return null;
   }
 }
 
@@ -151,6 +164,36 @@ export const OpenAICompatDriver: ProviderDriver<OpenAICompatConfig> = {
       if (config.managedModels) return;
       if (!apiKey) return;
       try {
+        const nativeUrl = loopbackLmStudioV1Url(config.url);
+        if (nativeUrl) {
+          try {
+            const native = await fetch(nativeUrl, {
+              headers: { authorization: `Bearer ${apiKey}` },
+              signal: AbortSignal.timeout(8_000),
+            });
+            if (native.ok) {
+              let parsed: ReturnType<typeof lmStudioV1Catalog> = null;
+              try {
+                parsed = lmStudioV1Catalog(await native.json());
+              } catch {
+                parsed = null;
+              }
+              if (parsed?.ids.length) {
+                const options = parsed.ids.map((id) => ({ id, label: id, custom: true as const }));
+                if (config.model && !options.some((model) => model.id === config.model)) {
+                  options.unshift({ id: config.model, label: config.model, custom: true });
+                }
+                catalog = {
+                  default: config.model ?? options[0]!.id,
+                  options,
+                };
+                return;
+              }
+            }
+          } catch {
+            // Native LM Studio catalog unavailable; try OpenAI-compatible /models below.
+          }
+        }
         const response = await fetch(`${config.url}/models`, {
           headers: { authorization: `Bearer ${apiKey}` },
           signal: AbortSignal.timeout(8_000),
