@@ -66,6 +66,7 @@ runner changes require a manual choice. Backup provider charges may apply.
 pnpm exec vitest run server/automatic-recovery.test.ts server/automatic-recovery.e2e.test.ts server/drivers/acp/acp.test.ts server/drivers/retry.test.ts server/turn-dispatch-guard.test.ts server/config.test.ts src/components/AutomaticRecoverySettings.test.ts src/state/store.test.ts
 pnpm exec vitest run server/drivers/claude-auth-recovery.test.ts server/drivers/claude.test.ts
 pnpm exec vitest run --no-file-parallelism server/automatic-recovery-restart.e2e.test.ts
+pnpm exec vitest run --no-file-parallelism server/message-db.test.ts
 pnpm exec vitest run server/direct-coordination.e2e.test.ts server/guarded-messages-api.test.ts server/acp-recovery.e2e.test.ts --maxWorkers=2
 pnpm typecheck
 pnpm lint
@@ -85,6 +86,13 @@ Chief reply. Each fixture prints a
 retained `.log.automatic-recovery.json` evidence path, then removes its own
 temporary data and processes. No live app, provider account or user data is
 used. Driver tests also cover failed cleanup and pre-prompt file/tool activity.
+
+The database suite cold-opens a legacy WAL database in independent Node
+processes through the real message store. It checks migration, shared admission
+ordering, deletion and reopen without sequence reuse, and database integrity.
+The capacity and restart recovery cases check idle tasks, drained durable
+followups and settled source assignments before asserting transcript and
+provider-prompt counts; elapsed time is not evidence of quiescence.
 
 Settings tests cover the real component's controls, drafts, validation and
 save errors. These are not an Electron visual walkthrough or proof of a real

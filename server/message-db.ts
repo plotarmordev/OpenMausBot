@@ -34,6 +34,7 @@ function open(): DatabaseSync {
     chmodSync(file, 0o600);
   } catch {}
   const db = new DatabaseSync(file);
+  db.exec("PRAGMA busy_timeout = 5000");
   db.exec("PRAGMA journal_mode = WAL");
   db.exec("PRAGMA synchronous = NORMAL");
   db.exec(`
@@ -91,16 +92,24 @@ function open(): DatabaseSync {
     );
     CREATE INDEX IF NOT EXISTS notification_log_at ON notification_log(at);
   `);
-  const notificationColumns = db.prepare("PRAGMA table_info(notification_log)").all() as Array<{ name: string }>;
-  for (const table of ["messages", "chat_followups"]) {
-    const columns = db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
-    if (!columns.some(column => column.name === "input_order")) db.exec(`ALTER TABLE ${table} ADD COLUMN input_order INTEGER`);
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    for (const table of ["messages", "chat_followups"]) {
+      const columns = db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
+      if (!columns.some(column => column.name === "input_order")) db.exec(`ALTER TABLE ${table} ADD COLUMN input_order INTEGER`);
+    }
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS input_order (id INTEGER PRIMARY KEY CHECK (id = 1), value INTEGER NOT NULL);
+      INSERT OR IGNORE INTO input_order(id, value) VALUES (1, 0);
+    `);
+    const notificationColumns = db.prepare("PRAGMA table_info(notification_log)").all() as Array<{ name: string }>;
+    if (!notificationColumns.some((column) => column.name === "for_person")) db.exec("ALTER TABLE notification_log ADD COLUMN for_person TEXT");
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    db.close();
+    throw error;
   }
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS input_order (id INTEGER PRIMARY KEY CHECK (id = 1), value INTEGER NOT NULL);
-    INSERT OR IGNORE INTO input_order(id, value) VALUES (1, 0);
-  `);
-  if (!notificationColumns.some((column) => column.name === "for_person")) db.exec("ALTER TABLE notification_log ADD COLUMN for_person TEXT");
   ensureRecallIndex(db);
   ensureMemoryIndex(db);
   return db;

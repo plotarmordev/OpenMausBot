@@ -1,7 +1,6 @@
 import { existsSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { setTimeout as delay } from "node:timers/promises";
 import { DatabaseSync } from "node:sqlite";
 import { expect, it } from "vitest";
 import { launchRestartableServer } from "./testing/restartable-server.ts";
@@ -169,7 +168,9 @@ it.each(["missing-order-restart", "equal-ms-before", "equal-ms-restart", "disabl
       writeFileSync(backupGate, "");
     }
     await expect.poll(async () => (await queued()).length, { timeout: 20_000 }).toBe(0);
-    await delay(1_000);
+    await expect.poll(async () => (await state()).bots.find(entry => entry.id === bot.id)!.tasks.some(entry => entry.busy), { timeout: 20_000 }).toBe(false);
+    await expect.poll(journal, { timeout: 20_000 }).toEqual([]);
+    expect(readHandoffs(dataDir).filter(node => node.threadId === threadId && node.status === "source")).toEqual([]);
     const page = await messages();
     const users = page.filter(message => message.role === "user" && message.text === "RECOVER_ORIGINAL_LINE");
     expect(users).toHaveLength(1);

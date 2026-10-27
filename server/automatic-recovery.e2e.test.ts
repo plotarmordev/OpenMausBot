@@ -9,7 +9,6 @@ import { launchVerificationServer, runControlOmb, verificationServerEnvironment 
 import { waitForExit } from "./testing/cleanup.ts";
 import { readHandoffs } from "./testing/handoff-rows.ts";
 import type { WireBot, WireTask, WireMessage } from "../shared/wire.ts";
-import { setTimeout as delay } from "node:timers/promises";
 
 const primary = { instanceId: "opencodeGo", model: "fixture/recovery" };
 const backup = { instanceId: "claude", model: "claude-sonnet-5" };
@@ -354,8 +353,15 @@ it.each(["ordinary", "person-main"] as const)("recovers at full capacity for %s 
         writeFileSync(holderGate, "");
       }
       await expect.poll(async () => (await state()).tasks.some((entry: WireTask) => entry.busy), { timeout: 20_000 }).toBe(false);
-      // The isolated server has its own clock; fake timers cannot advance its queue drains.
-      await delay(1_000);
+      await expect.poll(() => {
+        const db = new DatabaseSync(join(dataDir, "messages.db"), { readOnly: true });
+        try { return db.prepare("SELECT id FROM chat_followups WHERE thread_id = ?").all(threadId); }
+        finally { db.close(); }
+      }, { timeout: 20_000 }).toEqual([]);
+      expect((await api("GET", "/api/bots?messages=0")).botQueuedMessages[threadId] ?? []).toEqual([]);
+      expect(readHandoffs(dataDir).filter(node => node.threadId === threadId && node.status === "source")).toEqual([]);
+      const { messages } = await api("GET", `/api/threads/${threadId}/messages?limit=100`);
+      expect(messages.filter((message: WireMessage) => message.role === "user" && message.text === "RECOVER_AT_CAPACITY")).toHaveLength(1);
       expect(backupPrompts()).toHaveLength(1);
       evidence.push({ kind, task: await task(), backupPrompts: backupPrompts() });
     } finally {
