@@ -11,7 +11,7 @@ export function cornerPopupWaits(state: AppState, updater: UpdaterState | null,
     || welcomeDue(state.config, { remoteClient: false, legacyDone: emailGateDone(), ...(viewer ? { hosted: viewer.hosted, canSave: viewer.canSave, cloudHome: viewer.cloudHome } : {}) });
   return !state.connected || !state.config || setup || busy || quiet
     || state.appSettingsOpen || state.settingsOpen || state.newBotOpen || state.pluginsOpen || state.shortcutsOpen
-    || Boolean(updater && !["idle", "checking"].includes(updater.status));
+    || Boolean(updater && (!["idle", "checking"].includes(updater.status) || updater.updated));
 }
 
 /** No bot or room has finished a turn yet: a new install's first chat. Promotions wait for its first reply. Unknown (null)

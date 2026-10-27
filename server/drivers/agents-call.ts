@@ -14,6 +14,7 @@ import { callResearchTool, RESEARCH_TOOL_NAMES } from "./agents-research-tools.t
 import { callHelperTool, HELPER_TOOL_NAMES } from "./agents-helper-tools.ts";
 import { callPageTool, PAGE_TOOL_NAMES } from "./agents-pages-tools.ts";
 import { callPersonTool, PERSON_TOOL_NAMES } from "./agents-person-tools.ts";
+import { callDevsTool, DEVS_TOOL_NAMES } from "./agents-devs-tools.ts";
 
 export interface ToolCallContext {
   botId: string;
@@ -184,6 +185,7 @@ export async function callTool(name: string, args: Json, context: ToolCallContex
   if (HELPER_TOOL_NAMES.has(name)) return callHelperTool(name, args, context);
   if (PAGE_TOOL_NAMES.has(name)) return callPageTool(name, args, context);
   if (PERSON_TOOL_NAMES.has(name)) return callPersonTool(name, args, context);
+  if (DEVS_TOOL_NAMES.has(name)) return callDevsTool(name, args, context);
   if (TRIGGER_TOOL_NAMES.has(name)) return callTriggerTool(name, args, context);
   // Second lock: with sharing off the catalog already omits these tools.
   if (SHARED_COMPUTER_TOOL_NAMES.has(name) && !context.sharedComputers) {

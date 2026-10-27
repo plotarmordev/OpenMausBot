@@ -1,9 +1,12 @@
 // Electron has no role for the macOS Preferences… item, so it is built explicitly.
 import { Menu, app } from "electron";
 
+/** A local environment has a folder and no address. */
+const whereItLives = (environment) => (environment.kind === "local" ? environment.dataDir : new URL(environment.origin).host);
+
 /**
  * @param {object} input
- * @param {{ id: string, name: string, origin: string }[]} input.environments
+ * @param {({ id: string, name: string, origin: string } | { id: string, name: string, kind: "local", dataDir: string })[]} input.environments
  * @param {string} input.activeId  "local" or an environment id
  * @param {(id: string) => void} input.onSwitch
  * @param {() => void} input.onAddFromClipboard
@@ -37,7 +40,7 @@ export function buildApplicationMenu({ environments, activeId, onSwitch, onAddFr
     submenu: [
       { label: "This computer", type: "radio", checked: !active, click: () => onSwitch("local") },
       ...environments.map((e) => ({
-        label: `${e.name} — ${Object.hasOwn(sublabels, e.id) ? sublabels[e.id] : new URL(e.origin).host}`,
+        label: `${e.name} — ${Object.hasOwn(sublabels, e.id) ? sublabels[e.id] : whereItLives(e)}`,
         type: "radio",
         checked: e.id === activeId,
         click: () => onSwitch(e.id),

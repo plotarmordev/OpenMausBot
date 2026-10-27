@@ -595,6 +595,9 @@ export interface WireMessage extends HelperIntroField {
   relay?: { kind: "told" | "from" | "reply"; email: string; name: string };
   /** thread chips: "Opened thread #Title on @X". */
   threadRef?: { botId: string; threadId: string; title: string };
+  /** A "Sent to" row for work addressed into a room the bot `name` isn't in, so it went to the bot directly. `room`
+   * names that room when this row is not in it. Clients say it in their own words; `tool.name` is the English. */
+  sentDirectly?: { name: string; room?: string };
   /** A page the bot published to a public link (publish_page), or why it couldn't. `text` carries the link too. */
   publishedPage?: PublishedPageCard;
   /** A published Data result, linked to its bot's main viewer. */

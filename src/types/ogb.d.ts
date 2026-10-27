@@ -114,6 +114,9 @@ const __APP_VERSION__: string;
   interface Window {
     ogb?: {
       platform: NodeJS.Platform;
+      /** This app's own version, and whether this page is this app's own: false on a server added in the Server menu,
+       * whose page carries that server's version. Absent in desktop builds before it. */
+      app?: { version: string; ownPage: boolean };
       organization?: import("../../electron/managed-desktop.mjs").ManagedDesktopBridge;
       cloudAccount?: import("../../electron/cloud-account.mjs").CloudAccountBridge;
       /** "Let my bots use this Mac" (this PC, this computer), on My Cloud's own page in this app: its one switch and
@@ -366,6 +369,8 @@ const __APP_VERSION__: string;
         /** apply the download: quit-and-install, or copy the command and open
          * a terminal. On a server's page, only from the person's click. */
         install(): Promise<void>;
+        /** The person saw the line that the app updated itself: it is not shown again. */
+        seen?(): Promise<void>;
         onState(cb: (s: UpdaterState) => void): () => void;
       };
     };
@@ -416,6 +421,10 @@ export interface UpdaterState {
   command?: string;
   /** hand-off only: whether a terminal was opened to paste it into */
   terminalOpened?: boolean;
+  /** downloaded only: the app installs it by itself the next time the person is away and nothing is running */
+  installsByItself?: boolean;
+  /** the version the app updated itself to while the person was away, until they have seen it said */
+  updated?: string;
 }
 
 export interface CompanionAccountState {

@@ -528,6 +528,8 @@ export function createComputerSharing({ file, fetch: fetchImpl, environments, cu
     cloudState,
     /** Lending to My Cloud is running, so it calls My Cloud whenever it is awake. */
     lendingToCloud: () => [...running.keys()].some(id => Boolean(records[id]?.cloud)),
+    /** A server is using this computer now: a job running on it, or its browsing going through this computer. */
+    busy: () => summary().busy !== null,
     /** Folders, apps and screen, the internet connection and, only when the person ticks it in this computer's own
      * Settings, a terminal (unrestricted commands as this user; off unless `input.terminal === true`); the Cloud account
      * and its machine must be verified now. The internet connection alone is a grant too. */

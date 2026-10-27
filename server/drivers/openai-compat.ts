@@ -53,6 +53,20 @@ export interface OpenAICompatConfig {
   managedModels?: string[];
 }
 
+function positiveTokens(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isSafeInteger(value) && value > 0 ? value : undefined;
+}
+
+/** The window a /models row advertises: OpenRouter's context_length and top_provider.context_length, vLLM's
+ * max_model_len and the like. A serving provider may cap the usable window below the model's nominal one. */
+export function advertisedContextWindow(row: Record<string, unknown>): number | undefined {
+  const limits = ["context_length", "context_window", "max_model_len", "max_context_length", "contextWindow"].map((key) => positiveTokens(row[key]));
+  const provider = row.top_provider;
+  if (provider && typeof provider === "object") limits.push(positiveTokens((provider as Record<string, unknown>).context_length));
+  const valid = limits.filter((value): value is number => value !== undefined);
+  return valid.length ? Math.min(...valid) : undefined;
+}
+
 function isOpenRouterUrl(url: string): boolean {
   try {
     const host = new URL(url).hostname.toLowerCase();
@@ -142,7 +156,7 @@ export const OpenAICompatDriver: ProviderDriver<OpenAICompatConfig> = {
           signal: AbortSignal.timeout(8_000),
         });
         if (!response.ok) return;
-        type Row = OpenRouterModelRow & { name?: unknown; created?: unknown };
+        type Row = OpenRouterModelRow & Record<string, unknown> & { name?: unknown; created?: unknown; owned_by?: unknown };
         const json = await response.json() as { data?: Row[] } | Row[];
         let rows = Array.isArray(json) ? json : Array.isArray(json.data) ? json.data : [];
         // OpenAI lists its catalog unordered and mixed with non-chat models.
@@ -158,13 +172,30 @@ export const OpenAICompatDriver: ProviderDriver<OpenAICompatConfig> = {
           if (!id || seen.has(id)) continue;
           seen.add(id);
           const label = typeof row.name === "string" && row.name.trim() ? row.name : id;
+          const contextWindow = advertisedContextWindow(row);
           options.push({
             id,
             label: openRouter ? freeLabel(label, row) : label,
+            ...(contextWindow ? { contextWindow } : {}),
             ...(config.catalog === "openai" ? {} : { custom: true }),
           });
         }
         if (!options.length) return;
+        // llama.cpp serves its configured slot size, which can be below the model's training window; never autoload.
+        for (const selected of rows.filter((row) => row.owned_by === "llamacpp" && typeof row.id === "string")) {
+          try {
+            const url = new URL(config.url);
+            url.pathname = url.pathname.replace(/\/v1\/?$/, "").replace(/\/$/, "") + "/props";
+            url.searchParams.set("model", String(selected.id));
+            url.searchParams.set("autoload", "false");
+            const props = await fetch(url, { redirect: "error", headers: { authorization: `Bearer ${apiKey}` }, signal: AbortSignal.timeout(3_000) });
+            if (!props.ok) continue;
+            const json = await props.json() as { default_generation_settings?: { n_ctx?: unknown } };
+            const window = positiveTokens(json.default_generation_settings?.n_ctx);
+            const option = options.find((option) => option.id === selected.id);
+            if (window && option) option.contextWindow = window;
+          } catch {}
+        }
         const freeTools = await freeTier() ? freeToolModels(rows) : [];
         const ordered = freeToolsFirst(options, freeTools);
         if (config.model && !ordered.some((model) => model.id === config.model)) {

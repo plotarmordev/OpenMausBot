@@ -3,6 +3,7 @@ import { CREDENTIAL_TARGETS } from "../../shared/credential-request.ts";
 import { OPTIONS_CARD_LIMITS, WATCHER_OPTIONS_CARD_BOT_ID } from "../../shared/options-card.ts";
 import { agentToolAnnotations } from "../agent-tool-policy.ts";
 import { CHAT_CARD_TOOL_DEFINITIONS } from "./agents-chat-card-tools.ts";
+import { DEVS_TOOL_DEFINITIONS } from "./agents-devs-tools.ts";
 import { HELPER_TOOL_DEFINITIONS } from "./agents-helper-tools.ts";
 import { PERSON_TOOL_DEFINITIONS, PERSON_TOOL_NAMES } from "./agents-person-tools.ts";
 import { RESEARCH_TOOL_DEFINITIONS, RESEARCH_TOOL_NAMES } from "./agents-research-tools.ts";
@@ -471,7 +472,7 @@ const TOOL_DEFINITIONS = [
   {
     name: "manage_room",
     description:
-      "Manage a room from list_rooms: rename it, change its bulletin, or add/remove/set members. Chiefs only, for rooms in your own department, with any bots you can reach; keep yourself as a member. Busy rooms, pending approvals and team-goal leads are protected. You cannot move rooms or bots between departments. Follow the tool result under the effective access level; if the change is refused, report the blocker and ask the user to make the change instead, without trying another route.",
+      "Manage a room from list_rooms: rename it, change its bulletin, or add/remove/set members. Chiefs only, for rooms in your own department, with any bots you can reach; keep yourself as a member. Busy rooms, pending approvals and team-goal leads are protected. You cannot move rooms or bots between departments. coordinate_bots reaches bots outside the room directly. Follow the tool result under the effective access level; if the change is refused, report the blocker, without trying another route.",
     inputSchema: {
       type: "object",
       additionalProperties: false,
@@ -558,7 +559,7 @@ const TOOL_DEFINITIONS = [
       required: ["text"],
     },
   },
-  ...RESEARCH_TOOL_DEFINITIONS, ...HELPER_TOOL_DEFINITIONS, ...PERSON_TOOL_DEFINITIONS,
+  ...RESEARCH_TOOL_DEFINITIONS, ...HELPER_TOOL_DEFINITIONS, ...PERSON_TOOL_DEFINITIONS, ...DEVS_TOOL_DEFINITIONS,
   {
     name: "memory_update",
     description:

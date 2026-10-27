@@ -10,9 +10,9 @@ import type { ProviderInstance, RuntimeEvent } from "../contracts.ts";
 import { recordEvents, type EventRecorder } from "../testing/events.ts";
 import { removeTempDir } from "../testing/cleanup.ts";
 import { encodeInjectId, localHost } from "./local-inject.ts";
+import { buildMcpServers } from "./pi-mcp-servers.ts";
 import {
   applyPiLocalCatalog,
-  buildMcpServers,
   decodePiFrame,
   ensurePiInjectModel,
   fetchPiModels,

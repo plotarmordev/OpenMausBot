@@ -165,7 +165,7 @@ describe("page language", () => {
 
   it("names every picker language with a valid BCP-47 tag", () => {
     expect(localeChoices.map(({ code }) => documentLanguage(code))).toEqual([
-      "en", "de", "es", "fr", "hi", "ja", "pt-BR", "zh", "zh-TW", "uk", "vi", "tr", "pl", "ru",
+      "en", "de", "es", "fr", "hi", "ja", "pt-BR", "zh", "zh-TW", "uk", "vi", "tr", "pl", "ru", "it",
     ]);
     for (const { code } of localeChoices) {
       expect(Intl.getCanonicalLocales(documentLanguage(code))).toEqual([documentLanguage(code)]);

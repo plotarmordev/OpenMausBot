@@ -548,9 +548,16 @@ describe("thread control placement", () => {
     expect(markup.indexOf("data-test-approval-control")).toBeLessThan(markup.indexOf("<textarea"));
     expect(markup).not.toContain('aria-label="Thread settings"');
     expect(fixture.model).toMatchObject({ threadId: "selected", bot: { busy: false, modelSelection: { model: "thread-model" } } });
-    expect(fixture.approval).toMatchObject({ approvalMode: "ask", disabled: false, trustedModesAvailable: false });
+    expect(fixture.approval).toMatchObject({ approvalMode: "ask", busy: false, trustedModesAvailable: false });
     fixture.approval!.onSelect("auto");
     expect(fixture.dispatch).toHaveBeenLastCalledWith({ type: "updateTask", botId: "bot", threadId: "selected", patch: { approvalMode: "auto" } });
+  });
+
+  it("changes a working thread's level from the composer, saying the bot is working", () => {
+    renderToStaticMarkup(createElement(ChatView, { bot: { ...bot, busy: true, tasks: (bot.tasks ?? []).map((task) => ({ ...task, busy: true })) } }));
+    expect(fixture.approval).toMatchObject({ approvalMode: "ask", busy: true });
+    fixture.approval!.onSelect("full");
+    expect(fixture.dispatch).toHaveBeenLastCalledWith({ type: "updateTask", botId: "bot", threadId: "selected", patch: { approvalMode: "full" } });
   });
 
   it("keeps both controls hidden for remote clients", () => {

@@ -12,7 +12,7 @@ import { finishSpeech, startSpeech, stopSpeech } from "./speech.mjs";
 import { openBlankTerminal } from "./terminal-launch.mjs";
 import { linuxDisablesGpu } from "./linux-gpu.mjs";
 import { pasteMenuItem } from "./paste-menu-item.mjs";
-import { attachUpdaterWindow, startUpdater, registerUpdaterIpc, sendUpdaterState } from "./updater.mjs";
+import { attachUpdaterWindow, startUpdater, registerUpdaterIpc, sendUpdaterState, reopenedOutOfSight, quietSignals } from "./updater.mjs";
 import {
   appendDesktopCrashRecord,
   buildDiagnosticsReport,
@@ -2077,7 +2077,7 @@ function createWindow({ deferNavigation = false } = {}) {
       contextIsolation: true,
       preload: path.join(__dirname, "preload.cjs"),
       additionalArguments: [...desktopCompanionRendererArguments(rendererOrigin(), desktopRemoteAccess),
-        ...(app.isPackaged && !desktopRemoteAccess ? ["--omb-company-desktop=1"] : [])],
+        ...(app.isPackaged && !desktopRemoteAccess ? ["--omb-company-desktop=1"] : []), `--omb-app-version=${app.getVersion()}`],
     },
   });
   mainWindow = win; hiddenStart = false;
@@ -2939,7 +2939,7 @@ app.whenReady().then(async () => {
       slog(`system tray unavailable: ${error?.message ?? error}`);
     }
   }
-  hiddenStart = loginItem.startedHidden();
+  hiddenStart = loginItem.startedHidden() || reopenedOutOfSight();
   startupScreen = hiddenStart ? null : createStartupScreen({
     BrowserWindow, iconPath: APP_ICON, isQuitting: () => desktopShutdownStarted,
     onQuit: () => app.quit(),
@@ -3187,7 +3187,7 @@ app.whenReady().then(async () => {
       return credentials;
     }).finally(syncManagedComposioCredentials);
   }
-  startUpdater();
+  startUpdater(quietSignals({ powerMonitor, window: () => mainWindow, lastInput: oneHome.lastInput, local: localServerRequest, place: () => homeWindow.placeOrigin(), cloudFetch: (...args) => session.defaultSession.fetch(...args), asleep: origin => origin === homeWindow.cloudOrigin() && cloudPower.asleep(), busy: () => (oneHome.oneHome.busy() && "move") || (computerSharing?.busy() && "lending") || (companyBackupController || companyRestoreCommitting ? "backup" : null) }));
   refreshApplicationMenu();
   openWindowForLink = () => {
     if (!mainWindow || mainWindow.isDestroyed()) createWindow({ deferNavigation: homeWindow.current().kind !== "computer" });

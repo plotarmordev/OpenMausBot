@@ -641,12 +641,14 @@ describe("the Bot tab", () => {
     expect(patch).not.toHaveBeenCalled();
   });
 
-  it("holds the controls while the bot is busy", () => {
+  it("holds Thinking while the bot is busy, but lets its approval level change and says from when", () => {
     const rendered = botTab(makeBot({ busy: true }));
-    expect(segment(rendered, "data-approval-choice").options.every((option) => option.disabled)).toBe(true);
+    expect(segment(rendered, "data-approval-choice").options.some((option) => option.disabled)).toBe(false);
     expect(segment(rendered, "data-thinking-choice").options.every((option) => option.disabled)).toBe(true);
+    expect(rendered.html).toContain("The bot is working. A change applies from its next step");
+    expect(botTab(makeBot()).html).not.toContain("The bot is working");
     segment(rendered, "data-approval-choice").onChange("full");
-    expect(fixture.dispatch).not.toHaveBeenCalled();
+    expect(fixture.dispatch).toHaveBeenLastCalledWith({ type: "updateBot", botId: "scout", patch: { approvalMode: "full", applyToAllThreads: true } });
   });
 
   it("values the Apps row with the apps switched on, or None yet, and opens the apps page", () => {
