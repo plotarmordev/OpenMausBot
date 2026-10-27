@@ -2,6 +2,7 @@ import type { DataContext } from "../shared/data-context.ts";
 import type { RoutineRunOn, RoutineRunTrigger } from "../shared/routines.ts";
 import type { ResolvedSender } from "../shared/wire.ts";
 import type { ModelSelection } from "./contracts.ts";
+import type { HostTurnResult } from "./coordinator.ts";
 import type { WorkOrigin } from "./peer-provenance.ts";
 import type { ReplyTarget } from "./replies.ts";
 import type { Message } from "./store.ts";
@@ -37,6 +38,14 @@ export interface SerializableTurnOptions {
   automaticRecoveryAttempted?: boolean;
   automaticRecoveryIndex?: number;
   allowRoomTurnElsewhere?: boolean;
+}
+
+export interface TurnOptions extends SerializableTurnOptions {
+  onDispatchError?: (message: string) => void;
+  recovery?: QueuedAutomaticRecovery;
+  onTurnSettled?: () => void;
+  onSettled?: (outcome: HostTurnResult) => void;
+  coordination?: { id: string; resumed: boolean; settle: (outcome: HostTurnResult) => void };
 }
 
 export interface QueuedAutomaticRecovery {

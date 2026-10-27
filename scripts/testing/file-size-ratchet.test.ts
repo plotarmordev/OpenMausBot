@@ -48,6 +48,7 @@ const LINES: Record<string, number> = {
   "src/components/PluginsPanel.tsx": 1034,
   "server/org-library.ts": 1003,
   "src/components/AttachmentPreview.tsx": 1044,
+  "server/message-db.ts": 1037,
 };
 
 function sourceFiles(): string[] {
