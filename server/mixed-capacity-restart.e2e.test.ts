@@ -60,9 +60,11 @@ it("restores mixed queue order and durable dispatch without coalescing or duplic
     await server.start();
     await expect.poll(() => lines().length, { timeout: 20_000 }).toBe(2);
     expect(journal()).toEqual([{ status: "dispatching" }, { status: "pending" }, { status: "pending" }]);
+    await api("PATCH", "/api/config", { threads: { maxConcurrentPerBot: 2 } });
     const routine = (await api("POST", "/api/routines", { name: "Restored queue holder", prompt: "Hold the slot.", target: "bot", botId: bot.id, runOn: "maus", enabled: true, schedule: { type: "daily", time: "23:00" } })).routine!;
     await api("POST", `/api/routines/${routine.id}/run`);
     await expect.poll(async () => (await state()).bots.find(entry => entry.id === bot.id)!.tasks.some(task => task.threadId !== threadId && task.busy), { timeout: 20_000 }).toBe(true);
+    await api("PATCH", "/api/config", { threads: { maxConcurrentPerBot: 1 } });
     writeFileSync(mainGate, "");
     await expect.poll(journal, { timeout: 20_000 }).toEqual([{ status: "pending" }, { status: "pending" }]);
     expect(lines()).toHaveLength(2);
