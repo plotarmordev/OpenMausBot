@@ -626,7 +626,9 @@ describe("Group Local VM ownership on the real isolated server", () => {
         headers: { "content-type": "application/json", ...(person ? { authorization: `Bearer ${paired.token}` } : {}) },
         body: JSON.stringify({ text: "SELECT_COMPUTER_CAPACITY" }) });
       expect(sent.status).toBe(202);
-      const before = await dump();
+      const before = z.object({ mcpConfig: z.object({ mcpServers: z.object({
+        agents: z.object({ env: z.object({ OMB_COMMS_TOKEN: z.string() }) }),
+      }) }) }).parse(await dump());
       const { routine } = await api("POST", "/api/routines", { name: "Computer capacity holder", prompt: "Hold the slot.",
         target: "bot", botId: bot.id, runOn: "maus", enabled: true, schedule: { type: "daily", time: "23:00" } });
       await api("POST", `/api/routines/${routine.id}/run`);
