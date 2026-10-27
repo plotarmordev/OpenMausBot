@@ -77,6 +77,7 @@ describe("message-db", () => {
     closeMessageDb();
     expect(hasQueuedInputAfter("bot", "bot", "thread", "legacy")).toBe(true);
     expect(hasQueuedInputAfter("bot", "bot", "thread", "missing")).toBe(true);
+    expect(hasQueuedInputAfter("bot", "bot", "thread", undefined)).toBe(true);
   });
 
   it("persists inserts, updates, and the active leaf across a reopen", () => {

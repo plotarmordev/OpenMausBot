@@ -385,7 +385,8 @@ export function chatFollowups(kind?: ChatFollowup["kind"]): ChatFollowup[] {
     status: row.status, payload: JSON.parse(row.payload) as FollowupPayload }));
 }
 
-export function hasQueuedInputAfter(kind: ChatFollowup["kind"], ownerId: string, threadId: string, messageId: string): boolean {
+export function hasQueuedInputAfter(kind: ChatFollowup["kind"], ownerId: string, threadId: string, messageId: string | undefined): boolean {
+  if (!messageId) return true;
   const original = db().prepare("SELECT input_order FROM messages WHERE thread_id = ? AND id = ?").get(threadId, messageId);
   if (original?.input_order == null) return true;
   return Boolean(db().prepare(
