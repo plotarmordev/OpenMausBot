@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import { z } from "zod";
 import { writeFileAtomic } from "./atomic.ts";
 import { cloudHomePrompt } from "./system-prompt.ts";
 import { CONTROL_BUSY, CONTROL_REFUSAL_PLAIN, controlRefusal, createControlClient } from "./control-client.ts";
@@ -598,6 +599,67 @@ describe("Group Local VM ownership on the real isolated server", () => {
       await api("PUT", "/api/config", { box: { token: "" } });
     }
   });
+
+  it.each([true, false])("keeps computer continuation capacity provenance at saturation: %s", async person => {
+    vmState(); rmSync(dumpFile, { force: true }); rmSync(finishFile, { force: true });
+    await waitForExit(child, { signal: "SIGTERM" });
+    await startServer();
+    const { bot } = await api("POST", "/api/bots", { name: "Capacity computer selection" });
+    const holderGate = join(fixtureHome, `${bot.id}-holder`);
+    const prompts = join(fixtureHome, `${bot.id}-prompts.jsonl`);
+    const wrapper = join(fixtureHome, `${bot.id}-cli.mjs`);
+    writeFileSync(wrapper, ["#!/usr/bin/env node", 'import { basename } from "node:path";',
+      `if (basename(process.cwd()) === ${JSON.stringify(bot.threadId)}) {`,
+      `process.env.FAKE_CLAUDE_PROMPTS = ${JSON.stringify(prompts)};`, "} else {",
+      `process.env.FAKE_CLAUDE_SLOW_FINISH_GATE = ${JSON.stringify(holderGate)};`,
+      "delete process.env.FAKE_CLAUDE_DUMP;", "}",
+      "// The fake CLI captures environment at module initialization.",
+      `await import(${JSON.stringify(pathToFileURL(join(ROOT, "server/testing/fake-claude-cli.ts")).href)});`].join("\n"), { mode: 0o700 });
+    const promptCount = () => existsSync(prompts) ? readFileSync(prompts, "utf8").split("\n").filter(Boolean).length : 0;
+    try {
+      await api("PATCH", "/api/instances/claude", { cli: wrapper });
+      await api("PATCH", "/api/config", { threads: { maxConcurrentPerBot: 2 } });
+      await api("PATCH", `/api/bots/${bot.id}`, { computer: "browser", browser: false });
+      const pairing = await api("POST", "/api/auth/pairing", {});
+      const paired = await api("POST", "/api/auth/pair", { code: pairing.code });
+      const sent = await fetch(base + `/api/bots/${bot.id}/messages`, { method: "POST",
+        headers: { "content-type": "application/json", ...(person ? { authorization: `Bearer ${paired.token}` } : {}) },
+        body: JSON.stringify({ text: "SELECT_COMPUTER_CAPACITY" }) });
+      expect(sent.status).toBe(202);
+      const before = await dump();
+      const { routine } = await api("POST", "/api/routines", { name: "Computer capacity holder", prompt: "Hold the slot.",
+        target: "bot", botId: bot.id, runOn: "maus", enabled: true, schedule: { type: "daily", time: "23:00" } });
+      await api("POST", `/api/routines/${routine.id}/run`);
+      const stateSchema = z.object({ bots: z.array(z.object({ id: z.string(), tasks: z.array(z.object({ threadId: z.string(), busy: z.boolean().optional() })) })) });
+      const pageSchema = z.object({ messages: z.array(z.object({ role: z.string(), text: z.string().optional(), tool: z.object({ name: z.string() }).optional() })) });
+      await until(() => api("GET", "/api/bots?messages=0"), state => stateSchema.parse(state).bots.find(entry => entry.id === bot.id)!.tasks.some(task => task.threadId !== bot.threadId && task.busy));
+      await api("PATCH", "/api/config", { threads: { maxConcurrentPerBot: 1 } });
+      const selected = await fetch(base + "/api/internal/computer/select", { method: "POST",
+        headers: { authorization: `Bearer ${before.mcpConfig.mcpServers.agents.env.OMB_COMMS_TOKEN}`, "content-type": "application/json" },
+        body: JSON.stringify({ surface: "vm" }) });
+      expect(await selected.json()).toMatchObject({ status: "pending", surface: "vm" });
+      writeFileSync(finishFile, "finish");
+      if (person) {
+        await expect.poll(promptCount, { timeout: 20_000 }).toBe(2);
+      } else {
+        await until(() => api("GET", `/api/threads/${bot.threadId}/messages?limit=100`),
+          page => pageSchema.parse(page).messages.some(message => message.tool?.name?.startsWith("Could not continue on")));
+        expect(promptCount()).toBe(1);
+      }
+      const page = pageSchema.parse(await api("GET", `/api/threads/${bot.threadId}/messages?limit=100`));
+      expect(page.messages.filter(message => message.role === "user" && message.text === "SELECT_COMPUTER_CAPACITY")).toHaveLength(1);
+      expect(readHandoffs(join(fixtureHome, "data")).filter(node => node.threadId === bot.threadId && !node.parentId).every(node => node.capacity === (person ? "person" : undefined))).toBe(true);
+      writeFileSync(holderGate, "");
+      await idle(bot.id);
+      expect(promptCount()).toBe(person ? 2 : 1);
+    } finally {
+      writeFileSync(holderGate, ""); writeFileSync(finishFile, "finish");
+      await api("POST", `/api/bots/${bot.id}/interrupt`, {}); await idle(bot.id);
+      await api("DELETE", `/api/bots/${bot.id}`);
+      await api("PATCH", "/api/instances/claude", { cli: join(ROOT, "server/testing/fake-claude-cli.ts") });
+      await api("PATCH", "/api/config", { threads: { maxConcurrentPerBot: 16 } });
+    }
+  }, 90_000);
 
   it.each(["stop", "failure", "off", "manual-selection", "new-request"])("does not continue a computer selection after %s", async failure => {
     vmState(); rmSync(dumpFile, { force: true }); rmSync(finishFile, { force: true });
