@@ -153,6 +153,15 @@ test("the terminal is lent only when asked for with exactly true: the bots can t
   await assert.rejects(sharing.saveCloud(env, { folders: [], screen: false }), /terminal/);
 });
 
+test("Your Chrome does not outlive the switch: after an Off nothing reports it and a plain save does not bring it back", async t => {
+  const { folderPath, sharing } = await lendingFixture(t);
+  const folders = [{ id: randomUUID(), path: folderPath, write: false }];
+  assert.equal((await sharing.saveCloud(env, { folders, screen: false, chrome: true })).chrome, true);
+  sharing.revoke(env);
+  assert.equal(sharing.cloudState(env).chrome, false);
+  assert.equal((await sharing.saveCloud(env, { folders, screen: false })).chrome, false);
+});
+
 test("refuses to lend unless the Cloud sign-in is verified for this exact machine, and never to a server that is not a Cloud home", async t => {
   const folder = async dir => [{ id: randomUUID(), path: dir, write: false }];
   for (const cloud of [null, { status: "signed-out", accountId: null, origin: null }, { status: "unavailable", accountId: "acct_1", origin: null }, { status: "connected", accountId: "acct_1", origin: "https://omb-u-other.fly.dev" }]) {
@@ -320,7 +329,7 @@ test("Stop lending is instant: the Cloud is told, running work is cancelled, and
   home.push({ action: "computer_call", tool_name: "click", arguments: {} });
   await delay(300);
   assert.equal((await readFile(driver.calls, "utf8")).trim(), "drag");
-  assert.deepEqual(summaries.at(-1), { lending: [], internetOnly: false, busy: null });
+  assert.deepEqual(summaries.at(-1), { lending: [], internetOnly: false, terminal: false, busy: null });
 });
 
 test("quitting the app pauses lending; it never switches it off, even mid-reconnect", async t => {
@@ -378,6 +387,31 @@ test("the menu-bar indicator exists only while lending, reads In use while bots 
   assert.deepEqual([stops, opens], [1, 1]);
   indicator.update({ lending: false, busy: true });
   assert.equal(trays[0].destroyed, true, "gone as soon as lending ends");
+});
+
+test("the menu-bar indicator lends the terminal through main, and shows what is lent once main answers", async () => {
+  const trays = [];
+  class Tray {
+    constructor() { trays.push(this); }
+    on() {} setToolTip() {} setTitle() {} setContextMenu(menu) { this.menu = menu; } isDestroyed() { return false; } destroy() {}
+  }
+  const asked = [];
+  let answer;
+  const indicator = createLendingIndicator({ Tray, Menu: { buildFromTemplate: items => items }, nativeImage: { createFromPath: () => ({ resize: () => ({}) }) },
+    iconPath: "icon.png", onStop: () => {}, onOpen: () => {}, onTerminal: on => { asked.push(on); return new Promise(resolve => { answer = resolve; }); }, device: "Mac" });
+  indicator.update({ lending: true, busy: false, terminal: false });
+  const terminal = () => trays[0].menu.find(item => item.label === "Terminal");
+  assert.equal(terminal().checked, false);
+  terminal().click();
+  terminal().checked = true;
+  answer();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual(asked, [true]);
+  assert.equal(terminal().checked, false, "a No leaves it unticked");
+  indicator.update({ lending: true, busy: false, terminal: true });
+  assert.equal(terminal().checked, true);
+  terminal().click();
+  assert.deepEqual(asked, [true, false]);
 });
 
 test("Stop lending is remembered as the person's own choice, with when, and a new lend clears it", async t => {

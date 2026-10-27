@@ -19,7 +19,7 @@ export interface KnownLentComputer {
   lent: boolean;
   lastSeenAt: number;
   lastUsedAt: number | null;
-  scopes: { folders: number; terminal: boolean; screen: boolean; internet?: boolean };
+  scopes: { folders: number; terminal: boolean; screen: boolean; internet?: boolean; chrome?: boolean };
 }
 
 const PLATFORM: Record<string, string> = { win32: "Windows", darwin: "macOS", linux: "Linux" };
@@ -31,6 +31,7 @@ export function lentComputerLines(computer: KnownLentComputer, now = Date.now())
     : t("lending.cloudSide.offline", { when: localizedRelativeTime(computer.lastSeenAt, activeLocale(), now) });
   const what = [
     ...(computer.scopes.internet ? [t("lending.cloudSide.internet")] : []),
+    ...(computer.scopes.chrome ? [t("lending.cloudSide.chrome")] : []),
     ...(computer.scopes.folders === 1 ? [t("lending.cloudSide.folderOne")]
       : computer.scopes.folders ? [t("lending.cloudSide.folders", { count: String(computer.scopes.folders) })] : []),
     ...(computer.scopes.screen ? [t("lending.cloudSide.screen")] : []),
@@ -49,7 +50,7 @@ export function pageLendingLine(lending: PageLending): string {
   if (lending.status && lending.status !== "lent" && lending.status !== "starting") return t(lendingProblemKey(lending.status) ?? "lending.status.starting");
   if (lending.status === "starting") return t("lending.status.starting");
   const updating = lending.link === "unsupported";
-  const what = lentWhat(lending.folders, lending.screen, lending.internet === true && !updating, lending.terminal === true);
+  const what = lentWhat(lending.folders, lending.screen, lending.internet === true && !updating, lending.terminal === true, lending.chrome === true && !updating);
   if (updating) return what ? `${lendsLine(what)} ${t("lending.internetUnsupported")}` : t("lending.internetUnsupported");
   const line = what ? lendsLine(what) : t("lending.status.lent");
   return lending.internet && lending.link === "connecting" ? `${line} ${t("lending.internetConnecting")}` : line;

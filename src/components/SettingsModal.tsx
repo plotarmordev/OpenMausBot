@@ -9,6 +9,7 @@ import { completionPatch } from "@/lib/onboarding";
 import { AnthropicEveryClaudeBot, ApiKeyRow, OpenCodeProviderKeys, VpsConnection } from "./ApiKeys";
 import { AnalyticsRow } from "./AnalyticsRow";
 import { UpdatesConsentRow } from "./UpdatesConsent";
+import { OpenAtLoginRow } from "./OpenAtLoginRow";
 import { DefaultBotSidebarRow } from "./DefaultBotControls";
 import { DiagnosticsRow } from "./DiagnosticsRow";
 import { OtherOpenAiCompatServers } from "./OpenAiCompatServers";
@@ -677,6 +678,7 @@ export function SettingsModal() {
             </Card>
 
             <LanguageRow />
+            <OpenAtLoginRow />
             <NewBotEffortRow />
             <AnalyticsRow />
             <UpdatesConsentRow />

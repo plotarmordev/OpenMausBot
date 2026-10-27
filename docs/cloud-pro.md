@@ -618,6 +618,14 @@ with no confirmation. The switch and the chosen scopes are the consent.
   the switch on My Cloud's page (never in the default grant). From My Cloud's page it takes a real click and a Yes in this
   app's own dialog, like Apps and screen; changing Apps and screen keeps it as it is, and it is not kept when the switch
   is turned off. Every command is listed under Activity.
+- **Your Chrome** (off by default): bots on My Cloud whose browser profile is **My Chrome** act inside Chrome on this
+  computer, signed in as the person, in the person's own conversations and routines only. That reaches every site they
+  are signed in to. Chrome is lent only by this checkbox in this computer's own Settings, never by another choice and
+  never in the default grant, and it is not kept when the switch is turned off. It goes over the device link, to the
+  DevTools port this computer finds itself, so it needs Chrome open with remote debugging on
+  (`chrome://inspect/#remote-debugging`), and Chrome asks the person to allow the connection. It works only with a
+  personal Cloud home, never a Team Cloud. Activity lists it as **Used your Chrome**, once per outcome every 10 minutes
+  as for websites. See "Your Chrome" below.
 
 The switch can be turned on before the first **Open My Cloud**; lending
 starts once this Mac is signed in to the Cloud. Lending runs while the app is
@@ -719,7 +727,7 @@ Accessibility and Screen Recording already granted, read from computer
 control's running state, never by asking macOS). It adds to what is lent
 already, never takes away, and never undoes the person's own Off: lending they
 turned off (`stopped.reason "you"`) stays off, across restarts too, and so does
-an internet connection they unticked.
+an internet connection they unticked. It never turns on Your Chrome.
 
 **Use my Mac** (`electron/use-my-computer.mjs`). Every desktop app signed in to
 the person's own My Cloud is asked once per Cloud (and once per computer), in a
@@ -831,6 +839,39 @@ the names in `server/browser/egress/home-sites.ts`):
   away, so sites that turn away data centres, such as Instagram, YouTube and
   Google sign-in, load from My Cloud's own connection for now and may refuse…".
 
+### Your Chrome
+
+A browser profile set to **My Chrome** on My Cloud uses the person's own Chrome
+on the computer that lends it, over the same device link as the internet
+connection. Only a personal Cloud home advertises `capabilities.myChromeLink`,
+and a desktop sends its Your Chrome choice only to a Cloud that does; on a Team
+Cloud every profile stays built-in.
+
+- **One door per browser session** (`server/browser/lent-chrome.ts`). The
+  profile's agent-browser attaches to `ws://127.0.0.1:<port>/devtools/browser/<token>`,
+  a loopback listener with a 32-byte token. Each connection is checked against
+  who may use the lent computer, then opened as a Chrome stream on the newest
+  online link of a computer that lends Chrome. My Cloud never names a host or a
+  port for Chrome.
+- **The computer finds Chrome itself** (`electron/device-chrome.mjs`). It reads
+  `DevToolsActivePort` from Chrome's own data folders (Google Chrome, Chrome
+  Canary, Brave), connects to `127.0.0.1` on that port only, and lets through
+  one WebSocket upgrade to Chrome's browser or a page, with Chrome's own browser
+  path and Host and no Origin; anything else gets 403. It opens a Chrome stream
+  only while its own grant lends Chrome, whatever My Cloud asks.
+- **Who may use it**: exactly the turns that may use the lent computer, so the
+  person's own conversations and routines. agent-browser keeps its connection
+  across turns, so when a turn that may not lend takes the browser, the open
+  connection is dropped, and each of its calls gets "Someone else wrote in this
+  conversation, so it can't use your Chrome. Start a new conversation to use it."
+- **When it can't**, the call says why in one line the bot can pass on: the
+  computer is offline, no computer lends Chrome (turn on Your Chrome), Chrome
+  isn't open with remote debugging on, or Chrome did not accept the connection
+  (it may be waiting for Allow). It never falls back to the built-in browser,
+  whose sign-ins differ. A connection no bot has used for the desktop's browser
+  idle time (10 minutes by default) is closed, so Chrome stops showing it as
+  controlled; the next call connects again by itself.
+
 ### How it is enforced
 
 On the Mac (the authority; `electron/computer-sharing.mjs`,
@@ -872,7 +913,10 @@ On the Mac (the authority; `electron/computer-sharing.mjs`,
   `screenshot_out_file` or `debug_image_out`), `launch_app` takes no extra
   arguments or inspector port and opens only `http`/`https` addresses, and a
   cursor image cannot be read from a path. Any other argument is refused, and
-  the tool list the Cloud sees shows only what is accepted.
+  the tool list the Cloud sees shows only what is accepted. Chrome's DevTools
+  are never reached through the screen: Chrome is lent only by its own **Your
+  Chrome** switch, over the device link, to the port this computer finds itself
+  (see "Your Chrome" above).
 - **Activity log**: `lending-activity.jsonl` in the app's data folder, owner
   only: time, action, folder and relative path, tool name or website name, and
   whether it ran (a refused website keeps the computer's reason). Never contents, output or typed text. The app only ever appends to it

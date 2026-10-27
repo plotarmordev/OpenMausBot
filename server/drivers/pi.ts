@@ -58,6 +58,10 @@ const PI_NEGOTIATE_FRAME = { id: "negotiate", type: "negotiate_protocol", protoc
 const PI_PROMPT_RE_ANCHOR_TURNS = 8;
 /** How long to wait after a finished turn_end for agent_end, which some runtimes never send. */
 const PI_AGENT_END_GRACE_MS = 60_000;
+/** A prompt sent before pi answers new_session or switch_session runs on a session pi then replaces, so the turn waits
+ *  for that answer however long it takes, and says so in the chat after this long. */
+const PI_SESSION_SLOW_MS = 20_000;
+const PI_SESSION_SLOW = "Pi is taking longer than usual to start this conversation's session. The turn goes on when Pi answers. Press Stop to cancel it.";
 
 /** pi answered success:false: an explicit refusal from a live runtime, not a transport failure. */
 class PiRpcRefusalError extends Error {}
@@ -650,7 +654,7 @@ export const PiDriver: ProviderDriver<PiConfig> = {
       })();
       let assistantText = "";
       let compactionObserved = false;
-      const responseWaiters = new Map<string, { resolve: (data: unknown) => void; reject: (err: Error) => void; timer: NodeJS.Timeout }>();
+      const responseWaiters = new Map<string, { resolve: (data: unknown) => void; reject: (err: Error) => void; timer?: NodeJS.Timeout }>();
       // Steers correlate by a unique id, so concurrent steers never share or overwrite a waiter.
       let steerSeq = 0;
       const rejectWaiters = (err: Error) => {
@@ -662,11 +666,11 @@ export const PiDriver: ProviderDriver<PiConfig> = {
       };
       const awaitResponse = (command: string, timeoutMs = 20_000, key = command) =>
         new Promise<unknown>((resolve, reject) => {
-          const timer = setTimeout(() => {
+          const timer = timeoutMs === Infinity ? undefined : setTimeout(() => {
             responseWaiters.delete(key);
             reject(new Error(`pi ${command} timed out`));
           }, timeoutMs);
-          timer.unref?.();
+          timer?.unref?.();
           responseWaiters.set(key, { resolve, reject, timer });
         });
       child.stdin.on("error", () => rejectWaiters(new Error("pi stdin closed")));
@@ -948,9 +952,10 @@ export const PiDriver: ProviderDriver<PiConfig> = {
       let sessionReady = false;
       try {
         const command = sessionPath ? "switch_session" : "new_session";
-        const hsPromise = awaitResponse(command);
+        const hsPromise = awaitResponse(command, Infinity);
         send(sessionPath ? { type: "switch_session", sessionPath } : { type: "new_session" });
-        const hs = (await hsPromise) as { sessionFile?: string; sessionId?: string } | undefined;
+        const slow = setTimeout(() => emit({ ...base(threadId, turnId), type: "runtime.notice", message: PI_SESSION_SLOW }), PI_SESSION_SLOW_MS);
+        const hs = (await hsPromise.finally(() => clearTimeout(slow))) as { sessionFile?: string; sessionId?: string } | undefined;
         if (hs?.sessionFile) sessionFile = hs.sessionFile;
         sessionReady = true;
         emit({
@@ -962,6 +967,7 @@ export const PiDriver: ProviderDriver<PiConfig> = {
       } catch {
         // pi --no-session accepts a prompt without an explicit session.
       }
+      if (settled) return { turnId };
 
       const chosen = typeof turn.model === "string" ? splitPiModel(turn.model) : null;
       if (chosen) {

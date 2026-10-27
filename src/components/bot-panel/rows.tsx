@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import type { ReactNode, Ref } from "react";
 import { Check, ChevronLeft, ChevronRight, Trash2, type LucideIcon } from "lucide-react";
 
 import { cn } from "@/lib/cn";
@@ -6,6 +6,7 @@ import { MAUS_COLORS, type MausColor } from "@/lib/mascot";
 import { Switch } from "../SettingsPrimitives";
 
 export const rowCls = "flex min-h-[46px] items-center gap-2.5 px-3.5 py-[11px]";
+export const roundButtonCls = "flex size-8 shrink-0 items-center justify-center rounded-full bg-ink/[0.06] text-ink hover:bg-ink/[0.11] max-md:size-9 max-md:border max-md:border-hairline max-md:bg-card";
 const titleCls = "text-[14px] font-medium text-ink";
 const hintCls = "mt-px text-[13px] leading-[1.35] text-ink-secondary";
 export const buttonCls =
@@ -102,6 +103,7 @@ export function NavRow({ title, hint, value, icon, onClick, drill = true, danger
   danger?: boolean;
   disabled?: boolean;
   tooltip?: string;
+  ref?: Ref<HTMLButtonElement>;
   "data-panel-row"?: string;
   "data-panel-page"?: string;
 }) {

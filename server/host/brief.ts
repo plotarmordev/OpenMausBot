@@ -82,6 +82,8 @@ export interface BriefDeps {
   /** The run's answer was read: its items are settled. */
   keep(key: string): void;
   items(key: string): { mail: EmailHeader[]; prep: Array<{ key: string; event: CalendarEvent }> } | null;
+  /** What the bot's last nightly dream noticed across its chats, while fresh. AI text: shown as plain text only. */
+  ideas?(botId: string): { ideas: string[]; conversations: number };
 }
 
 export interface PresenceAnswer {
@@ -243,10 +245,12 @@ export function createBrief(deps: BriefDeps) {
       const header = headers.get(row.messageId);
       return header ? [{ messageId: row.messageId, threadId: row.threadId, from: header.from, subject: header.subject, needsReply: row.needsReply, ...(header.why ? { why: header.why } : {}) }] : [];
     });
+    const dreamt = deps.ideas?.(chiefBot.id);
+    const ideas = (dreamt?.ideas ?? []).map((idea): BriefRow => ({ text: idea, note: w.noticedAcross(dreamt!.conversations) }));
     return {
       now: at, ...(zone ? { timeZone: zone } : {}), ...(language ? { language } : {}), intro: state.introducedOn === undefined || state.introducedOn === day,
       needs: [...troubleRows, ...failed, ...clashRows, ...needsYouRows(w), ...unfencedRows],
-      meetings, emails, ...(waiting !== undefined ? { waiting } : {}), routines: done,
+      meetings, emails, ...(waiting !== undefined ? { waiting } : {}), routines: done, ...(ideas.length ? { ideas } : {}),
     };
   }
 
@@ -291,7 +295,7 @@ export function createBrief(deps: BriefDeps) {
       const threadId = existing?.card.threadId ?? home(bot);
       if (!threadId) return null;
       const needsPerson = built.needs.length > 0 || built.emails.length > 0;
-      const worth = needsPerson || (built.meetings?.length ?? 0) > 0;
+      const worth = needsPerson || (built.meetings?.length ?? 0) > 0 || (built.ideas?.length ?? 0) > 0;
       if (!existing && !(options.create ? worth : needsPerson)) return null;
       if (deps.threadBusy(bot.id, threadId)) {
         dirty = true;

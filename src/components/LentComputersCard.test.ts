@@ -12,8 +12,8 @@ const { LentComputersCard, lentComputerLines, pageLendingLine } = await import("
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 let host: HTMLDivElement;
 let root: Root;
-const off: PageLending = { available: true, on: false, status: null, folders: [], screen: false, screenAvailable: true, internet: false, terminal: false };
-const lent: PageLending = { available: true, on: true, status: "lent", folders: ["Desktop", "Documents", "Downloads"].map((name) => ({ name, write: false })), screen: false, screenAvailable: true, internet: true, terminal: false };
+const off: PageLending = { available: true, on: false, status: null, folders: [], screen: false, screenAvailable: true, internet: false, chrome: false, terminal: false };
+const lent: PageLending = { available: true, on: true, status: "lent", folders: ["Desktop", "Documents", "Downloads"].map((name) => ({ name, write: false })), screen: false, screenAvailable: true, internet: true, chrome: false, terminal: false };
 
 beforeEach(() => {
   setLocale("en");
@@ -139,4 +139,13 @@ it("on the phone or in a browser, a computer that lends its internet connection 
   expect(away).toContain("While it's away, Instagram, YouTube and Google sign-in open from My Cloud's own connection and may turn your bots away.");
   expect(lentComputerLines({ ...computer, online: false, scopes: { ...computer.scopes, internet: false } }).join(" ")).not.toContain("My Cloud's own connection");
   expect(lentComputerLines({ ...computer, online: false, lent: false }).join(" ")).not.toContain("My Cloud's own connection");
+});
+
+it("names a lent Chrome on both sides, a Chrome-only grant included", () => {
+  expect(pageLendingLine({ ...lent, chrome: true })).toBe("Your bots can use the internet connection, your Chrome, and Desktop, Documents, and Downloads (read only) on this computer.");
+  expect(pageLendingLine({ ...lent, folders: [], internet: false, chrome: true })).toBe("Your bots can use your Chrome on this computer.");
+  const computer = { id: "c", name: "Ash's MacBook", platform: "darwin" as const, online: true, busy: false, lent: true, lastSeenAt: Date.now(), lastUsedAt: null,
+    scopes: { folders: 2, terminal: false, screen: false, internet: true, chrome: true } };
+  expect(lentComputerLines(computer)).toContain("Shares: internet connection, Chrome, 2 folders");
+  expect(lentComputerLines({ ...computer, scopes: { folders: 0, terminal: false, screen: false, internet: false, chrome: true } })).toContain("Shares: Chrome");
 });

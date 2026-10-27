@@ -20,8 +20,10 @@ import { SIDEBAR_AND_PANEL_FIT, SIDEBAR_INLINE, TWO_SIDE_PANELS_FIT, useMediaQue
 import { PluginsPanel, preloadConnectedApps } from "@/components/PluginsPanel";
 import {
   ActivityPanel, BotSettingsDialog, ComputerPanel, FilesView, InspectorPanel, KeyboardShortcutsModal, LocalVmWorkspace, NewBotDialog,
-  preloadScreens, RemoteAgentSettingsPanel, RemoteDesktopPanel, SettingsModal, TeamMapPage, TriggersPage,
+  preloadScreens, RemoteAgentSettingsPanel, RemoteDesktopPanel, RoomPanel, SettingsModal, TeamMapPage, TriggersPage,
 } from "@/components/lazy-screens";
+import { useAdvancedMode } from "@/lib/interface-mode";
+import { useRoomPanelShown } from "@/lib/room-panel";
 import { WorkspaceBackupRecovery } from "@/components/WorkspaceBackupSettings";
 import { NotificationRail, NotificationsPanel } from "@/components/NotificationsPanel";
 import { useNotificationFeed } from "@/lib/notification-preferences";
@@ -126,7 +128,9 @@ function Shell({ viewer }: { viewer: WelcomeViewer | null }) {
   const group = state.groups.find((g) => g.id === state.selectedId);
   const bot = group ? undefined : (state.bots.find((b) => b.id === state.selectedId) ?? state.bots[0]);
   const notificationFeed = useNotificationFeed() && !remoteClient;
-  const sidePanelOpen = (Boolean(bot) && (state.settingsOpen || state.computerOpen || state.inspectorOpen || state.activityOpen)) || (notificationFeed && state.notificationsOpen);
+  const advanced = useAdvancedMode();
+  const roomPanelOpen = useRoomPanelShown({ group, state, simple: !advanced && !remoteClient });
+  const sidePanelOpen = (Boolean(bot) && (state.settingsOpen || state.computerOpen || state.inspectorOpen || state.activityOpen)) || roomPanelOpen || (notificationFeed && state.notificationsOpen);
   const collapseSidebar = sidePanelOpen && !sidebarAndPanelFit;
   const calendarFocus = state.activeView === "routines" && state.routinesFocus.view === "calendar";
 
@@ -364,6 +368,9 @@ function Shell({ viewer }: { viewer: WelcomeViewer | null }) {
             onOpenVmWorkspace={openLocalVmWorkspace}
           />
         )
+      )}
+      {roomPanelOpen && group && (
+        <RoomPanel key={`room:${group.id}`} group={group} overlay={notificationFeed && state.notificationsOpen && !twoSidePanelsFit} />
       )}
       {!remoteClient && state.inspectorOpen && bot && <InspectorPanel key={bot.threadId} bot={bot} />}
       {!remoteClient && state.activityOpen && bot && <ActivityPanel key={`activity:${bot.id}`} bot={bot} />}

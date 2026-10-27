@@ -286,14 +286,18 @@ describe("thread control placement", () => {
     fixture.advanced = true;
   });
 
-  it("gives the editor its own row above the controls", () => {
+  it("keeps the editor and its controls on one line, wrapping only in a narrow composer", () => {
     const markup = renderToStaticMarkup(createElement(ChatView, { bot }));
     expect(markup).toContain("@container/composer");
-    const row = /data-composer-row="[^"]*" class="([^"]*)"/.exec(markup)!;
-    expect(row[1].split(" ")).toContain("flex-wrap");
-    const editor = /class="mention-editor ([^"]*)"/.exec(markup)!;
-    expect(editor[1].split(" ")).toEqual(expect.arrayContaining(["min-w-0", "flex-1", "order-first", "basis-full"]));
-    expect(/<textarea[^>]*class="([^"]*)"/.exec(markup)![1].split(" ")).toContain("min-h-14");
+    const row = /data-composer-row="[^"]*" class="([^"]*)"/.exec(markup)!.at(1)!.split(" ");
+    expect(row).toContain("@max-[30rem]/composer:flex-wrap");
+    expect(row).not.toContain("flex-wrap");
+    const editor = /class="mention-editor ([^"]*)"/.exec(markup)!.at(1)!.split(" ");
+    expect(editor).toEqual(expect.arrayContaining(["min-w-0", "flex-1", "@max-[30rem]/composer:order-first", "@max-[30rem]/composer:basis-full"]));
+    expect(editor).not.toContain("basis-full");
+    const textarea = /<textarea[^>]*class="([^"]*)"/.exec(markup)!.at(1)!.split(" ");
+    expect(textarea).toContain("min-h-6");
+    expect(textarea).not.toContain("min-h-14");
   });
 
   it("keeps the composer inert until the deleted thread's replacement transcript arrives", () => {

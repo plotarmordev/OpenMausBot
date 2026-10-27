@@ -248,7 +248,14 @@ function parseCmdShim(shim: string, env?: NodeJS.ProcessEnv): ResolvedSpawn | nu
     if (node) return { command: node, args: [script] };
   }
   const exe = targets.find((p) => extname(p).toLowerCase() === ".exe");
-  return exe ? { command: exe, args: [] } : null;
+  if (exe) return { command: exe, args: [] };
+  // cmd-shim keeps the package.json bin name verbatim, so the wrapped node script can have no extension;
+  // its shebang is the only thing that says so.
+  for (const target of targets) {
+    const viaNode = parseNodeShebang(target, env);
+    if (viaNode) return viaNode;
+  }
+  return null;
 }
 
 function parseNodeShebang(file: string, env?: NodeJS.ProcessEnv): ResolvedSpawn | null {

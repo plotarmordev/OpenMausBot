@@ -4,7 +4,7 @@ import { activeLocale, t } from "@/lib/i18n";
 import { useShowThreads } from "@/lib/thread-preferences";
 import { useReactor } from "@/lib/cloud-guest";
 import { otherSpeaker } from "@/lib/own-profile";
-import { Check, ChevronDown, FolderOpen, Loader2, Pause, Pin, Plus, Search, Square, X } from "lucide-react";
+import { Check, ChevronDown, FolderOpen, Loader2, Pin, Square, X } from "lucide-react";
 import {
   api,
   useStore,
@@ -16,10 +16,8 @@ import {
   type Message,
 } from "@/state/store";
 import { BotAvatar } from "./Avatar";
-import { PlaceIcon } from "./PlaceIcon";
 import { ScreenFrame } from "./ScreenFrame";
 import { RoomHoldsBanner } from "./RoomHoldsBanner";
-import { effectivePlace, placeLabelKey } from "@/lib/place";
 import { ThreadChip } from "./ThreadChip";
 import { ToolActivity } from "./ToolActivity";
 import { ThreadRefText } from "./ThreadRefs";
@@ -30,7 +28,7 @@ import { roomActivityVisible } from "@/lib/room-activity";
 import { StatusActivityRow } from "@/components/StatusActivityRow";
 import { normalizeState } from "@/lib/mascot";
 import { botTextShowsSpeaker, laterTextOwns, runShowsSpeaker } from "@/lib/room-speaker";
-import { defaultResponderName, effectiveDefaultResponder, groupResponseHint, jevRoomRoutingOn } from "@/lib/group-routing";
+import { defaultResponderName, groupResponseHint, jevRoomRoutingOn } from "@/lib/group-routing";
 import { ChatMarkdown } from "./ChatMarkdown";
 import { FailedTurnRow, MessageBoundary, SIMPLE_BUBBLE } from "./ChatView";
 import { useAdvancedMode } from "@/lib/interface-mode";
@@ -49,14 +47,9 @@ import { botEngine, failedTurnCause } from "@/lib/failed-turn";
 import { CitationSelectionToolbar, SentCitations } from "./CitationUI";
 import { Composer } from "./Composer";
 import { ChatErrorBanner, ChatNotice } from "./ChatErrorBanner";
-import { RoomContextBadge, RoomContextWarnings } from "./ContextWarning";
-import { roomContextWarnings } from "@/lib/context-warning";
+import { RoomContextWarnings } from "./ContextWarning";
 import { ChatFindBar } from "./ChatFindBar";
-import { ConversationTurnLimit } from "./ConversationTurnLimit";
-import { GroupTaskPicker } from "./TaskPicker";
-import { GroupUsageChip } from "./GroupUsageChip";
 import { isPureLeakedSystemHarnessMessage, stripLeakedSystemHarnessMessages } from "../../shared/system-message-guard.ts";
-import { ExportTranscriptMenu } from "./ExportTranscriptMenu";
 import { ReplyQuote } from "./ReplyQuote";
 import { ConnectorCard } from "./ConnectorCard";
 import { SecretRequestCard } from "./SecretRequestCard";
@@ -66,7 +59,7 @@ import { GoalRunCard } from "./GoalRunCard";
 import { AttachmentGallery, MessageAttachmentGallery, replyAttachmentGroup } from "./AttachmentGallery";
 import { VoiceNoteBubble, type VoiceNoteAttachment } from "./VoiceNoteBubble";
 import { OptionCard } from "./OptionCard";
-import { GroupCallOverlay, RoomHeaderCallButton } from "./GroupCallView";
+import { GroupCallOverlay } from "./GroupCallView";
 
 import { ApprovalCard } from "./ApprovalCard";
 import { QuestionCard } from "./QuestionCard";
@@ -74,7 +67,6 @@ import { ManageMembersPanel } from "./ManageMembersPanel";
 import { groupActivityRuns, isStatusActivity, roomTurnFolds } from "@/lib/activity-runs";
 import { TurnNarrationRun } from "./TurnNarrationRun";
 import { ActivityRun } from "./ActivityRun";
-import { useCaptionChrome } from "./DesktopCapabilities";
 import { cn } from "@/lib/cn";
 import { useMenuMotion } from "./MenuMotion";
 import { useComposerDockPad } from "@/lib/composer-dock";
@@ -94,12 +86,15 @@ import { pendingApprovals } from "./PendingApproval";
 import { DataResultChip } from "./DataResultChip"; import { PublishedPageCard } from "./PublishedPageCard";
 import { TranscriptAnnouncer } from "./TranscriptAnnouncer";
 import { dayLabel, localDay } from "@/lib/transcript-derivations";
-import { roomSpeakerIds, roomThreadSpeakerId, roomThreadWorking } from "@/lib/room-threads";
-import { RoomQueueList, RoutedByLine, roomMemberQueueTitle } from "./RoomQueueList";
+import { roomThreadSpeakerId, roomThreadWorking } from "@/lib/room-threads";
+import { RoomQueueList, RoutedByLine } from "./RoomQueueList";
 import { JumpToLatestButton } from "./JumpToLatestButton";
-import { Select } from "./Select";
 import { HandoffChip } from "./HandoffReply"; import { TeammateChip } from "./TeammateChip"; import { useTeammates } from "@/state/team-people";
-import { RoomWorkingFolder, RoomWorkingFolderChip } from "./RoomWorkingFolder";
+import { RoomWorkingFolder } from "./RoomWorkingFolder";
+import { RoomBulletin } from "./RoomBulletin";
+import { RoomHeader } from "./RoomHeader";
+import { useChatFindRequests } from "@/lib/chat-find";
+import { simpleRoomHeader } from "@/lib/room-panel";
 
 export function RoomToolChip({ message, roomId }: { message: Message; roomId?: string }) {
   const { state, dispatch } = useStore();
@@ -519,58 +514,6 @@ export const Transcript = memo(function Transcript({
   );
 });
 
-export function DefaultResponderSelect({ group, members }: { group: Group; members: Bot[] }) {
-  const { state, dispatch } = useStore();
-  const jevOn = jevRoomRoutingOn(state.config);
-  const responder = effectiveDefaultResponder(group, members);
-  const value = responder.kind === "member" ? `member:${responder.botId}` : responder.kind;
-  const lead = responder.kind === "member" ? members.find((member) => member.id === responder.botId) : undefined;
-  const title =
-    responder.kind === "everyone"
-      ? t("room.responder.everyone")
-      : responder.kind === "mentions"
-        ? t("room.responder.mentions")
-        : responder.kind === "auto"
-          ? jevOn
-            ? t("room.responder.auto")
-            : t("room.responder.autoOff", { name: defaultResponderName(group, members) ?? t("room.responder.leadFallback") })
-          : t("room.responder.lead", { name: lead?.name ?? t("room.responder.leadFallback") });
-
-  const change = (nextValue: string) => {
-    let next: GroupDefaultResponder;
-    if (nextValue === "everyone") next = { kind: "everyone" };
-    else if (nextValue === "mentions") next = { kind: "mentions" };
-    else if (nextValue === "auto") next = responder.kind === "member" ? { kind: "auto", fallbackBotId: responder.botId } : { kind: "auto" };
-    else next = { kind: "member", botId: nextValue.slice("member:".length) };
-    dispatch({ type: "patchGroup", groupId: group.id, patch: { defaultResponder: next } });
-  };
-
-  return (
-    <Select
-      variant="pill"
-      size="sm"
-      className="shrink-0 max-w-[190px]"
-      title={title}
-      aria-label={t("room.responder.aria")}
-      value={value}
-      onChange={(event) => change(event.target.value)}
-    >
-      <optgroup label={t("room.responder.groupLead")}>
-        {members.map((member) => (
-          <option key={member.id} value={`member:${member.id}`}>
-            {t("room.responder.leadOption", { name: member.name })}
-          </option>
-        ))}
-      </optgroup>
-      <optgroup label={t("room.responder.groupBehavior")}>
-        <option value="auto">{jevOn ? t("room.responder.autoOption") : t("room.responder.autoOptionOff")}</option>
-        <option value="everyone">{t("room.responder.everyoneOption")}</option>
-        <option value="mentions">{t("room.responder.mentionsOption")}</option>
-      </optgroup>
-    </Select>
-  );
-}
-
 type RoomSetupFields = {
   setupPending?: boolean;
   setupRequired?: boolean;
@@ -958,11 +901,8 @@ function RoomSetup({ group, members }: { group: Group; members: Bot[] }) {
 export function GroupView({ group }: { group: Group }) {
   const { state, dispatch } = useStore();
   const remoteClient = window.ogb?.remoteClient?.active === true;
-  const { dragProps: headerDragProps, noDragStyle: headerNoDragStyle, controlsShiftStyle } = useCaptionChrome();
   const composerDockRef = useRef<HTMLDivElement>(null);
   const composerDock = useComposerDockPad(composerDockRef);
-  const [bulletinOpen, setBulletinOpen] = useState(false);
-  const [bulletinDraft, setBulletinDraft] = useState(group.bulletin);
   const [folderOpen, setFolderOpen] = useState(false);
   const [membersOpen, setMembersOpen] = useState(false);
   const [findOpen, setFindOpen] = useState(false);
@@ -974,6 +914,7 @@ export function GroupView({ group }: { group: Group }) {
   const membersTriggerRef = useRef<HTMLButtonElement>(null);
   const closeMembers = useCallback(() => setMembersOpen(false), []);
   useEffect(() => setFindOpen(false), [group.threadId]);
+  useChatFindRequests(group.threadId, findOpen, setFindOpen);
   useEffect(() => {
     const onFind = (event: KeyboardEvent) => {
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "f") {
@@ -991,10 +932,10 @@ export function GroupView({ group }: { group: Group }) {
   );
   const speaker = members.find((b) => b.id === group.busyBotId);
   const threadWorking = roomThreadWorking(group, group.threadId);
-  const speakersElsewhere = new Set(roomSpeakerIds(group).filter((id) => id !== group.busyBotId));
   const threadSpeakerId = roomThreadSpeakerId(group, group.threadId);
   const threadSpeaker = threadSpeakerId ? members.find((b) => b.id === threadSpeakerId) : undefined;
   const setupPending = !remoteClient && roomNeedsSetup(group);
+  const simpleHeader = simpleRoomHeader({ advanced: useAdvancedMode(), remoteClient, group, setupPending });
 
   const lastGroupMessage = group.messages.at(-1);
   const toolInFlight = lastGroupMessage?.kind === "activity" && lastGroupMessage.tool?.ok === undefined;
@@ -1075,73 +1016,8 @@ export function GroupView({ group }: { group: Group }) {
   });
   const unreadDivider = useUnreadDivider({ threadId: group.threadId, messages: group.messages, following });
 
-  useEffect(() => setBulletinDraft(group.bulletin), [group.id, group.bulletin]);
   useEffect(() => setFolderOpen(false), [group.id]);
   useEffect(() => setMembersOpen(false), [group.id]);
-  const saveBulletin = () => {
-    setBulletinOpen(false);
-    if (bulletinDraft !== group.bulletin) {
-      dispatch({ type: "patchGroup", groupId: group.id, patch: { bulletin: bulletinDraft } });
-    }
-  };
-
-  const contextWarnings = roomContextWarnings(group, members);
-  const memberMauses = members.map((b) => {
-    const busy = group.busyBotId === b.id;
-    const queueTitle = busy ? undefined : roomMemberQueueTitle(group, members, b);
-    const contextWarning = contextWarnings.find((warning) => warning.bot.id === b.id);
-    const busyElsewhere = !busy && speakersElsewhere.has(b.id);
-    const held = !group.dm && Boolean(group.holds?.[b.id]);
-    const task = b.tasks?.find((candidate) => candidate.threadId === group.threadId);
-    const effective = busy ? effectivePlace(b, task) : "off";
-    const showPlace = busy && effective !== "off" && effective !== "auto";
-    return (
-      <span
-        key={b.id}
-        data-held={held || undefined}
-        title={
-          held
-            ? t("room.holds.avatarHeld", { name: b.name })
-            : queueTitle ?? (busyElsewhere
-              ? t("room.memberWorkingElsewhere", { name: b.name })
-              : `${b.name}${busy ? " — working…" : ""}${contextWarning ? ` — ${t("contextWarning.short", { percent: contextWarning.percent })}` : ""}`)
-        }
-        className={cn(
-          "relative inline-flex rounded-full",
-          busy && "ring-2 ring-accent/50 ring-offset-1 ring-offset-app",
-          busyElsewhere && "ring-1 ring-hairline ring-offset-1 ring-offset-app",
-          queueTitle && !busyElsewhere && "ring-1 ring-accent/30 ring-offset-1 ring-offset-app",
-        )}
-      >
-        <span className={cn("inline-flex", held && "opacity-50 grayscale")}>
-          <BotAvatar bot={b} state={normalizeState(b.mascotExpression) ?? "happy"} size={24} animated={false} />
-        </span>
-        {held && !busy && (
-          <span
-            className="absolute -right-1 -top-1 flex size-3.5 items-center justify-center rounded-full border border-app bg-raised text-ink-secondary"
-            role="img"
-            aria-label={t("room.holds.avatarHeld", { name: b.name })}
-          >
-            <Pause size={8} strokeWidth={3} aria-hidden="true" />
-          </span>
-        )}
-        {contextWarning && <RoomContextBadge percent={contextWarning.percent} />}
-        {busy && (
-          showPlace ? (
-            <span
-              className="absolute -right-1 -top-1 flex size-3.5 items-center justify-center rounded-full border border-app bg-accent text-white"
-              role="img"
-              aria-label={t("place.chipAria", { place: t(placeLabelKey(effective)) })}
-            >
-              <PlaceIcon place={effective} size={9} strokeWidth={2.5} aria-hidden="true" />
-            </span>
-          ) : (
-            <span className="absolute -right-0.5 -top-0.5 size-2 rounded-full border border-app bg-accent" />
-          )
-        )}
-      </span>
-    );
-  });
 
   return (
     <main className="relative flex h-full min-w-0 flex-1 flex-col bg-app">
@@ -1152,76 +1028,18 @@ export function GroupView({ group }: { group: Group }) {
       <GlassScrollFrame className="flex-1 [--glass-tint:var(--color-app)]">
       {/* z-[25]: above the room set-up card (z-20), below the GroupCallOverlay (z-30). */}
       <GlassBar edge="top" className="z-[25]">
-      <div
-        {...headerDragProps}
-        className={cn(
-          // A container query never matches the container itself, so the row that wraps is the child below.
-          "@container/roomhead px-5 py-3",
-          "pl-11 md:pl-5",
-        )}
-      >
-        <div data-roomhead-row className="flex items-center justify-between @max-3xl/roomhead:flex-wrap @max-3xl/roomhead:gap-y-1">
-        <div data-roomhead-identity className="flex min-w-0 items-center gap-2 @max-3xl/roomhead:basis-full" style={headerNoDragStyle}>
-          <div className="min-w-0">
-            <div className="flex items-center gap-2">
-              <span className="truncate text-[15px] font-semibold text-ink">{group.name}</span>
-              {!setupPending && !group.dm && <GroupTaskPicker group={group} />}
-            </div>
-            {group.description && <p className="truncate text-[12px] leading-4 text-ink-secondary">{group.description}</p>}
-          </div>
-        </div>
-        <div
-          data-roomhead-controls
-          className="flex items-center gap-1.5 @max-3xl/roomhead:ml-auto @max-3xl/roomhead:flex-wrap @max-3xl/roomhead:justify-end"
-          style={controlsShiftStyle}
-        >
-          <button
-            type="button"
-            onClick={() => setFindOpen((open) => !open)}
-            aria-label={t("chat.find")}
-            aria-pressed={findOpen}
-            className={cn(
-              "rounded-md p-1.5 hover:bg-raised",
-              findOpen ? "text-accent" : "text-ink-secondary hover:text-ink",
-            )}
-            title={t("chat.findShortcut")}
-          >
-            <Search size={18} />
-          </button>
-          <ExportTranscriptMenu
-            title={group.name}
-            messages={group.messages}
-            isGroup
-          />
-          {!setupPending && <ConversationTurnLimit group={group} />}
-          <RoomHeaderCallButton group={group} members={members} />
-          <GroupUsageChip usage={group.usage} />
-          {!remoteClient && !setupPending && !group.dm && <RoomWorkingFolderChip group={group} onToggle={() => setFolderOpen((open) => !open)} />}
-          {!remoteClient && !setupPending && !group.dm && <DefaultResponderSelect group={group} members={members} />}
-          {group.dm || remoteClient ? (
-            memberMauses
-          ) : (
-            <button
-              ref={membersTriggerRef}
-              type="button"
-              onClick={() => setMembersOpen(true)}
-              title={t("room.members.manage")}
-              aria-label={
-                members.length === 1
-                  ? t("room.members.ariaOne")
-                  : t("room.members.ariaMany", { count: members.length })
-              }
-              className="flex items-center gap-1.5 rounded-full py-0.5 pl-1 pr-1.5 hover:bg-raised/60"
-            >
-              {memberMauses}
-              <span className="flex size-[18px] items-center justify-center rounded-full border border-dashed border-hairline/70 text-ink-secondary">
-                <Plus size={11} />
-              </span>
-            </button>
-          )}
-        </div>
-        </div>
-      </div>
+      <RoomHeader
+        group={group}
+        members={members}
+        simple={simpleHeader}
+        setupPending={setupPending}
+        remoteClient={remoteClient}
+        findOpen={findOpen}
+        onToggleFind={() => setFindOpen((open) => !open)}
+        onToggleFolder={() => setFolderOpen((open) => !open)}
+        onOpenMembers={() => setMembersOpen(true)}
+        membersTriggerRef={membersTriggerRef}
+      />
 
       {findOpen && <ChatFindBar threadId={group.threadId} onClose={() => setFindOpen(false)} />}
       <ChatErrorBanner message={state.error} onDismiss={() => dispatch({ type: "error", message: null })} />
@@ -1245,41 +1063,7 @@ export function GroupView({ group }: { group: Group }) {
 
       {!setupPending && !group.dm && <RoomHoldsBanner group={group} members={members} />}
 
-      {!setupPending && <div className="w-full px-5">
-        {bulletinOpen ? (
-          <div className="mb-1 rounded-lg border border-hairline/40 bg-panel p-2">
-            <textarea
-              autoFocus
-              dir="auto"
-              value={bulletinDraft}
-              onChange={(e) => setBulletinDraft(e.target.value)}
-              onBlur={saveBulletin}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) saveBulletin();
-                if (e.key === "Escape") {
-                  setBulletinDraft(group.bulletin);
-                  setBulletinOpen(false);
-                }
-              }}
-              placeholder={t("room.bulletin.placeholder")}
-              rows={4}
-              className="w-full resize-none bg-transparent text-[13px] leading-relaxed text-ink placeholder:text-ink-secondary focus:outline-none"
-            />
-          </div>
-        ) : (
-          <button
-            disabled={remoteClient}
-            onClick={() => { if (!remoteClient) setBulletinOpen(true); }}
-            className={cn("mb-1 flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left", !remoteClient && "hover:bg-raised/40")}
-            title={t("room.bulletin.title")}
-          >
-            <Pin size={12} className="shrink-0 text-ink-secondary" />
-            <span dir="auto" className={cn("truncate text-[13px]", group.bulletin ? "text-ink-secondary" : "text-ink-tertiary")}>
-              {group.bulletin.split("\n")[0] || (remoteClient ? t("room.bulletin.none") : t("room.bulletin.add"))}
-            </span>
-          </button>
-        )}
-      </div>}
+      {!setupPending && !simpleHeader && <RoomBulletin group={group} remoteClient={remoteClient} />}
 
       {!setupPending && folderOpen && !group.dm && (
         <div className="w-full px-5">

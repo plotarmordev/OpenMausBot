@@ -40,7 +40,7 @@ const localOrigin = process.argv.find((arg) => arg.startsWith("--omb-local-origi
 const isLocalPage = !localOrigin || location.origin === localOrigin;
 const REMOTE_SAFE = new Set(["platform", "getCapabilities", "onCapabilitiesChanged", "applySkin", "setUnreadCount", "permStatus", "workspaces", "cloudLending", "cloudPlan", "cloudSendPage", "desktopNotices", "desktopAnalytics", "desktopLanguage", "updatesConsent", "windowControls"]);
 /** My Cloud's own page once it is the person's home (main checks the sender again): it is this app's page then. */
-const HOME_PAGE = ["home", "onChatLink", "onPackageInstall", "onOpenAppSettings", "exportDiagnostics", "openLogsFolder"];
+const HOME_PAGE = ["home", "onChatLink", "onPackageInstall", "onOpenAppSettings", "exportDiagnostics", "openLogsFolder", "openAtLogin"];
 function updaterOffered() {
   try { return ipcRenderer.sendSync("update:offered") === true; } catch { return false; }
 }
@@ -259,6 +259,11 @@ const bridge = {
   revealInFolder: (filePath) => ipcRenderer.invoke("desktop:reveal-file", filePath),
   // This app's own logs folder (server.log, desktop-crashes.log, updater.log); the page names no path.
   openLogsFolder: () => ipcRenderer.invoke("desktop:open-logs"),
+  openAtLogin: {
+    state: () => ipcRenderer.invoke("open-at-login:state"),
+    set: on => on !== true || isLocalPage || navigator.userActivation?.isActive === true
+      ? ipcRenderer.invoke("open-at-login:set", on === true) : Promise.reject(new Error("Turn on the switch to open OpenMausBot at login.")),
+  },
   setCredential: (name, value) => ipcRenderer.invoke("credential:set", name, value),
 
   updater: {

@@ -28,6 +28,8 @@ export interface EnvironmentDescriptor {
     lendingDetails?: true;
     /** A Cloud home with lending on: a lent computer may open the device link and lend its internet connection. */
     deviceLink?: true;
+    /** A personal Cloud home with lending on: a lent computer may lend its Chrome to the bots here. Never a team Cloud. */
+    myChromeLink?: true;
     /** A person's own OMB Cloud home. */
     cloudHome?: true;
     /** A Cloud home that takes the one-time move from the person's computer: by-row chats, the manifest, the chats and
@@ -119,7 +121,7 @@ export function serverVersion(root = SERVER_ROOT): string {
   return "unknown";
 }
 
-export function environmentDescriptor(input: { environmentId: string; desktopManaged: boolean; emailSignIn?: boolean; sharedComputers?: boolean; cloudHome?: boolean; label?: string }): EnvironmentDescriptor {
+export function environmentDescriptor(input: { environmentId: string; desktopManaged: boolean; emailSignIn?: boolean; sharedComputers?: boolean; cloudHome?: boolean; cloudTeam?: boolean; label?: string }): EnvironmentDescriptor {
   return {
     environmentId: input.environmentId,
     label: input.label?.trim() || process.env.OMB_ENVIRONMENT_LABEL?.trim() || hostname(),
@@ -131,6 +133,7 @@ export function environmentDescriptor(input: { environmentId: string; desktopMan
       // lendingDetails: a lent computer may say its platform, and this server remembers what was lent to it.
       ...(input.sharedComputers === true ? { sharedComputers: true as const, lendingDetails: true as const } : {}),
       ...(input.sharedComputers === true && input.cloudHome === true ? { deviceLink: true as const } : {}),
+      ...(input.sharedComputers === true && input.cloudHome === true && input.cloudTeam !== true ? { myChromeLink: true as const } : {}),
       ...(input.cloudHome === true ? { cloudHome: true as const, move: 1 as const } : {}),
       selfUpdate: input.desktopManaged ? "desktop-managed" : "operator",
       emailSignIn: input.emailSignIn === true,

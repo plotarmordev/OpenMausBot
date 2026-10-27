@@ -789,7 +789,7 @@ export function Composer({
             data-composer-backdrop
             className="pointer-events-none absolute -left-5 -right-5 -bottom-3 top-1/2 bg-app"
           />}
-        <div data-tour="composer" className={cn("@container/composer relative z-[1]", singleRow ? "flex items-end gap-2" : "rounded-2xl bg-composer px-2 pt-2 pb-1.5 ring-1 ring-composer-ring")}>
+        <div data-tour="composer" className={cn("@container/composer relative z-[1]", singleRow ? "flex items-end gap-2" : "rounded-2xl bg-composer px-2 py-1.5 ring-1 ring-composer-ring")}>
         {singleRow && !locked && (
           <div className="flex shrink-0 items-center">
             <PhonePlus
@@ -808,7 +808,7 @@ export function Composer({
         )}
         <div className={singleRow ? "min-w-0 flex-1 rounded-[26px] bg-composer px-3 py-1.5 ring-1 ring-composer-ring" : "contents"}>
         {replyTo && <ComposerReplyStrip message={replyTo} fallbackName={bot?.name} onClear={onClearReply} />}
-        <div data-composer-row className={cn("flex items-end gap-1", !singleRow && "flex-wrap")}>
+        <div data-composer-row className={cn("flex items-end gap-1", !singleRow && "@max-[30rem]/composer:flex-wrap")}>
           <input
             ref={fileInput}
             type="file"
@@ -852,7 +852,7 @@ export function Composer({
             </div>
           )}
           <MentionTextarea
-          wrapperClassName={singleRow ? undefined : "order-first basis-full"}
+          wrapperClassName={singleRow ? undefined : "@max-[30rem]/composer:order-first @max-[30rem]/composer:basis-full"}
           inputRef={inputRef}
           peers={[...(group ? members ?? [] : state.bots.filter((member) => member.id !== bot?.id)), ...teammates.peers]}
           everyone={Boolean(group && !group.dm)}
@@ -967,9 +967,9 @@ export function Composer({
                   : setupRequestPlaceholder(bot, threadId) ?? t(channelMode === "goal" ? "composer.placeholder.goalSolo" : "composer.placeholder.bot", { name: bot?.name ?? "" })
           }
           aria-label={t("composer.placeholder.bot", { name: group ? group.name : (bot?.name ?? "") })}
-            className={cn("block max-h-[9rem] w-full resize-none overflow-y-auto bg-transparent px-1 py-1 text-[15px] leading-6 placeholder:text-ink-secondary focus:outline-none", singleRow ? "min-h-6" : "min-h-14")}
+            className="block max-h-[9rem] min-h-6 w-full resize-none overflow-y-auto bg-transparent px-1 py-1 text-[15px] leading-6 placeholder:text-ink-secondary focus:outline-none"
           />
-          <div data-composer-actions className={cn("flex items-center gap-1", !singleRow && "ml-auto")}>
+          <div data-composer-actions className={cn("flex items-center gap-1", !singleRow && "@max-[30rem]/composer:ml-auto")}>
           {busy && !locked && (
           <button
             onClick={interruptTurn}

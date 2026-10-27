@@ -11,6 +11,7 @@ import uk from "./uk.json";
 import vi from "./vi.json";
 import tr from "./tr.json";
 import pl from "./pl.json";
+import ru from "./ru.json";
 
 export { en };
 export type LocaleKey = keyof typeof en;
@@ -34,6 +35,7 @@ export const locales: Record<string, LocalePack> = {
   vi,
   tr,
   pl,
+  ru,
 };
 
 export const localeChoices: ReadonlyArray<{ code: string; label: string }> = [
@@ -50,4 +52,5 @@ export const localeChoices: ReadonlyArray<{ code: string; label: string }> = [
   { code: "vi", label: "Tiếng Việt" },
   { code: "tr", label: "Türkçe" },
   { code: "pl", label: "Polski" },
+  { code: "ru", label: "Русский" },
 ];

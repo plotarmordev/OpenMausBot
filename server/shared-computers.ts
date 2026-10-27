@@ -12,6 +12,8 @@ export const sharedComputerRegistration = z.object({
   platform: z.enum(LENT_PLATFORMS).optional(),
   /** Its internet connection, for the bots' browsers; sent only to a server that advertises deviceLink. */
   internet: z.boolean().optional(),
+  /** Its real Chrome, for the bots' browser; sent only to a server that advertises myChromeLink. */
+  chrome: z.boolean().optional(),
 }).strict();
 export const sharedComputerOperation = z.object({
   computer_id: z.string().uuid(),
@@ -28,12 +30,12 @@ type Operation = z.infer<typeof sharedComputerOperation>;
 export type SharedComputerOwner = { session: string; person: string };
 export type SharedComputerStatus = {
   id: string; name: string; online: boolean; busy: boolean; lastSeenAt: number;
-  scopes: { folders: { id: string; name: string; write: boolean }[]; terminal: boolean; screen: boolean; internet: boolean };
+  scopes: { folders: { id: string; name: string; write: boolean }[]; terminal: boolean; screen: boolean; internet: boolean; chrome: boolean };
 };
 /** A computer lent now or before: what the person's own Cloud page shows, online or not, across restarts. */
 export type KnownLentComputer = {
   id: string; name: string; platform: "darwin" | "win32" | "linux" | null; online: boolean; busy: boolean; lent: boolean;
-  lastSeenAt: number; lastUsedAt: number | null; scopes: { folders: number; terminal: boolean; screen: boolean; internet: boolean };
+  lastSeenAt: number; lastUsedAt: number | null; scopes: { folders: number; terminal: boolean; screen: boolean; internet: boolean; chrome: boolean };
 };
 type Job = {
   id: string; operation: Operation; active: () => boolean; sent: boolean; leased: boolean; resolve: (result: unknown) => void; reject: (error: Error) => void;
@@ -104,8 +106,8 @@ export class SharedComputers {
     const old = this.computers.get(key);
     if (old) {
       this.authorize(registration.id, owner.session, secret);
-      // Its link was let in for the internet connection as lent then: lent or taken back since, the link starts over.
-      if ((old.registration.internet === true) !== (registration.internet === true)) this.links?.drop(key);
+      // Its link was let in for the internet connection and Chrome as lent then: lent or taken back since, the link starts over.
+      if ((old.registration.internet === true) !== (registration.internet === true) || (old.registration.chrome === true) !== (registration.chrome === true)) this.links?.drop(key);
       old.registration = registration; old.seen = Date.now();
       this.remember(registration, old.owner.person);
       return;
@@ -123,7 +125,7 @@ export class SharedComputers {
   }
   private remember(registration: Registration, person: string) {
     this.lent?.connected(person, { id: registration.id, name: registration.name, platform: registration.platform,
-      folders: registration.folders.length, terminal: registration.terminal, screen: registration.computer, internet: registration.internet === true });
+      folders: registration.folders.length, terminal: registration.terminal, screen: registration.computer, internet: registration.internet === true, chrome: registration.chrome === true });
   }
   private reap() {
     for (const [key, entry] of this.computers) {
@@ -150,7 +152,7 @@ export class SharedComputers {
       const entry = live.find(candidate => candidate.registration.id === record.id);
       return { id: record.id, name: record.name, platform: record.platform, online: entry ? this.online(entry) : false, busy: (entry?.jobs.size ?? 0) > 0,
         lent: record.stoppedAt === null, lastSeenAt: entry ? Math.max(entry.seen, record.lastSeenAt) : record.lastSeenAt, lastUsedAt: record.lastUsedAt,
-        scopes: { folders: record.folders, terminal: record.terminal, screen: record.screen, internet: record.internet === true } };
+        scopes: { folders: record.folders, terminal: record.terminal, screen: record.screen, internet: record.internet === true, chrome: record.chrome === true } };
     });
   }
   /** For a bot: which known computer is offline and since when, and the sentence to say; nothing while one is online. */
@@ -173,11 +175,17 @@ export class SharedComputers {
     if (!lending.length || lending.some(record => online.has(record.id))) return null;
     return { away: deviceWord(lending[0]!.platform) };
   }
+  /** The newest computer lending its Chrome, and whether it is online now; null when none lends it. */
+  chromeLender(principal: string): { name: string; device: "PC" | "Mac" | "computer"; online: boolean } | null {
+    const record = (this.lent?.list(principal) ?? []).find(candidate => candidate.chrome === true && candidate.stoppedAt === null);
+    if (!record) return null;
+    return { name: record.name, device: deviceWord(record.platform), online: this.list(principal).some(registration => registration.id === record.id) };
+  }
   /** The registered computer behind a device link: the same session and secret as its poll. */
   linkable(id: string, session: string, secret: string): LinkedComputer {
     const entry = this.authorize(id, session, secret);
     entry.seen = Date.now();
-    return { key: SharedComputers.key(session, id), person: entry.owner.person, internet: entry.registration.internet === true, seenAs: null,
+    return { key: SharedComputers.key(session, id), person: entry.owner.person, internet: entry.registration.internet === true, chrome: entry.registration.chrome === true, seenAs: null,
       live: () => this.sessionLive(session), used: () => this.lent?.used(entry.owner.person, id) };
   }
   status(principal: string | null): SharedComputerStatus[] {
@@ -187,7 +195,7 @@ export class SharedComputers {
       id: entry.registration.id, name: entry.registration.name, online: this.online(entry), busy: entry.jobs.size > 0, lastSeenAt: entry.seen,
       scopes: {
         folders: entry.registration.folders.map(({ id, name, write }) => ({ id, name, write })),
-        terminal: entry.registration.terminal, screen: entry.registration.computer, internet: entry.registration.internet === true,
+        terminal: entry.registration.terminal, screen: entry.registration.computer, internet: entry.registration.internet === true, chrome: entry.registration.chrome === true,
       },
     }));
   }

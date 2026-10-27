@@ -32,6 +32,17 @@ describe("buildApplicationMenu", () => {
       }),
     );
 
+  it.each(["darwin", "linux", "win32"])("offers Open at Login on %s, in the app menu on macOS and the File menu elsewhere", (platform) => {
+    const onToggle = vi.fn();
+    const template = build(platform, { openAtLogin: { checked: false, onToggle } });
+    const item = template[0].submenu.find((entry) => entry.id === "open-at-login");
+    expect(template[0].label).toBe(platform === "darwin" ? "OpenMausBot" : "File");
+    expect(item).toMatchObject({ label: "Open at Login", type: "checkbox", checked: false });
+    item.click();
+    expect(onToggle).toHaveBeenCalledWith(true);
+    expect(build(platform).flatMap((menu) => menu.submenu ?? []).some((entry) => entry.id === "open-at-login")).toBe(false);
+  });
+
   it("macOS app menu wires an explicit Preferences item to the settings callback", () => {
     const onOpenSettings = vi.fn();
     const template = build("darwin", { onOpenSettings });

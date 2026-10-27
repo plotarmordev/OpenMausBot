@@ -1,5 +1,7 @@
 @import "tailwindcss";
 @import "@fontsource-variable/inter";
+@import "@fontsource-variable/geist";
+@import "@fontsource-variable/geist-mono";
 
 /* Phones and tablets have no hover, and Tailwind only applies `hover:` and
    `group-hover:` under `@media (hover: hover)`. A control revealed on hover
@@ -178,11 +180,11 @@
   --color-danger: #ff5667;
   --color-warning: #ff9800;
 
-  --font-sans: -apple-system, BlinkMacSystemFont, "Inter Variable",
+  --font-sans: "Geist Variable", -apple-system, BlinkMacSystemFont,
     "Segoe UI", system-ui, sans-serif;
   /* Some engines map `ui-monospace` to a proportional face, so concrete names come first. */
-  --font-mono: "SF Mono", SFMono-Regular, ui-monospace, Menlo, Consolas,
-    "Liberation Mono", monospace;
+  --font-mono: "Geist Mono Variable", "SF Mono", SFMono-Regular, ui-monospace, Menlo,
+    Consolas, "Liberation Mono", monospace;
 
   --shadow-lg: 0 6px 16px -8px rgb(0 0 0 / 0.18), 0 1px 3px rgb(0 0 0 / 0.06);
   --shadow-xl: 0 10px 28px -12px rgb(0 0 0 / 0.24), 0 2px 6px -2px rgb(0 0 0 / 0.08);
@@ -274,7 +276,7 @@
   --color-scrollbar: #3d3d3d;
   --color-maus-line: #fcfcfc;
 
-  --font-sans: -apple-system, BlinkMacSystemFont, "Inter Variable",
+  --font-sans: "Geist Variable", -apple-system, BlinkMacSystemFont,
     "Segoe UI", system-ui, sans-serif;
   --radius-lg: 0.5rem;
   --radius-xl: 0.75rem;
@@ -338,7 +340,7 @@
   --color-scrollbar: #c9c0ae;
   --color-maus-line: #6b6559;
 
-  /* System faces rather than Inter: paper reads as the platform's own. */
+  /* System faces rather than Geist: paper reads as the platform's own. */
   --font-sans: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
     Roboto, sans-serif;
   --radius-lg: 6px;
@@ -409,7 +411,7 @@
   --color-scrollbar: #3d3529;
   --color-maus-line: #b0a696;
 
-  --font-sans: -apple-system, BlinkMacSystemFont, "Inter Variable",
+  --font-sans: "Geist Variable", -apple-system, BlinkMacSystemFont,
     "Segoe UI", system-ui, sans-serif;
   --radius-lg: 4px;
   --radius-xl: 8px;
@@ -543,7 +545,7 @@
   --color-scrollbar: #464b54;
   --color-maus-line: #b3b8c2;
 
-  --font-sans: -apple-system, BlinkMacSystemFont, "Inter Variable",
+  --font-sans: "Geist Variable", -apple-system, BlinkMacSystemFont,
     "Segoe UI", system-ui, sans-serif;
   --radius-lg: 6px;
   --radius-xl: 10px;
@@ -656,7 +658,7 @@
   --color-scrollbar: #4a414f;
   --color-maus-line: #b9afbd;
 
-  --font-sans: -apple-system, BlinkMacSystemFont, "Inter Variable",
+  --font-sans: "Geist Variable", -apple-system, BlinkMacSystemFont,
     "Segoe UI", system-ui, sans-serif;
   --radius-lg: 8px;
   --radius-xl: 12px;
@@ -728,7 +730,7 @@
   --color-scrollbar: #c4c4c4;
   --color-maus-line: #5f5f5f;
 
-  --font-sans: -apple-system, blinkmacsystemfont, "Inter Variable",
+  --font-sans: "Geist Variable", -apple-system, BlinkMacSystemFont,
     "Segoe UI", system-ui, sans-serif;
   --radius-lg: 8px;
   --radius-xl: 14px;
@@ -786,7 +788,7 @@
   --color-scrollbar: #c3cdc6;
   --color-maus-line: #5a675f;
 
-  --font-sans: -apple-system, blinkmacsystemfont, "Inter Variable",
+  --font-sans: "Geist Variable", -apple-system, BlinkMacSystemFont,
     "Segoe UI", system-ui, sans-serif;
   --radius-lg: 10px;
   --radius-xl: 16px;
@@ -845,7 +847,7 @@
   --color-scrollbar: #d0bfa6;
   --color-maus-line: #6b625b;
 
-  --font-sans: "Plus Jakarta Sans", ui-rounded, "SF Pro Rounded", "Inter Variable",
+  --font-sans: "Plus Jakarta Sans", ui-rounded, "SF Pro Rounded", "Geist Variable",
     -apple-system, system-ui, "Segoe UI", sans-serif;
   --radius-lg: 12px;
   --radius-xl: 18px;
@@ -897,7 +899,7 @@
   --color-scrollbar: #3b3048;
   --color-maus-line: #c2b3cc;
 
-  --font-sans: -apple-system, BlinkMacSystemFont, "Inter Variable",
+  --font-sans: "Geist Variable", -apple-system, BlinkMacSystemFont,
     "Segoe UI", system-ui, sans-serif;
   --radius-lg: 8px;
   --radius-xl: 12px;
@@ -950,7 +952,7 @@
 /* Chat copy. 15px stays; the line box goes from Tailwind's leading-relaxed
    (1.625) to 1.75 so Arabic and Latin both get a little more air without
    moving the surrounding chrome. Arabic and Hebrew use a local face when
-   the machine has one. Inter and the UI stack do not carry those glyphs,
+   the machine has one. Geist and the UI stack do not carry those glyphs,
    and a generic family listed later would otherwise win. */
 @font-face {
   font-family: "omb-chat";
@@ -1013,11 +1015,11 @@ body {
   background-color: var(--color-app);
   color: var(--color-ink);
   font-family: var(--font-sans);
-  /* Greyscale smoothing (`antialiased`) draws macOS stems lighter than the
-     system UI, which is the washed-out look on a Retina display. The window
-     background is opaque, so the default smoothing can stay. */
-  -webkit-font-smoothing: auto;
-  -moz-osx-font-smoothing: auto;
+  /* Chromium on macOS thickens every stem under the default (`auto`)
+     smoothing, so regular text reads close to semibold on dark skins.
+     Windows ignores both properties. */
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
   overflow: hidden;
 }
 
