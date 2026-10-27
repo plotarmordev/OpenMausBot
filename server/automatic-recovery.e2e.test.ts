@@ -22,7 +22,7 @@ const CATALOG_PROBE_FOLDER = ["", "providers", "opencode", "discovery"].join(sep
 const turnCalls = (path: string) => jsonLines(path).filter((call) => !String(call.cwd ?? "").endsWith(CATALOG_PROBE_FOLDER));
 
 async function withRecoveryFixture(
-  options: { enabled?: boolean; method?: string; error?: unknown; afterOutput?: boolean; backupFails?: boolean; gated?: boolean; scripted?: boolean; codexBackup?: boolean; parentPort?: boolean },
+  options: { enabled?: boolean; method?: string; error?: unknown; afterOutput?: boolean; backupFails?: boolean; gated?: boolean; scripted?: boolean; codexBackup?: boolean; parentPort?: boolean; frozenNow?: number },
   check: (fixture: {
     api: (method: string, path: string, body?: unknown, expectedStatus?: number, token?: string) => Promise<any>;
     applyPolicy: () => Promise<void>;
@@ -87,8 +87,11 @@ async function withRecoveryFixture(
     };
     config.automaticRecovery = { enabled: options.enabled !== false, backup };
     writeFileSync(configPath, JSON.stringify(config));
+    const clockPath = join(dataDir, "frozen-clock.cjs");
+    if (options.frozenNow !== undefined) writeFileSync(clockPath, `Date.now = () => ${JSON.stringify(options.frozenNow)};`);
     const log = openSync(logPath, "a", 0o600);
     server = spawn(process.execPath, ["--experimental-strip-types",
+      ...(options.frozenNow === undefined ? [] : ["--require", clockPath]),
       ...(options.parentPort ? ["--require", fileURLToPath(new URL("./testing/parent-port-adapter.cjs", import.meta.url))] : []),
       fileURLToPath(new URL("./index.ts", import.meta.url))], {
       cwd: fileURLToPath(new URL("..", import.meta.url)),
@@ -142,7 +145,7 @@ async function withRecoveryFixture(
 }
 
 it.each(["older ordinary head", "pending policy refusal"] as const)("admits recovery safely with %s", async (scenario) => {
-  await withRecoveryFixture({ gated: true, parentPort: scenario === "pending policy refusal" }, async ({ api, control, calls, backupPrompts, applyPolicy, dataDir, gateFile, evidence }) => {
+  await withRecoveryFixture({ gated: true, parentPort: scenario === "pending policy refusal", ...(scenario === "older ordinary head" ? { frozenNow: Date.now() } : {}) }, async ({ api, control, calls, backupPrompts, applyPolicy, dataDir, gateFile, evidence }) => {
     const marked = scenario === "older ordinary head";
     const { bot } = await control("new-bot", "--name", "Recovery admission");
     const threadId = bot.activeTaskId;
@@ -193,6 +196,13 @@ it.each(["older ordinary head", "pending policy refusal"] as const)("admits reco
         await api("POST", `/api/bots/${bot.id}/messages`, { threadId, text }, 202, paired.token);
       }
       await expect.poll(() => calls().some(call => call.method === "initialize"), { timeout: 20_000 }).toBe(true);
+      if (marked) {
+        const db = new DatabaseSync(join(dataDir, "messages.db"), { readOnly: true });
+        try {
+          const queuedAt = db.prepare("SELECT json_extract(payload, '$.queuedAt') AS at FROM chat_followups WHERE thread_id = ?").get(threadId)!.at;
+          expect(queuedAt).toBe((await messages()).find(message => message.text === text)!.at);
+        } finally { db.close(); }
+      }
       writeFileSync(gateFile, "");
       await expect.poll(() => calls().some(call => call.method === "initialize.error"), { timeout: 20_000 }).toBe(true);
       if (marked) {

@@ -13,7 +13,7 @@ const botSchema = z.object({ id: z.string(), chiefOfStaff: z.boolean().optional(
 const responseSchema = z.object({
   bots: z.array(botSchema).default([]), bot: botSchema.optional(), task: taskSchema.optional(),
   routine: z.object({ id: z.string() }).optional(), botQueuedMessages: z.record(z.string(), z.array(z.unknown())).default({}),
-  messages: z.array(z.object({ role: z.string(), text: z.string().optional(), queueId: z.string().optional(),
+  messages: z.array(z.object({ role: z.string(), at: z.number(), text: z.string().optional(), queueId: z.string().optional(),
     requestCancelled: z.boolean().optional(), turnSucceeded: z.boolean().optional(), tool: z.object({ name: z.string() }).optional() })).default([]),
 });
 
@@ -21,10 +21,11 @@ const primary = { instanceId: "opencodeGo", model: "fixture/recovery" };
 const backup = { instanceId: "claude", model: "claude-sonnet-5" };
 const lines = (path: string): Array<{ method?: string }> => existsSync(path) ? readFileSync(path, "utf8").split("\n").filter(Boolean).map(line => JSON.parse(line)) : [];
 
-it.each(["disabled", "dispatching", "pending", "superseded", "stopped", "stopped-restart",
+it.each(["equal-ms-before", "equal-ms-restart", "disabled", "dispatching", "pending", "superseded", "stopped", "stopped-restart",
   "global-changed", "global-changed-restart", "fallback-changed", "fallback-changed-restart",
   "fallback-reordered", "fallback-reordered-restart", "fallback-removed", "fallback-removed-restart"] as const)("settles %s recovery without replaying the original line", async mode => {
-  const server = await launchRestartableServer();
+  const equalMs = mode.startsWith("equal-ms");
+  const server = await launchRestartableServer(equalMs ? { frozenNow: Date.now() } : {});
   const { dataDir } = server;
   const failure = join(dataDir, "failure.json");
   const failureGate = join(dataDir, "failure-release");
@@ -79,7 +80,11 @@ it.each(["disabled", "dispatching", "pending", "superseded", "stopped", "stopped
     const current = async () => (await state()).bots.find(entry => entry.id === bot.id)!.tasks.find(entry => entry.threadId === threadId)!;
     await expect.poll(async () => (await state()).bots.find(entry => entry.id === bot.id)!.tasks.some(entry => entry.threadId !== threadId && entry.busy), { timeout: 20_000 }).toBe(true);
     await api("PATCH", "/api/config", { threads: { maxConcurrentPerBot: 1 } });
+    if (mode === "equal-ms-before") {
+      await api("POST", `/api/bots/${bot.id}/messages`, { threadId, text: "NEWER_USER_INTENT" });
+    }
     writeFileSync(failureGate, "");
+    await expect.poll(() => lines(rpc).some(call => call.method === "initialize.error"), { timeout: 20_000 }).toBe(true);
     const queued = async () => (await state()).botQueuedMessages[threadId] ?? [];
     await expect.poll(async () => (await queued()).length, { timeout: 20_000 }).toBe(1);
     const journal = () => {
@@ -95,7 +100,7 @@ it.each(["disabled", "dispatching", "pending", "superseded", "stopped", "stopped
     const failovers = () => existsSync(join(dataDir, "limit-failovers.json")) ? readFileSync(join(dataDir, "limit-failovers.json"), "utf8") : null;
     const beforeFailovers = failovers();
     const changedPlan = mode.startsWith("global-") || mode.startsWith("fallback-");
-    const cancelled = changedPlan || mode === "disabled" || mode === "superseded" || mode === "stopped" || mode === "stopped-restart";
+    const cancelled = equalMs || changedPlan || mode === "disabled" || mode === "superseded" || mode === "stopped" || mode === "stopped-restart";
     if (changedPlan) {
       if (mode.startsWith("global-")) {
         await api("PATCH", "/api/config", { automaticRecovery: { enabled: true, backup: alternate } });
@@ -112,11 +117,24 @@ it.each(["disabled", "dispatching", "pending", "superseded", "stopped", "stopped
     } else if (mode === "disabled") {
       await api("PATCH", "/api/config", { automaticRecovery: { enabled: false, backup } });
       writeFileSync(holderGate, "");
-    } else if (mode === "superseded") {
-      await api("POST", `/api/bots/${bot.id}/messages`, { threadId, text: "NEWER_USER_INTENT" });
-      expect(await queued()).toHaveLength(2);
-      expect(journal()).toMatchObject([{ status: "pending" }, { status: "pending" }]);
+    } else if (mode === "superseded" || equalMs) {
+      if (mode !== "equal-ms-before") {
+        await api("POST", `/api/bots/${bot.id}/messages`, { threadId, text: "NEWER_USER_INTENT" });
+        expect(await queued()).toHaveLength(2);
+        expect(journal()).toMatchObject([{ status: "pending" }, { status: "pending" }]);
+      }
+      if (equalMs) {
+        const db = new DatabaseSync(join(dataDir, "messages.db"), { readOnly: true });
+        try {
+          const queuedAt = db.prepare("SELECT json_extract(payload, '$.queuedAt') AS at FROM chat_followups WHERE thread_id = ? AND json_extract(payload, '$.text') = ?").get(threadId, "NEWER_USER_INTENT")!.at;
+          expect(queuedAt).toBe((await messages()).find(message => message.text === "RECOVER_ORIGINAL_LINE")!.at);
+        } finally { db.close(); }
+      }
       unlinkSync(failure);
+      if (mode === "equal-ms-restart") {
+        await server.stop();
+        await server.start();
+      }
       writeFileSync(holderGate, "");
     } else if (mode === "stopped" || mode === "stopped-restart") {
       await api("POST", `/api/bots/${bot.id}/interrupt`, { threadId });
@@ -154,10 +172,12 @@ it.each(["disabled", "dispatching", "pending", "superseded", "stopped", "stopped
       expect(page.filter(message => message.tool?.name?.startsWith("recovery:"))).toHaveLength(0);
       expect(failovers()).toBe(beforeFailovers);
     }
-    if (mode === "superseded") {
+    if (mode === "superseded" || equalMs) {
       await expect.poll(async () => (await messages()).some(message => message.turnSucceeded === true), { timeout: 20_000 }).toBe(true);
       expect((await messages()).filter(message => message.role === "user" && message.text === "NEWER_USER_INTENT")).toHaveLength(1);
       expect(lines(rpc).filter(call => call.method === "session/prompt")).toHaveLength(1);
+      expect((await messages()).some(message => message.tool?.name?.includes("interrupted"))).toBe(false);
+      expect(readHandoffs(dataDir).filter(node => node.threadId === threadId && node.status === "source")).toHaveLength(0);
     }
     if (mode === "dispatching") expect(page.some(message => message.tool?.name?.includes("interrupted"))).toBe(true);
     if (mode === "pending") await expect.poll(async () => (await messages()).some(message => message.turnSucceeded === true), { timeout: 20_000 }).toBe(true);
