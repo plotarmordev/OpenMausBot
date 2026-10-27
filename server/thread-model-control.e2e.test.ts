@@ -200,6 +200,9 @@ it("changes blocked, self and busy task models without dispatch, with explicit r
     const defaultChange = await api("POST", "/api/internal/model-requests", { ...source, forBotId: chief.id, modelSelection: selected, reason: "Explicitly change my default only" }, 201, token);
     expect(defaultChange.state).toBe("applied");
     expect(defaultChange.receipt).toMatchObject({ botDefault: selected, taskOverride: selected, currentExecution: null, dispatched: false });
+    const temporarySelfChange = await set(chief.activeTaskId, original);
+    await api("POST", `/api/threads/${chief.activeTaskId}/undo`, { requestId: temporarySelfChange.requestId });
+    expect(await state(chief.activeTaskId)).toMatchObject({ botDefault: selected, taskOverride: selected, currentExecution: null, dispatched: false });
     expect(prompts()).toEqual([...beforePrompts, ...retried]);
     await control("send", "--bot", chief.id, "--task", chief.activeTaskId, "--text", "ACP_PICKER_SELF_SELECTED Execute my explicit self selection.");
     await settled(chief);
@@ -207,6 +210,7 @@ it("changes blocked, self and busy task models without dispatch, with explicit r
     token = await mint(chief);
     await api("POST", `/api/threads/${chief.activeTaskId}/undo`, { requestId: defaultChange.requestId });
     expect((await state(chief.activeTaskId)).botDefault).toEqual(original);
+    expect((await state(chief.activeTaskId)).taskOverride).toEqual(selected);
     await api("POST", `/api/threads/${chief.activeTaskId}/undo`, { requestId: selfChange.requestId });
     expect(await state(chief.activeTaskId)).toEqual(selfBefore);
     await control("send", "--bot", chief.id, "--task", chief.activeTaskId, "--text", "ACP_PICKER_SELF_RESTORED Execute my restored selection.");
