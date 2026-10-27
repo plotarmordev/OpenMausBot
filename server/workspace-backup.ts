@@ -30,7 +30,7 @@ const EXCLUDED = new Set([
   ".backups", "tools", "browser", "agent-browser-profiles", "cache", ".cache", "tmp", ".tmp", "dist-native", "tunnel-runtime", "evidence",
   ".openmausbot-server-child", "environment-id", "sessions.json", "tunnel-account.json",
   "team-computers.json",
-  "openmausbot-server.lease", "box-create-requests.lock", "messages.db-wal", "messages.db-shm",
+  "openmausbot-server.lease", "maintenance-lease.json", "box-create-requests.lock", "messages.db-wal", "messages.db-shm",
   "runtime.db-wal", "runtime.db-shm",
   "decider-log",
   "cloud-owner.json",

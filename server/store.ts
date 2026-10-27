@@ -10,6 +10,7 @@ import { ensureSections, readSections, changeEmptySection } from "./section-cont
 import type { TeamComputers } from "./team-computers.ts";
 import { removeBotFolder, soulFile, soulHash, writeSoulMirror } from "./bot-folder.ts";
 import type { BotProfilePatch } from "./bot-profile.ts";
+import { soulRevision } from "./profile-revision.ts";
 import { peerAllowKey, type PeerAction } from "./peer-approval-key.ts";
 import { DATA_DIR, EVENTS_DIR, NATIVE_DIR, loadBrowserProfileIdAliases } from "./config.ts";
 import * as mdb from "./message-db.ts";
@@ -182,9 +183,37 @@ export interface BotRecord extends Omit<WireBot, "avatarUrl" | "tasks"> {
   lastTeamSetupReceipt?: { requestId: string; result: TeamSetupResult };
   packageBase?: Partial<Record<AgentPart, PartPair>>;
   assignedSkills?: string[];
+  /** Minted on every write of `soul` and every void (soulRevision). */
+  soulWriteId?: string;
+  /** The newest SOUL_WRITE_RECEIPTS conditional soul writes and voided request ids, oldest first. */
+  soulWrites?: SoulWriteReceipt[];
+  /** `at` of the newest receipt dropped from soulWrites. */
+  soulWritesTrimmedAt?: number;
 }
 
-export type BotWirePrivateKeys = "resumeCursors" | "tasks" | "avatarUrl" | "approvalGrant" | "lastProfileRequestId" | "lastTeamSetupReceipt" | "packageBase" | "assignedSkills";
+export type SoulWriteReceipt =
+  | { requestId: string; state: "applied"; from: string; to: string; soulSha256: string; at: number }
+  | { requestId: string; state: "voided"; at: number };
+export const SOUL_WRITE_RECEIPTS = 32;
+
+function withSoulReceipt(bot: BotRecord, receipt: SoulWriteReceipt): Pick<BotRecord, "soulWrites" | "soulWritesTrimmedAt"> {
+  const all = [...(bot.soulWrites ?? []), receipt];
+  const dropped = all.slice(0, -SOUL_WRITE_RECEIPTS);
+  return {
+    soulWrites: all.slice(-SOUL_WRITE_RECEIPTS),
+    ...(dropped.length ? { soulWritesTrimmedAt: Math.max(bot.soulWritesTrimmedAt ?? 0, ...dropped.map((entry) => entry.at)) } : {}),
+  };
+}
+
+export type SoulCompareAndSetResult =
+  | { state: "missing" }
+  | { state: "applied"; bot: BotRecord; receipt: Extract<SoulWriteReceipt, { state: "applied" }> }
+  | { state: "replayed"; receipt: Extract<SoulWriteReceipt, { state: "applied" }>; currentRevision: string }
+  | { state: "conflict"; currentRevision: string }
+  | { state: "voided" }
+  | { state: "reused" };
+
+export type BotWirePrivateKeys = "resumeCursors" | "tasks" | "avatarUrl" | "approvalGrant" | "lastProfileRequestId" | "lastTeamSetupReceipt" | "packageBase" | "assignedSkills" | "soulWriteId" | "soulWrites" | "soulWritesTrimmedAt";
 export type BotWireProjection = Pick<BotRecord, Exclude<keyof BotRecord, BotWirePrivateKeys>>;
 export type BotWireProjectionIsExact = AssertExact<Omit<WireBot, "avatarUrl" | "tasks">, BotWireProjection> & AssertSameKeys<Omit<WireBot, "avatarUrl" | "tasks">, BotWireProjection>;
 export const botWireProjectionIsExact: BotWireProjectionIsExact = true;
@@ -1352,6 +1381,7 @@ export class Store {
       description: profile.description ?? "",
       soul: profile.soul ?? "",
       soulHash: soulHash(profile.soul ?? ""),
+      soulWriteId: newId(),
       notifications: true,
       color: profile.color ?? COLORS[this.bots.length % COLORS.length],
       ...(profile.mascotExpression ? { mascotExpression: profile.mascotExpression } : {}),
@@ -1433,7 +1463,7 @@ export class Store {
       }
       if (operation.fields.chiefOfStaff === false) delete next.managedSections;
       next.section = sectionKey(next.section) || undefined;
-      if (operation.fields.soul !== undefined) { next.soulHash = soulHash(operation.fields.soul); next.soulDrift = false; }
+      if (operation.fields.soul !== undefined) { next.soulHash = soulHash(operation.fields.soul); next.soulDrift = false; next.soulWriteId = newId(); }
       changed.push(next);
     }
     const result: TeamSetupResult = { state: "applied", newTeams: request.newTeams, bots: changed.map((bot, index) => ({
@@ -1534,6 +1564,7 @@ export class Store {
   patchBot(id: string, patch: Partial<BotRecord>): BotRecord | null {
     const bot = this.bot(id);
     if (!bot) return null;
+    if (patch.soul !== undefined) patch = { ...patch, soulWriteId: newId() };
     if (patch.connectorTools !== undefined) {
       const parsed = parseConnectorTools(patch.connectorTools);
       if (!parsed.ok) throw new Error(parsed.error);
@@ -1588,20 +1619,64 @@ export class Store {
 
   patchBotProfile(id: string, patch: BotProfilePatch & Partial<Pick<BotRecord, "cwd" | "lastProfileRequestId">>): BotRecord | null {
     const bot = this.bot(id);
+    return bot ? this.commitProfile(bot, patch) : null;
+  }
+
+  /** Writes `soul` only when the bot's soulRevision is still `expectedRevision`. A `requestId` seen before never writes
+   * again: it replays its receipt, or refuses when it was voided or carried a different soul or expectation. */
+  compareAndSetSoul(id: string, input: { soul: string; expectedRevision: string; requestId: string }): SoulCompareAndSetResult {
+    const bot = this.bot(id);
+    if (!bot) return { state: "missing" };
+    const currentRevision = soulRevision(bot);
+    const prior = bot.soulWrites?.find((receipt) => receipt.requestId === input.requestId);
+    if (prior?.state === "voided") return { state: "voided" };
+    if (prior) {
+      return prior.from === input.expectedRevision && prior.soulSha256 === soulHash(input.soul)
+        ? { state: "replayed", receipt: prior, currentRevision }
+        : { state: "reused" };
+    }
+    if (currentRevision !== input.expectedRevision) return { state: "conflict", currentRevision };
+    let receipt: Extract<SoulWriteReceipt, { state: "applied" }> | undefined;
+    const updated = this.commitProfile(bot, { soul: input.soul }, (next) => (receipt = {
+      requestId: input.requestId, state: "applied", from: currentRevision, to: soulRevision(next), soulSha256: soulHash(input.soul), at: Date.now(),
+    }));
+    return { state: "applied", bot: updated, receipt: receipt! };
+  }
+
+  /** Makes `requestId` unable to write from now on, unless it already did; that applied receipt is returned instead. A
+   * void moves soulRevision, so no request that read an earlier revision can write either, even once its receipt is gone. */
+  voidSoulWrite(id: string, requestId: string): SoulWriteReceipt | null {
+    const bot = this.bot(id);
     if (!bot) return null;
+    const prior = bot.soulWrites?.find((receipt) => receipt.requestId === requestId);
+    if (prior) return prior;
+    const voided: SoulWriteReceipt = { requestId, state: "voided", at: Date.now() };
+    const next = { ...bot, soulWriteId: newId(), ...withSoulReceipt(bot, voided) };
+    this.saveBots(this.bots.map((candidate) => candidate.id === id ? next : candidate));
+    Object.assign(bot, next);
+    return voided;
+  }
+
+  soulWriteReceipt(id: string, requestId: string): SoulWriteReceipt | null {
+    return this.bot(id)?.soulWrites?.find((receipt) => receipt.requestId === requestId) ?? null;
+  }
+
+  private commitProfile(bot: BotRecord, patch: Partial<BotRecord>, receipt?: (next: BotRecord) => SoulWriteReceipt): BotRecord {
     const next = { ...bot, ...patch };
     if (patch.soul !== undefined) {
       next.soulHash = soulHash(patch.soul);
       next.soulDrift = false;
+      next.soulWriteId = newId();
     }
-    this.saveBots(this.bots.map((candidate) => candidate.id === id ? next : candidate));
+    if (receipt) Object.assign(next, withSoulReceipt(bot, receipt(next)));
+    this.saveBots(this.bots.map((candidate) => candidate.id === bot.id ? next : candidate));
     Object.assign(bot, next);
     if (patch.soul !== undefined) {
-      try { writeSoulMirror(id, patch.soul); } catch (e) {
-        console.warn(`[bot-folder] could not write SOUL.md mirror for ${id}: ${(e as Error).message}`);
+      try { writeSoulMirror(bot.id, patch.soul); } catch (e) {
+        console.warn(`[bot-folder] could not write SOUL.md mirror for ${bot.id}: ${(e as Error).message}`);
       }
     }
-    this.emit({ type: "bot", botId: id });
+    this.emit({ type: "bot", botId: bot.id });
     return bot;
   }
 

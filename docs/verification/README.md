@@ -85,6 +85,7 @@ Use only mapped, tested commands:
 - [Preset bots](presets.md)
 - [Teams and shared instructions](teams.md)
 - [Full workspace backups](workspace-backups.md)
+- [Deployment controller: conditional soul writes and the maintenance lease](deployment-controller.md)
 - [Optional company cloud backups](company-backups.md)
 - [Organization library: the desktop channel](desktop-library.md)
 - [Fleet: many workspaces on one server](fleet.md)
