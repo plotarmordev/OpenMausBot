@@ -131,6 +131,8 @@ it("changes blocked, self and busy task models without dispatch, with explicit r
     }).passthrough()).parse(JSON.parse(readFileSync(botsPath, "utf8")));
     const seededTask = saved.find((bot) => bot.id === worker.id)!.tasks.find((task) => task.threadId === worker.activeTaskId)!;
     seededTask.openedBy = { botId: chief.id, name: "Model Chief", threadId: chief.activeTaskId, kind: "work" };
+    const unavailablePin = { ...selected, instanceId: "removed-thread-model-fixture" };
+    seededTask.modelSelection = unavailablePin;
     writeFileSync(botsPath, JSON.stringify(saved));
     await start();
     expect((await taskNow(worker)).openedBy).toMatchObject({ botId: chief.id, threadId: chief.activeTaskId, kind: "work" });
@@ -143,6 +145,24 @@ it("changes blocked, self and busy task models without dispatch, with explicit r
     const assertIdleReceipt = (receipt: unknown, value: Selection) => {
       expect(receipt).toMatchObject({ currentExecution: null, nextTurn: { selection: value, scope: "next_turn", resolved: false }, dispatched: false });
     };
+    const unavailableMessages = await messages(worker.activeTaskId);
+    const unavailablePrompts = prompts();
+    expect(await state(worker.activeTaskId)).toMatchObject({ botDefault: original, taskOverride: unavailablePin });
+    const refusedRetry = await api("POST", "/api/internal/retry-thread", {
+      ...source, toBotId: worker.id, toThreadId: worker.activeTaskId,
+    }, 409, token);
+    expect(refusedRetry.error).toMatch(/selected task engine is unavailable/i);
+    expect(await state(worker.activeTaskId)).toMatchObject({
+      botDefault: original, taskOverride: unavailablePin, currentExecution: null, dispatched: false,
+    });
+    expect(await messages(worker.activeTaskId)).toEqual(unavailableMessages);
+    expect((await taskNow(worker)).busy).toBe(false);
+    expect(prompts()).toEqual(unavailablePrompts);
+    await api("PATCH", `/api/bots/${worker.id}/tasks/${worker.activeTaskId}`, {
+      modelSelection: original, requireAvailableModel: true,
+    });
+    expect((await state(worker.activeTaskId)).taskOverride).toBeNull();
+
     const before = await messages(worker.activeTaskId);
     const beforeTask = await taskNow(worker);
     const beforePrompts = prompts();

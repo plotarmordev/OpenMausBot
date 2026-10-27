@@ -84,6 +84,9 @@ Undo, separate explicit retry with native model/effort receipts, preserved
 conversation text and artifacts, self-task/default change and restoration, and
 a held running turn whose current model remains unchanged until its next turn.
 The fake records settings at `session/prompt`, not merely the saved API alias.
+It also retries a persisted pin whose provider is absent: the API must return
+409 without a prompt, conversation mutation, or fallback to the available bot
+default; only explicit reselection permits the subsequent successful retry.
 The persisted-store regressions cover stale confirmation after a default change
 and exact Undo restoration across reload and subsequent default changes. They
 also cover both pin/follow directions between older and newer cards: stale Undo
