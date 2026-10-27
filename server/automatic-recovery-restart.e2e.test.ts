@@ -21,7 +21,9 @@ const primary = { instanceId: "opencodeGo", model: "fixture/recovery" };
 const backup = { instanceId: "claude", model: "claude-sonnet-5" };
 const lines = (path: string): Array<{ method?: string }> => existsSync(path) ? readFileSync(path, "utf8").split("\n").filter(Boolean).map(line => JSON.parse(line)) : [];
 
-it.each(["disabled", "dispatching", "pending", "superseded", "stopped", "stopped-restart"] as const)("settles %s recovery without replaying the original line", async mode => {
+it.each(["disabled", "dispatching", "pending", "superseded", "stopped", "stopped-restart",
+  "global-changed", "global-changed-restart", "fallback-changed", "fallback-changed-restart",
+  "fallback-reordered", "fallback-reordered-restart", "fallback-removed", "fallback-removed-restart"] as const)("settles %s recovery without replaying the original line", async mode => {
   const server = await launchRestartableServer();
   const { dataDir } = server;
   const failure = join(dataDir, "failure.json");
@@ -66,6 +68,8 @@ it.each(["disabled", "dispatching", "pending", "superseded", "stopped", "stopped
       `await import(${JSON.stringify(new URL("./testing/fake-claude-cli.ts", import.meta.url).href)});`].join("\n"), { mode: 0o700 });
     await api("PATCH", "/api/instances/claude", { cli: wrapper });
     await api("PATCH", `/api/bots/${bot.id}/tasks/${threadId}`, { modelSelection: primary });
+    const alternate = { ...backup, model: "claude-opus-5" };
+    if (mode.startsWith("fallback-")) await api("PATCH", `/api/bots/${bot.id}`, { fallback: [backup, alternate] });
     writeFileSync(failure, JSON.stringify({ code: -32603, message: "Internal error", data: { details: "Upstream connection timed out" } }));
     await api("POST", `/api/bots/${bot.id}/messages`, { threadId, text: "RECOVER_ORIGINAL_LINE" });
     await expect.poll(() => lines(rpc).some(call => call.method === "initialize"), { timeout: 20_000 }).toBe(true);
@@ -90,8 +94,22 @@ it.each(["disabled", "dispatching", "pending", "superseded", "stopped", "stopped
     expect((await messages()).filter(message => message.tool?.name?.startsWith("recovery:"))).toHaveLength(0);
     const failovers = () => existsSync(join(dataDir, "limit-failovers.json")) ? readFileSync(join(dataDir, "limit-failovers.json"), "utf8") : null;
     const beforeFailovers = failovers();
-    const cancelled = mode === "disabled" || mode === "superseded" || mode === "stopped" || mode === "stopped-restart";
-    if (mode === "disabled") {
+    const changedPlan = mode.startsWith("global-") || mode.startsWith("fallback-");
+    const cancelled = changedPlan || mode === "disabled" || mode === "superseded" || mode === "stopped" || mode === "stopped-restart";
+    if (changedPlan) {
+      if (mode.startsWith("global-")) {
+        await api("PATCH", "/api/config", { automaticRecovery: { enabled: true, backup: alternate } });
+      } else {
+        const fallback = mode.startsWith("fallback-removed") ? [] :
+          mode.startsWith("fallback-reordered") ? [alternate, backup] : [alternate];
+        await api("PATCH", `/api/bots/${bot.id}`, { fallback });
+      }
+      if (mode.endsWith("-restart")) {
+        await server.stop();
+        await server.start();
+      }
+      writeFileSync(holderGate, "");
+    } else if (mode === "disabled") {
       await api("PATCH", "/api/config", { automaticRecovery: { enabled: false, backup } });
       writeFileSync(holderGate, "");
     } else if (mode === "superseded") {
