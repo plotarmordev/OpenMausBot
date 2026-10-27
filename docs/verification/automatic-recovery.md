@@ -26,9 +26,12 @@ ordered steps, instance, model, effort and variant. Changed, reordered or remove
 plans settle without a prompt, model switch or failover record. Dispatch also
 checks the selected step's index and the source selection.
 It checks the original line's persisted cancellation and newer pending input
-in the durable queue. Stop remains
-effective across restart; a newer queued message supersedes recovery without
-being replayed or reordered. Disabling recovery while it waits settles the item
+in the durable queue. User-line appends and queue admissions share a transactional
+SQLite sequence, so equal millisecond timestamps retain their strict admission
+order across restart. Older queued input does not supersede a newer original
+line. Saved lines or pending input without ordering proof fail closed: recovery
+settles without backup work. Stop remains effective across restart; a newer queued
+message supersedes recovery without being replayed or reordered. Disabling recovery while it waits settles the item
 without selecting the backup or recording a recovery switch.
 Queued admission rechecks managed policy and the backup's recovery capabilities.
 A policy refusal settles the durable item without changing the selected model,
@@ -39,6 +42,9 @@ A pending recovery survives restart and dispatches once when admitted. A recover
 already dispatching at shutdown is interrupted, not replayed: restart retains
 the original user line and adds an interruption notice without synthesizing
 another user message.
+A pending recovery owns its failed source across restart; settling that source
+does not publish an interrupted-turn notice. When stale recovery settles, queue
+draining continues so newer input does not wait for an unrelated turn event.
 
 Direct bot threads, Chief and direct coordinated work use this path. Channels
 and drivers without the startup-proof contract do not. Credential-card

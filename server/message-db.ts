@@ -92,6 +92,14 @@ function open(): DatabaseSync {
     CREATE INDEX IF NOT EXISTS notification_log_at ON notification_log(at);
   `);
   const notificationColumns = db.prepare("PRAGMA table_info(notification_log)").all() as Array<{ name: string }>;
+  for (const table of ["messages", "chat_followups"]) {
+    const columns = db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
+    if (!columns.some(column => column.name === "input_order")) db.exec(`ALTER TABLE ${table} ADD COLUMN input_order INTEGER`);
+  }
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS input_order (id INTEGER PRIMARY KEY CHECK (id = 1), value INTEGER NOT NULL);
+    INSERT OR IGNORE INTO input_order(id, value) VALUES (1, 0);
+  `);
   if (!notificationColumns.some((column) => column.name === "for_person")) db.exec("ALTER TABLE notification_log ADD COLUMN for_person TEXT");
   ensureRecallIndex(db);
   ensureMemoryIndex(db);
@@ -343,9 +351,12 @@ export function markThreadNotificationLogRead(threadId: string): string[] {
 }
 
 export function saveChatFollowup(followup: Omit<ChatFollowup, "status">): void {
-  writeFollowups((connection) => connection.prepare(
-    "INSERT INTO chat_followups(id, kind, owner_id, thread_id, send_id, status, payload) VALUES (?, ?, ?, ?, ?, 'pending', ?)",
-  ).run(followup.id, followup.kind, followup.ownerId, followup.threadId, followup.payload.sendId ?? null, JSON.stringify(followup.payload)));
+  writeFollowups((connection) => {
+    connection.prepare("UPDATE input_order SET value = value + 1 WHERE id = 1").run();
+    connection.prepare(
+      "INSERT INTO chat_followups(id, kind, owner_id, thread_id, send_id, status, payload, input_order) VALUES (?, ?, ?, ?, ?, 'pending', ?, (SELECT value FROM input_order WHERE id = 1))",
+    ).run(followup.id, followup.kind, followup.ownerId, followup.threadId, followup.payload.sendId ?? null, JSON.stringify(followup.payload));
+  });
 }
 
 /** Cancellation tombstones remain so a retried sendId cannot resurrect a dispatch. */
@@ -374,16 +385,12 @@ export function chatFollowups(kind?: ChatFollowup["kind"]): ChatFollowup[] {
     status: row.status, payload: JSON.parse(row.payload) as FollowupPayload }));
 }
 
-export function hasNewerQueuedInput(kind: ChatFollowup["kind"], ownerId: string, threadId: string, recoveryId: string): boolean {
+export function hasQueuedInputAfter(kind: ChatFollowup["kind"], ownerId: string, threadId: string, messageId: string): boolean {
+  const original = db().prepare("SELECT input_order FROM messages WHERE thread_id = ? AND id = ?").get(threadId, messageId);
+  if (original?.input_order == null) return true;
   return Boolean(db().prepare(
-    "SELECT 1 FROM chat_followups WHERE kind = ? AND owner_id = ? AND thread_id = ? AND status = 'pending' AND rowid > (SELECT rowid FROM chat_followups WHERE id = ?) AND json_extract(payload, '$.recovery') IS NULL LIMIT 1",
-  ).get(kind, ownerId, threadId, recoveryId));
-}
-
-export function hasQueuedInputAfter(kind: ChatFollowup["kind"], ownerId: string, threadId: string, at: number): boolean {
-  return Boolean(db().prepare(
-    "SELECT 1 FROM chat_followups WHERE kind = ? AND owner_id = ? AND thread_id = ? AND status = 'pending' AND json_extract(payload, '$.queuedAt') > ? AND json_extract(payload, '$.recovery') IS NULL LIMIT 1",
-  ).get(kind, ownerId, threadId, at));
+    "SELECT 1 FROM chat_followups WHERE kind = ? AND owner_id = ? AND thread_id = ? AND status = 'pending' AND (input_order IS NULL OR input_order > ?) AND json_extract(payload, '$.recovery') IS NULL LIMIT 1",
+  ).get(kind, ownerId, threadId, original.input_order));
 }
 
 export function cancelledChatFollowup(kind: ChatFollowup["kind"], ownerId: string, threadId: string, sendId: string): boolean {
@@ -492,8 +499,14 @@ export function importThread(threadId: string, messages: Message[], activeLeafId
 }
 
 export function appendMessage(threadId: string, message: Message): void {
-  transaction(() => {
+  transaction((database) => {
+    const newInput = message.role === "user" && message.kind === "text" &&
+      !database.prepare("SELECT 1 FROM messages WHERE thread_id = ? AND id = ?").get(threadId, message.id);
     insertMessage(threadId, message);
+    if (newInput) {
+      database.prepare("UPDATE input_order SET value = value + 1 WHERE id = 1").run();
+      database.prepare("UPDATE messages SET input_order = (SELECT value FROM input_order WHERE id = 1) WHERE thread_id = ? AND id = ?").run(threadId, message.id);
+    }
     setActiveLeaf(threadId, message.id);
   });
 }

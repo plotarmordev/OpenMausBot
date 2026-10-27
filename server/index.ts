@@ -241,7 +241,7 @@ import { createOneOnOneGoals } from "./host/one-on-one-goals.ts";
 
 import { BUILT_IN_DRIVERS } from "./drivers/builtIn.ts";
 import { openCodeProviderKeysAllowed, setOpenCodeProviderKeyPolicy } from "./drivers/acp/opencode-go.ts";
-import { readMessageText, recallMessages, recentMessages, closeMessageSearch, closeMessageDb, chatFollowups, hasNewerQueuedInput, hasQueuedInputAfter, cancelledChatFollowup, settleChatFollowups, threadsReferencing, logNotification, lastRowAt } from "./message-db.ts";
+import { readMessageText, recallMessages, recentMessages, closeMessageSearch, closeMessageDb, chatFollowups, hasQueuedInputAfter, cancelledChatFollowup, settleChatFollowups, threadsReferencing, logNotification, lastRowAt } from "./message-db.ts";
 import { briefCrossingLabel, claimRecallCrossings, recallCrossingLabel } from "./recall-disclosure.ts";
 import { parseSince, parseUntil, recentWork, recentWorkPrompt, turnOutcomeLine } from "./recent-work.ts";
 import { chiefEscalationsEnabled, NEEDS_INPUT_GATE, peerApprovalGate, RAISED_GATE } from "./escalations.ts";
@@ -3994,10 +3994,14 @@ function runRootTurn(node: HandoffView, bot: BotRecord, signal: AbortSignal, com
 
 /** Read once, before boot recovery settles its rows: a `dispatched` follow-up's words never go to a model again. */
 let bootFollowups: Map<string, "dispatched" | "pending"> | undefined;
+const pendingRecoveryRootsAtBoot = new Set<string>();
 function followupAtBoot(threadId: string): "dispatched" | "pending" | undefined {
   if (!bootFollowups) {
     bootFollowups = new Map();
     for (const row of chatFollowups("bot")) {
+      if (row.status === "pending" && row.payload.recovery) {
+        pendingRecoveryRootsAtBoot.add(row.payload.recovery.coordination?.id ?? row.payload.recovery.generation);
+      }
       if (row.status === "dispatching" || row.status === "interrupted") bootFollowups.set(row.threadId, "dispatched");
       else if (row.status === "pending" && !bootFollowups.has(row.threadId)) bootFollowups.set(row.threadId, "pending");
     }
@@ -4219,8 +4223,9 @@ const coordinator: Coordinator = createCoordinator({
     outward: node => {
       const followup = node.parentId || node.groupId ? undefined : followupAtBoot(node.threadId);
       if (followup) {
-        followupEndedRoots.set(node.id, followup === "pending" ? "turn interrupted — OpenMausBot restarted" : undefined);
-        return [followup === "pending" ? "queued follow-up waiting" : "queued follow-up dispatched"];
+        const recoveryWaiting = pendingRecoveryRootsAtBoot.has(node.id);
+        followupEndedRoots.set(node.id, followup === "pending" && !recoveryWaiting ? "turn interrupted — OpenMausBot restarted" : undefined);
+        return [recoveryWaiting ? "queued recovery waiting" : followup === "pending" ? "queued follow-up waiting" : "queued follow-up dispatched"];
       }
       return outwardActions(turnRows(node));
     },
@@ -7421,7 +7426,7 @@ function drainQueuedSendsNow() {
       const stale = cfg.automaticRecovery?.enabled !== true || !current || !store.taskByThread(botId, threadId)?.cwd ||
         directRequestOwners.get(threadId)?.stopped ||
         latestInput?.id !== recovery.recoveryUserMessageId || latestInput?.requestCancelled ||
-        hasNewerQueuedInput("bot", botId, threadId, queueId) ||
+        hasQueuedInputAfter("bot", botId, threadId, recovery.recoveryUserMessageId) ||
         JSON.stringify(current.modelSelection) !== JSON.stringify(recovery.from) ||
         JSON.stringify(plan) !== JSON.stringify(recovery.plan) ||
         !checked?.ok || JSON.stringify(checked.selection) !== JSON.stringify(recovery.selection) ||
@@ -7434,6 +7439,7 @@ function drainQueuedSendsNow() {
       };
       if (stale) {
         fail("Automatic recovery cancelled: the request or backup selection is no longer current.");
+        drainQueuedSends();
         return;
       }
       const target = registry.get(recovery.selection.instanceId)!;
@@ -8856,7 +8862,7 @@ async function startTurn(
         (candidate.instanceId !== instanceId || candidate.model !== model));
       const backup = backups[nextIndex];
       if (mayRecover && backup && current && (!opts?.cardContinuation || opts.coordination) &&
-          !directRequestOwners.get(threadId)?.stopped && !hasQueuedInputAfter("bot", bot.id, threadId, userMessage.at) &&
+          !directRequestOwners.get(threadId)?.stopped && !hasQueuedInputAfter("bot", bot.id, threadId, recoveryUserMessageId) &&
           JSON.stringify(current.modelSelection) === JSON.stringify(bot.modelSelection) &&
           (backup.instanceId !== instanceId || backup.model !== model) &&
           store.activePath(threadId).findLast(m => m.role === "user" && m.kind === "text")?.id === recoveryUserMessageId) {
