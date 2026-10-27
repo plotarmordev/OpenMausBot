@@ -97,6 +97,7 @@ export interface BotMessageRouteDeps {
   resolveAndSendRoutine(res: ServerResponse, args: CardAnswer): boolean;
   resolveAndSendProfile(res: ServerResponse, args: CardAnswer): boolean;
   resolveAndSendModel(res: ServerResponse, args: CardAnswer): boolean;
+  resolveAndSendThreadModel(res: ServerResponse, args: CardAnswer): boolean;
   resolveSkillRequest(args: CardAnswer & { behavior: Behavior; reviewedSha256?: string }): SkillResolution;
   sendSkillResolution(res: ServerResponse, result: SkillResolution): boolean;
   answerRequest(
@@ -153,7 +154,7 @@ export function createBotMessageRoutes(deps: BotMessageRouteDeps): RouteHandler 
     cardAnswerRefusal, commandRememberRefusal, requestBehavior, requestedTaskBot, botForThread, threadBusy,
     botAtThreadCapacity, parksBehindCoordination, activeGroupTurnForBot, runningTurnInstance, engineSteersImages, resolveReplyTarget,
     turnSelection, policyModelRefusal, clearUnattended, drainQueuedSends, answeringCardAs, resolveAndSendTrust, resolveAndSendTeamSetup,
-    resolveAndSendRoutine, resolveAndSendProfile, resolveAndSendModel, resolveSkillRequest, sendSkillResolution, answerRequest,
+    resolveAndSendRoutine, resolveAndSendProfile, resolveAndSendModel, resolveAndSendThreadModel, resolveSkillRequest, sendSkillResolution, answerRequest,
     deliverLateQuestionAnswer, interruptDirectThread, stopThreadForPerson, cancelDirectTurnDispatch, revokeInternalCapabilitiesForThread,
     cancelGroupTurnOperations, closeOpenApprovals, harnessCardOutcome, pressRecords, serverPress, relayedReaction, answeredIn, fromPhone, notePhoneSend, goals,
   } = deps;
@@ -514,6 +515,13 @@ export function createBotMessageRoutes(deps: BotMessageRouteDeps): RouteHandler 
           requestId: String(body.requestId),
           behavior,
         })) return;
+        if (resolveAndSendThreadModel(res, {
+          botId: bot.id,
+          botName: bot.name,
+          threadId: bot.threadId,
+          requestId: String(body.requestId),
+          behavior,
+        })) return;
         if (sendSkillResolution(res, resolveSkillRequest({
           botId: bot.id,
           botName: bot.name,
@@ -623,6 +631,20 @@ export function createBotMessageRoutes(deps: BotMessageRouteDeps): RouteHandler 
           if (resolveAndSendModel(res, {
             botId: modelBotId,
             botName: modelOwner?.name,
+            threadId,
+            requestId,
+            behavior,
+          })) return;
+        }
+        const threadModelCard = store.messagesFor(threadId).find(
+          (message) => message.card?.requestId === requestId && message.card.threadModelRequest,
+        );
+        if (threadModelCard?.card?.threadModelRequest) {
+          const threadModelBotId = threadModelCard.from?.botId ?? store.botByThread(threadId)?.id;
+          if (!threadModelBotId) return json(res, 400, { error: "this model request has no valid owner" });
+          if (resolveAndSendThreadModel(res, {
+            botId: threadModelBotId,
+            botName: store.bot(threadModelBotId)?.name,
             threadId,
             requestId,
             behavior,

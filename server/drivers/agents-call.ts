@@ -611,7 +611,43 @@ export async function callTool(name: string, args: Json, context: ToolCallContex
         forBotId: forBotId || undefined,
       }),
     });
-    return confirmationResult(r, "the default model change", "model");
+    const result = confirmationResult(r, "the default model change", "model");
+    return { ...result, text: `${result.text}\n${JSON.stringify(r)}` };
+  }
+  if (name === "get_thread_model") {
+    const targetThreadId = String(args.thread_id ?? "").trim() || THREAD_ID;
+    const result = await api("/api/internal/thread-model-state", {
+      method: "POST", body: JSON.stringify({ targetThreadId }),
+    });
+    return { text: JSON.stringify(result) };
+  }
+  if (name === "set_thread_model") {
+    const threadId = String(args.thread_id ?? "").trim();
+    if (!threadId) return { text: "set_thread_model needs thread_id from list_threads or a coordinate_bots receipt.", isError: true };
+    const raw = args.model_selection;
+    const fields = typeof raw === "object" && raw !== null && !Array.isArray(raw) ? raw as Record<string, unknown> : null;
+    if (!fields || typeof fields.instanceId !== "string" || !fields.instanceId.trim() || typeof fields.model !== "string" || !fields.model.trim()) {
+      return { text: "set_thread_model needs model_selection with instanceId and model.", isError: true };
+    }
+    if ((fields.effort !== undefined && (typeof fields.effort !== "string" || !fields.effort.trim()))
+      || (fields.variant !== undefined && (typeof fields.variant !== "string" || !fields.variant.trim()))) {
+      return { text: "set_thread_model effort and variant must be non-empty strings when supplied.", isError: true };
+    }
+    const selection: Json = { instanceId: fields.instanceId.trim(), model: fields.model.trim() };
+    if (typeof fields.effort === "string" && fields.effort.trim()) selection.effort = fields.effort.trim();
+    if (typeof fields.variant === "string" && fields.variant.trim()) selection.variant = fields.variant.trim();
+    const r = await api("/api/internal/thread-model-requests", {
+      method: "POST",
+      body: JSON.stringify({
+        fromBotId: BOT_ID,
+        fromThreadId: THREAD_ID,
+        targetThreadId: threadId,
+        modelSelection: selection,
+        reason: args.reason,
+      }),
+    });
+    const result = confirmationResult(r, "the conversation model change", "model");
+    return { ...result, text: `${result.text}\n${JSON.stringify(r)}` };
   }
   if (name === "memory_update") {
     if (!["append", "replace", "remove", "supersede"].includes(String(args.action))

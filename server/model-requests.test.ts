@@ -244,6 +244,20 @@ describe("a bot's model changes below Full access", () => {
     expect(undo()).toMatchObject({ state: "already_undone" });
   });
 
+  it("refuses to undo a peer default after management authority is revoked", () => {
+    const store = new MemoryStore();
+    const chief = addBot(store, "Chief");
+    const peer = addBot(store, "Peer");
+    let refusal: string | null = null;
+    const service = new ModelRequestService({ store, autoApply: rule, validateTarget: () => refusal });
+    const selection = { instanceId: "codex", model: "gpt-fixture" };
+    const proposal = service.submit({ botId: chief.id, threadId: chief.threadId, targetBotId: peer.id, selection, reason: "asked" });
+    refusal = "management authority revoked";
+    expect(service.undo({ botId: chief.id, threadId: chief.threadId, requestId: proposal.requestId }))
+      .toMatchObject({ state: "invalid", status: 403 });
+    expect(peer.modelSelection).toEqual(selection);
+  });
+
   it("is not held back by the open-card budget, which still holds the owner's card", () => {
     const store = new MemoryStore();
     const bot = addBot(store, "Scout");

@@ -121,7 +121,7 @@ import { vpsLeftBehindNotice } from "./cloud-backend.ts";
 import * as composio from "./composio.ts";
 import { connectorCallFromFrame, connectorRefusalText, connectorScopeRefusalText, connectorUnrecognizedText, evaluateConnectorTools } from "./connector-verdict.ts";
 import { connectorCardText } from "./connector-card-text.ts";
-import { chiefOfStaffSystemPrompt } from "./chief-of-staff.ts"; import { chiefLevel, readTeamRolesWith } from "./chief-level.ts"; import { defaultBotRefusal, ensureDefaultBot } from "./default-bot.ts";
+import { chiefOfStaffSystemPrompt, chiefSetsThreadModel } from "./chief-of-staff.ts"; import { chiefLevel, readTeamRolesWith } from "./chief-level.ts"; import { defaultBotRefusal, ensureDefaultBot } from "./default-bot.ts";
 import { buildRecall, recallRooms, recallThreadIds, withRecalled } from "./recall.ts";
 import { hostTimeZone, takesTurnClock, turnClockLine, withTurnClock } from "./turn-clock.ts";
 import { createMemoryUpkeep, upkeepEnabled } from "./memory-upkeep.ts";
@@ -461,6 +461,7 @@ import { createChatAppRoutes, createChatApps, createChatAppsMcp } from "./routes
 import { buildBotOverview, type BotOverview, connectedAppsFacts } from "./bot-overview.ts";
 import { ProfileRequestService } from "./profile-requests.ts";
 import { ModelRequestService } from "./model-requests.ts";
+import { ThreadModelRequestService } from "./thread-model-requests.ts";
 import { TeamSetupError, TeamSetupRequestService } from "./team-setup-requests.ts";
 import type { TeamSetupRequest } from "../shared/team-setup.ts";
 import { profileRevision, profileSnapshot } from "./profile-revision.ts";
@@ -2720,9 +2721,11 @@ function checkedModelSelection(
   }
     // Free-form model ids: custom engines accept ids outside their catalog, and some drivers learn the catalog only at turn start.
   if (requireAvailableModel) {
-    if (!target) {
+    if (!target || !target.enabled) {
       return { ok: false, status: 400, error: `model instance "${selection.instanceId}" is unavailable` };
     }
+    const refusal = policyModelRefusal(target) ?? heldKeys?.refusal(target.instanceId);
+    if (refusal) return { ok: false, status: 403, error: refusal };
     const offered =
       selection.model === target.models.default ||
       target.models.options.some((option) => option.id === selection.model);
@@ -2738,8 +2741,16 @@ function checkedModelSelection(
   if (target && selection.effort !== undefined && !allowed.includes(selection.effort)) {
     return { ok: false, status: 400, error: `effort "${selection.effort}" is not offered by this bot's engine` };
   }
+  if (target?.driverKind === "customAcp" && selection.effort !== undefined &&
+      !target.models.options.find((option) => option.id === selection.model)?.variants?.some((option) => option.id === selection.effort)) {
+    return { ok: false, status: 400, error: `effort "${selection.effort}" is not advertised for model "${selection.model}" — refresh the engine catalog first` };
+  }
   if (target && selection.variant !== undefined && !target.adapter.capabilities.modelVariants) {
     return { ok: false, status: 400, error: "model variants are not offered by this bot's engine" };
+  }
+  if (target && selection.variant !== undefined && requireAvailableModel &&
+      !target.models.options.find((option) => option.id === selection.model)?.variants?.some((option) => option.id === selection.variant)) {
+    return { ok: false, status: 400, error: `variant "${selection.variant}" is not advertised for model "${selection.model}"` };
   }
   return { ok: true, selection };
 }
@@ -2749,10 +2760,10 @@ function engineSwitchNeedsAsk(mode: ApprovalMode, from: ModelSelection, to: Mode
 }
 
 function checkedTaskModelSwitch(current: BotRecord, raw: unknown, updateBotDefault: boolean,
-  resetApprovalToAsk: boolean, requireAvailableModel = false, trusted = false) {
+  resetApprovalToAsk: boolean, requireAvailableModel = false, trusted = false, nextTurnOnly = false) {
   if (current.approvalGrant) return { ok: false as const, status: 409, error: "Wait for the approval change to finish before switching models" };
   const checked = checkedModelSelection(raw, {
-    selection: current.modelSelection, busy: threadBusy(current.id, current.threadId),
+    selection: current.modelSelection, busy: !nextTurnOnly && threadBusy(current.id, current.threadId),
   }, requireAvailableModel);
   if (!checked.ok) return checked;
   const profile = store.bot(current.id)!;
@@ -5097,6 +5108,7 @@ const lastReply = new Map<string, string>();
 const stoppedTurns = new Map<string, string | undefined>();
 const settlingTurns = new Set<string>();
 const sessionModelByThread = new Map<string, string>();
+const sessionEffortByThread = new Map<string, string>();
 const nativeReviewNoticed = new Set<string>();
 const providerLabel = (provider: string): string => {
   const bare = provider.replace(/Agent$/, "");
@@ -6577,6 +6589,8 @@ bus.subscribe((event: RuntimeEvent) => {
   switch (event.type) {
     case "turn.started":
       turnStartedAt.set(event.threadId, Date.now());
+      sessionModelByThread.delete(event.threadId);
+      sessionEffortByThread.delete(event.threadId);
       // A stop that never saw its turn.completed must not pass for this turn.
       stoppedTurns.delete(event.threadId);
       break;
@@ -6585,6 +6599,8 @@ bus.subscribe((event: RuntimeEvent) => {
         store.setResumeCursor(bot.id, event.providerInstanceId, event.sessionId, event.threadId);
       }
       if (typeof event.model === "string" && event.model) sessionModelByThread.set(event.threadId, event.model);
+      if (typeof event.effort === "string") sessionEffortByThread.set(event.threadId, event.effort);
+      else sessionEffortByThread.delete(event.threadId);
       break;
     case "item.completed":
       if (event.itemType === "assistant_text") {
@@ -7982,6 +7998,8 @@ async function startTurn(
   directFollowupSettlers.set(dispatchClaimId, { threadId, settle: opts?.onTurnSettled });
   directTurnDispatchClaims.set(threadId, { id: dispatchClaimId, botId, threadId, phase: "setup" });
   directTurnBots.set(threadId, bot);
+  sessionModelByThread.delete(threadId);
+  sessionEffortByThread.delete(threadId);
   beginInternalCapabilityGeneration(threadId, dispatchClaimId);
   if (!opts?.coordination && !opts?.compactOnly && !opts?.cardContinuation) {
     const opener = handoffOpener({ botId: bot.id, threadId }, threadId);
@@ -9466,6 +9484,38 @@ const modelRequests = new ModelRequestService({
   validateModel: validateModelProposal,
   driverCapabilities: driverCapabilitiesFor,
 });
+const threadModelRequests = new ThreadModelRequestService({
+  store,
+  autoApply: appliesDirectly,
+  canPersist: proposalPersistence,
+  authorize: (fromBotId, owner, task, sourceThreadId) => {
+    const from = store.bot(fromBotId);
+    if (!from) return "unknown sender";
+    if (CLOUD_TEAM && !teamHost.readableFrom(sourceThreadId)(task.threadId)) return "no such accessible conversation";
+    return chiefSetsThreadModel(from, task, task.openedBy ? store.bot(task.openedBy.botId) : undefined, owner);
+  },
+  checkSwitch: (current, raw) => checkedTaskModelSwitch(store.projectBotForTask(current.id, current.threadId) ?? current, raw, false, false, true, false, true),
+  resetTask: (from, to) => hostedModels?.resetTask(from, to) ?? {},
+  driverCapabilities: driverCapabilitiesFor,
+});
+
+function threadModelReceipt(botId: string, threadId: string) {
+  const bot = store.bot(botId)!;
+  const task = store.taskByThread(botId, threadId);
+  const running = threadBusy(botId, threadId);
+  return {
+    botDefault: bot.modelSelection,
+    taskOverride: task?.modelSelection ?? null,
+    currentExecution: running ? {
+      selection: directTurnBots.get(threadId)?.modelSelection ?? null,
+      model: sessionModelByThread.get(threadId) ?? null,
+      effort: sessionEffortByThread.get(threadId) ?? null,
+      scope: "current_turn",
+    } : null,
+    nextTurn: { selection: turnSelection(botId, threadId) ?? task?.modelSelection ?? bot.modelSelection, scope: "next_turn", resolved: false },
+    dispatched: false,
+  };
+}
 const teamSetupTeams = () => [...new Set(["", ...readSections(), ...store.bots.map((bot) => sectionKey(bot.section)), ...store.groups.map((group) => sectionKey(group.section))])];
 const teamSetupRequests = new TeamSetupRequestService({
   store, teams: teamSetupTeams, hasTeamAuthority, canPersist: proposalPersistence, maxBots: MAX_WORKSPACE_BOTS,
@@ -9622,6 +9672,41 @@ function resolveAndSendModel(
   return true;
 }
 
+function resolveAndSendThreadModel(
+  res: ServerResponse,
+  args: { botId: string; botName?: string; threadId: string; requestId: string; behavior: string },
+): boolean {
+  const card = store.messagesFor(args.threadId).find(
+    (message) => message.card?.requestId === args.requestId && message.card.threadModelRequest,
+  )?.card;
+  if (!card) return false;
+  const result = threadModelRequests.resolve(args);
+  if (!result.claimed) return false;
+  if (result.state === "applied" || result.state === "denied") {
+    appendDecision(DATA_DIR, {
+      threadId: args.threadId, requestId: args.requestId, botId: args.botId, botName: args.botName,
+      tool: "set_thread_model", summary: card.subtitle,
+      decision: result.state === "applied" ? "user-approved" : "user-denied", source: "user",
+    });
+  }
+  if (result.state === "applied") {
+    const target = store.bot(result.targetBotId);
+    if (target) broadcast({ kind: "bot", bot: wireBot(target) });
+    json(res, 200, {
+      ok: true, outcome: "allowed-once",
+      ...(result.settlementPending ? { settlementPending: true, message: result.message } : {}),
+    });
+    return true;
+  }
+  if (result.state === "invalid") { json(res, result.status, { error: result.error }); return true; }
+  if (result.state === "already_settled") {
+    json(res, 200, { ok: true, outcome: result.behavior === "allow" ? "allowed-once" : "rejected", alreadySettled: true });
+    return true;
+  }
+  json(res, 200, { ok: true, outcome: "rejected" });
+  return true;
+}
+
 type UndoResult =
   | { claimed: false }
   | { claimed: true; state: "already_undone" | "undone" }
@@ -9684,6 +9769,13 @@ async function undoAppliedChange(res: ServerResponse, threadId: string, requestI
     result = undone;
   } else if (card.modelRequest) {
     const undone = modelRequests.undo({ botId, threadId, requestId });
+    if (undone.claimed && undone.state === "undone") {
+      const target = store.bot(undone.targetBotId);
+      if (target) broadcast({ kind: "bot", bot: wireBot(target) });
+    }
+    result = undone;
+  } else if (card.threadModelRequest) {
+    const undone = threadModelRequests.undo({ botId, threadId, requestId });
     if (undone.claimed && undone.state === "undone") {
       const target = store.bot(undone.targetBotId);
       if (target) broadcast({ kind: "bot", bot: wireBot(target) });
@@ -12527,7 +12619,7 @@ ROUTES.push(createBotMessageRoutes({
   cardAnswerRefusal, commandRememberRefusal, requestBehavior, requestedTaskBot, botForThread, threadBusy,
   botAtThreadCapacity, parksBehindCoordination, activeGroupTurnForBot, runningTurnInstance, engineSteersImages, resolveReplyTarget,
   turnSelection, policyModelRefusal, clearUnattended, drainQueuedSends, answeringCardAs, resolveAndSendTrust, resolveAndSendTeamSetup,
-  resolveAndSendRoutine, resolveAndSendProfile, resolveAndSendModel, resolveSkillRequest, sendSkillResolution, answerRequest,
+  resolveAndSendRoutine, resolveAndSendProfile, resolveAndSendModel, resolveAndSendThreadModel, resolveSkillRequest, sendSkillResolution, answerRequest,
   deliverLateQuestionAnswer, interruptDirectThread, stopThreadForPerson, cancelDirectTurnDispatch, revokeInternalCapabilitiesForThread,
   cancelGroupTurnOperations, closeOpenApprovals, harnessCardOutcome, answeredIn: automationReports.answeredIn, pressRecords: proactive.brief.pressRecords, serverPress: proactive.brief.serverPress,
   goals: oneOnOneGoals,
@@ -13927,7 +14019,60 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
           tool: "update_model", summary: proposed.detail, decision: proposed.state === "applied" ? "auto-approved" : "card-shown",
           source: proposed.state === "applied" ? proposed.appliedBy ?? "full-access" : "model",
         });
-        return json(res, 201, proposed);
+        const targetId = body.forBotId?.trim() || from.id;
+        return json(res, 201, {
+          ...proposed,
+          botDefault: store.bot(targetId)?.modelSelection,
+          scope: "bot_default",
+          existingThreadsChanged: false,
+          dispatched: false,
+          ...(targetId === from.id ? { receipt: threadModelReceipt(from.id, body.fromThreadId) } : {}),
+        });
+      }
+      if (method === "POST" && path === "/api/internal/thread-model-state") {
+        const body = await readInternalBody();
+        const threadId = typeof body.targetThreadId === "string" ? body.targetThreadId : "";
+        const target = store.botByThread(threadId);
+        const task = target && store.taskByThread(target.id, threadId);
+        if (!target || !task || (CLOUD_TEAM && !teamHost.readableFrom(internalCapability.threadId)(threadId))) {
+          return json(res, 404, { error: "no such accessible conversation" });
+        }
+        const refusal = chiefSetsThreadModel(internalSender, task, task.openedBy ? store.bot(task.openedBy.botId) : undefined, target);
+        if (refusal) return json(res, 403, { error: refusal });
+        return json(res, 200, threadModelReceipt(target.id, threadId));
+      }
+      if (method === "POST" && path === "/api/internal/thread-model-requests") {
+        const parsed = z.object({
+          fromBotId: z.string().min(1).max(128),
+          fromThreadId: z.string().min(1).max(128),
+          targetThreadId: z.string().min(1).max(128),
+          modelSelection: z.unknown(),
+          reason: z.unknown(),
+        }).strict().safeParse(await readInternalBody());
+        if (!parsed.success) return json(res, 400, { error: "invalid thread model proposal" });
+        const body = parsed.data;
+        const from = store.bot(body.fromBotId);
+        if (!from) return json(res, 403, { error: "unknown sender" });
+        const owner = connectorThread(from.id, body.fromThreadId);
+        if (!owner) return json(res, 403, { error: "source conversation does not belong to sender" });
+        if (CLOUD_TEAM && !teamHost.readableFrom(body.fromThreadId)(body.targetThreadId)) {
+          return json(res, 404, { error: "no such accessible conversation" });
+        }
+        const proposed = threadModelRequests.submit({
+          botId: from.id,
+          threadId: body.fromThreadId,
+          targetThreadId: body.targetThreadId,
+          selection: body.modelSelection,
+          reason: body.reason,
+          from: owner.group ? { botId: from.id, name: from.name, color: from.color } : undefined,
+        });
+        appendDecision(DATA_DIR, {
+          threadId: body.fromThreadId, requestId: proposed.requestId, botId: from.id, botName: from.name,
+          tool: "set_thread_model", summary: proposed.detail, decision: proposed.state === "applied" ? "auto-approved" : "card-shown",
+          source: proposed.state === "applied" ? proposed.appliedBy ?? "full-access" : "model",
+        });
+        const target = store.botByThread(body.targetThreadId)!;
+        return json(res, 201, { ...proposed, receipt: threadModelReceipt(target.id, body.targetThreadId) });
       }
       if (await dispatchRoutes([createInternalChiefTeamRoutes({ bot: () => store.bot(internalCapability.botId), requireActive: requireActiveInternalCapability,
         teams: teamSetupTeams, bots: () => store.bots, instances: () => registry.describe() })], { req, res, url, path, method, auth, json, readBody })) return;
@@ -14375,8 +14520,8 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
         const threadId = typeof body.toThreadId === "string" ? body.toThreadId : "";
         const note = typeof body.note === "string" ? body.note.trim() : "";
         const target = store.bot(botId);
-        if (!target || target.id === from.id) return json(res, 404, { error: "no such teammate" });
-        if (!canManage(from, target)) {
+        if (!target) return json(res, 404, { error: "no such teammate" });
+        if (target.id !== from.id && !canManage(from, target)) {
           return json(res, 403, { error: "that bot is not on this Chief's team — call list_bots for the ones you can reach" });
         }
         if (store.groupByThread(threadId)) return json(res, 400, { error: "that is a room thread — use coordinate_bots in the room instead" });
@@ -14384,6 +14529,9 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
         if (!task || (CLOUD_TEAM && !teamHost.readableFrom(fromThreadId)(threadId))) return json(res, 404, { error: "no such thread on that bot" });
         const refused = retryRefusal(target.id, threadId);
         if (refused) return json(res, 409, { error: refused });
+        if (threadModelGivingWay(target.id, threadId)) {
+          return json(res, 409, { error: "The selected task engine is unavailable; explicitly select an available model before retrying. Nothing ran." });
+        }
         requireActiveInternalCapability();
         const unattended = isUnattended(from.id, fromThreadId);
         const text = `[Retry requested by ${peerName(from.name)}, your Chief of Staff, after this thread's last run stopped.${note ? ` Note from ${peerName(from.name)}: ${quoteInNote(note, 300)}` : ""} Continue the request above from where it stopped and finish it. If the same problem comes back, say exactly what is blocking and stop.]`;

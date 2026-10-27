@@ -55,7 +55,7 @@ describe("custom ACP catalog discovery (isolated fake CLI)", () => {
     const fixture = await fake();
     const catalog = await resolveCustomAcpModels(fixture.env, fixture.config);
     expect(catalog).toEqual({ default: "agent-default", options: [
-      { id: "agent-default", label: "Agent default", custom: true },
+      { id: "agent-default", label: "Agent default", custom: true, variants: [{ id: "max", label: "Max" }] },
       { id: "deep", label: "Deep", custom: true, variants: [{ id: "max", label: "Max" }] },
       { id: "flash", label: "Flash", custom: true, variants: [{ id: "low", label: "Low" }] },
       { id: "silent", label: "Silent", custom: true }, { id: "rejected", label: "Rejected", custom: true },

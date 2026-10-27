@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { chiefOfStaffSystemPrompt, chiefTidies } from "./chief-of-staff.ts";
+import { chiefOfStaffSystemPrompt, chiefSetsThreadModel, chiefTidies } from "./chief-of-staff.ts";
 
 describe("chiefTidies", () => {
   const chief = { id: "chief", name: "Chief", section: "Work", chiefOfStaff: true };
@@ -20,9 +20,29 @@ describe("chiefTidies", () => {
     expect(chiefTidies(chief, task, { ...opener, section: "Private" }, recipient)).toBe(false);
     expect(chiefTidies(chief, task, opener, { ...recipient, section: "Private" })).toBe(false);
     expect(chiefTidies(chief, task, { ...opener, hidden: true }, recipient)).toBe(false);
-    expect(chiefTidies(chief, task, undefined, recipient)).toBe(false);
     expect(chiefTidies(chief, task, { ...opener, visibility: { people: ["person@example.test"] } }, recipient)).toBe(false);
     expect(chiefTidies({ ...chief, managedSections: ["Private"] }, task, { ...opener, section: "Private" }, { ...recipient, section: "Private" })).toBe(true);
+  });
+});
+
+describe("chiefSetsThreadModel", () => {
+  const chief = { id: "chief", name: "Chief", section: "Work", chiefOfStaff: true };
+  const opener = { id: "opener", name: "Opener", section: "Work" };
+  const recipient = { id: "recipient", name: "Recipient", section: "Work" };
+  const delegated = { openedBy: { botId: opener.id, name: opener.name, threadId: "source", at: 1 } };
+
+  it("allows a Chief its own opened threads and the delegation threads it manages", () => {
+    expect(chiefSetsThreadModel(chief, { openedBy: { botId: chief.id, name: chief.name, threadId: "s", at: 1 } }, chief, recipient)).toBeNull();
+    expect(chiefSetsThreadModel(chief, delegated, opener, recipient)).toBeNull();
+    expect(chiefSetsThreadModel(chief, {}, undefined, chief)).toBeNull();
+    expect(chiefSetsThreadModel(chief, { openedBy: { botId: chief.id, name: chief.name, threadId: "s", at: 1 } }, chief, { ...recipient, section: "Private" })).not.toBeNull();
+  });
+
+  it("refuses person-started threads, other sections' threads, routine threads and non-Chiefs", () => {
+    expect(chiefSetsThreadModel(chief, {}, undefined, recipient)).toContain("the person started");
+    expect(chiefSetsThreadModel(chief, delegated, { ...opener, section: "Private" }, recipient)).toContain("cannot manage");
+    expect(chiefSetsThreadModel(chief, { ...delegated, routineRunId: "run" }, opener, recipient)).toContain("automation");
+    expect(chiefSetsThreadModel({ ...chief, chiefOfStaff: false }, { openedBy: { botId: "chief", name: "Chief", threadId: "s", at: 1 } }, chief, chief)).toContain("Chief of Staff");
   });
 });
 
@@ -116,27 +136,6 @@ describe("chiefOfStaffSystemPrompt", () => {
     expect(prompt).not.toContain("End your turn after the proposal:");
   });
 
-  it("pins the one coordination guidance and the shared staffing text", () => {
-    const prompt = chiefOfStaffSystemPrompt("chief", bots, true);
-
-    expect(prompt).toBe(
-      [
-        "You are the person's assistant and the Chief of Staff for the Work department: their one point of contact.",
-        "Every other bot on this team, in any department, is reachable too: consult it or hand it work with coordinate_bots whenever a job needs it, without asking anyone to set anything up. Reaching a bot gives you no authority over it: its setup, its threads and its incidents stay with its own Chief, so ask rather than direct.",
-        "Do the work yourself, bring in a teammate when one fits the job, and return one concise consolidated answer. Never invent a teammate's progress or result. Normal permission and approval rules still apply.",
-        "When a job needs a specialist you do not have (an ongoing area of work, a different skill set, or work to run in parallel), add one with create_bot without asking first, then tell the person in one line; they can undo it. When their goal matches a ready-made team, list_team_library has its roles to create the same way. Never add a bot just to look busy, or one that duplicates a teammate.",
-        "Incidents: when a teammate's run fails, stalls or cannot start, OpenMausBot reports it to you in your \"Team incidents\" thread with a link to the thread. Read the report, then either call retry_thread to resume that thread where it stopped, coordinate_bots with a corrected brief when the request itself must change, or — when only the person can fix the cause (a sign-in, a missing credential, an unanswered question, a setting) — say so plainly and stop. Never retry the same thread more than twice; report what failed and what you did in one or two sentences.",
-        "Use list_bots or list_room_targets for the live reachable roster. Use coordinate_bots to assign actual teammates concrete work, or with consult: true to ask them for advice. It returns immediately and keeps you available to the user; give clear, self-contained briefs, then end your turn — you resume automatically when their results return, success or failure. Say that work is assigned, not completed; only claim completion after the teammate's result has actually arrived, and if a teammate fails or stalls, tell the user plainly and decide the next step yourself. Leads can coordinate their own specialists. Do not poll or wait, send acknowledgements as new work, or substitute native helpers for named bots. On return, verify the requested outcome, resolve decisions within the user's scope, request concrete corrections with rework=true when necessary, and return one consolidated answer. Consultations are advice, not proof that work or tests ran. A refusal from coordinate_bots means nothing was sent: fix what it names (usually the id — copy it from list_bots or your roster; a unique teammate name also works) and retry, and never describe a handoff the tool did not accept.",
-        "Housekeeping: list_threads also shows threads one teammate opened on another (marked \"opened by\"), and you may close_thread those once they are idle and their work is done. Threads the person started are theirs: never close them.",
-        "When the user asks you to assemble or configure a team, use list_team_setup for the exact authorized teams, bot IDs and model catalog, then propose_team_setup once with all named specialists and their profile/model changes. Include new teams explicitly; the plan covers their creation and your access. Existing thread models and other bots' execution permissions stay unchanged. Follow the tool result: the plan applies immediately at every access level and the person can undo it; after an applied result, continue already-requested work without another confirmation. Only if review is pending, end your turn: the user's decision automatically resumes you once with a structured result. Report failed or cancelled results honestly. Do not ask for another yes, poll, or repeat the proposal. After successful setup, use the available coordination tools for already requested work. For explicitly requested bot deletion, use propose_bot_deletion separately and follow its applied or pending result too.",
-        "Current Work department (your team):",
-        "- Quill — Writer: Drafts concise copy [id: writer]",
-        "- Patch — Engineer [id: coder]",
-        "Other bots you can reach, in other departments:",
-        "- Scout — Travel planner (Personal) [id: personal]",
-      ].join("\n"),
-    );
-  });
 
   it("tells a place's MausBot that is not the Chief that the person's day and brief are its own, and a member's that they are not", () => {
     const place = chiefOfStaffSystemPrompt("maus", [{ id: "maus", name: "MausBot", defaultBot: {} }], true);

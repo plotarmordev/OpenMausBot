@@ -24,7 +24,8 @@ import {
   type LogSignal, type ProcessSample, type QuietState,
 } from "./quiet-status.ts";
 import { readSessionReport } from "./session-reports.ts";
-import { offeredModels } from "./config-options.ts";
+import { acpVariantOption, offeredModels } from "./config-options.ts";
+import { EFFORT_LEVELS } from "../../../shared/wire.ts";
 import { SessionModelControls, type AcpModelSelection } from "./session-model-controls.ts";
 import { versionFromProbe } from "./version-probe.ts"; import { engineHomes } from "../../engine-homes/engine-homes.ts";
 
@@ -101,6 +102,8 @@ export interface AcpSupport {
   effortLevels?: readonly EffortLevel[];
   /** Discover and select opaque model variants through ACP config options. */
   modelVariants?: boolean;
+  /** Route canonical effort through the agent's advertised thought config, never CLI flags. */
+  effortViaVariants?: boolean;
   /** Default CLI binary name if the instance config doesn't override it. */
   defaultCli: string;
   /** Optional live model catalog; a failed lookup keeps the last usable one. `config` lets a
@@ -1168,7 +1171,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         }) : null;
         const asks = new Map<string, AcpAskFinish>();
         let reportedModel = turn.model;
-        let variant = turn.variant;
+        let variant = turn.variant ?? (support.effortViaVariants ? turn.effort : undefined);
         let staleProcess = false;
       // Still set if configuring throws: the pooled session may keep an earlier turn's looser mode.
         let approvalUnconfirmed = false;
@@ -1356,16 +1359,25 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             const emitSessionStarted = () => {
               if (sessionStarted) return;
               sessionStarted = true;
+              const nativeEffort = support.effortViaVariants
+                ? acpVariantOption(session.sessionConfigResult)?.currentValue : undefined;
               emit({
                 ...base(threadId, turnId),
                 type: "session.started",
                 sessionId,
-                model: selectedModel ?? init?._meta?.modelState?.currentModelId ?? cliTurn.model ?? null,
+                model: support.effortViaVariants
+                  ? modelControls.modelOf(session.sessionConfigResult)
+                  : selectedModel ?? init?._meta?.modelState?.currentModelId ?? cliTurn.model ?? null,
+                ...(nativeEffort && EFFORT_LEVELS.includes(nativeEffort as EffortLevel)
+                  ? { effort: nativeEffort as EffortLevel } : {}),
                 ...(rebuiltFromReplay ? { rebuilt: true } : {}),
               });
             };
 
             try {
+              if (support.effortViaVariants && turn.effort !== undefined && turn.variant !== undefined && turn.effort !== turn.variant) {
+                throw new Error(`${support.displayName} effort and variant must select the same value`);
+              }
               if (support.selectModel) {
                 const { configId } = support.selectModel;
                 selectedModel = modelControls.modelOf(session.sessionConfigResult);

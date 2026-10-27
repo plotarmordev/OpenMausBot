@@ -17,6 +17,7 @@ import type { AppEventAttempt, AppTrigger, AppTriggerRequestCardData, AppTrigger
 import type { ProfileRequestCardData } from "./profile-request.ts";
 import type { PlaceRow } from "./place-view.ts";
 import type { ModelRequestCardData } from "./model-request.ts";
+import type { ThreadModelRequestCardData } from "./thread-model-request.ts";
 import type { SkillRequestCardData } from "./skill-request.ts";
 import type { QuestionRequestCardData } from "./ask-question.ts";
 import type { AutomationLine, RoutineRunCardData } from "./routine-run.ts";
@@ -691,6 +692,7 @@ export interface OptionCardData {
   profileRequest?: ProfileRequestCardData;
   /** A durable default-model proposal (propose_model). */
   modelRequest?: ModelRequestCardData;
+  threadModelRequest?: ThreadModelRequestCardData;
   teamSetupRequest?: TeamSetupRequest;
   /** A durable learned-skill proposal. */
   skillRequest?: SkillRequestCardData;

@@ -1,0 +1,70 @@
+# Native conversation model control
+
+Chiefs can inspect and change an existing task without replacing its conversation,
+working folder, files, access settings or native resume cursor.
+
+- `get_thread_model {thread_id?}` reports `botDefault`, `taskOverride`,
+  `currentExecution`, and `nextTurn`. Omitting the ID inspects the caller's task.
+- `set_thread_model {thread_id, model_selection, reason}` saves the same task
+  selection as the app picker. `model_selection` contains `instanceId`, `model`,
+  and optionally `effort` or `variant`, never both. Catalog IDs come from
+  `list_team_setup`; unadvertised models and thinking choices fail before mutation.
+- `propose_model {model_selection, reason, for_bot_id?}` changes a bot's default
+  separately. Existing tasks retain their selections. Its receipt identifies
+  `scope: bot_default`, and includes the caller's task receipt for a self change.
+- A selection mutation never dispatches, resumes or cancels a turn. A busy task
+  accepts a **next-turn-only** change; the running execution keeps its captured
+  selection. Only an explicitly requested `retry_thread {bot_id, thread_id}` or
+  a new message starts work. Retry refuses an unavailable pinned task engine
+  rather than silently running on the bot default.
+
+Task control requires Chief authority. Chiefs can control their own tasks and
+bot-opened tasks they manage. Another bot's person-started task, an automation
+run, an inaccessible team/account, an archived bot, and an unknown target fail
+closed. Cloud audience checks apply on inspection, mutation, confirmation and
+Undo. Existing engine/approval compatibility and organization policy apply;
+changing model does not widen permissions.
+
+Applied changes appear in the proposing conversation with **Undo**. Undo
+revalidates authority and the previous selection, and refuses a stale card if
+someone changed the selection meanwhile. An owner-confirmation-required Cloud
+request remains pending rather than silently applying.
+
+`currentExecution.model` and `.effort` are native session evidence, or null when
+unconfirmed. `nextTurn.resolved` is false: a stored choice is not runtime proof.
+In custom ACP, `agent-default` leaves the native session's current model alone;
+it does not reset a pooled session to the process-start model. Use an explicit
+model ID to switch back to a particular model. Supported canonical effort is
+transported through the agent's advertised thought config option and checked
+again after model selection, before prompt dispatch. No global role mapping is
+changed.
+
+## Isolated proof
+
+```sh
+pnpm exec vitest run server/thread-model-control.e2e.test.ts
+pnpm exec vitest run server/thread-model-requests.test.ts server/model-requests.test.ts server/chief-of-staff.test.ts server/drivers/acp/custom.test.ts server/drivers/acp/custom-model-catalog.test.ts src/components/ApprovalCard.test.ts
+```
+
+The end-to-end scenario uses `launchVerificationServer` and `runControlOmb`, a
+disposable home/data directory and ports, and the offline
+`fake-custom-acp-models.ts` process. It seeds delegated-task provenance only
+while that owned server is stopped. No live account, provider, service, task or
+GPU job is touched. The fake model names are synthetic protocol fixtures, not
+real provider executions.
+
+It exercises quota failure, model/effort selection without dispatch, validation
+failure without persisted mutation, cross-team and person-started refusal,
+Undo, separate explicit retry with native model/effort receipts, preserved
+conversation text and artifacts, self-task/default change and restoration, and
+a held running turn whose current model remains unchanged until its next turn.
+The fake records settings at `session/prompt`, not merely the saved API alias.
+The renderer regression verifies Undo is present before restoration and absent
+afterwards.
+
+Evidence is written beside the persistent fixture server log as
+`*.thread-model-control.json`; the successful fixture removes its disposable
+home and stops only its own child. The artifact contains synthetic selections,
+API results and ACP receipts, not bearer tokens. These checks are not a live
+provider qualification or a packaged desktop/Pi deployment. Independent review
+and an idle real-Chief switch-and-back smoke remain release gates.

@@ -59,7 +59,7 @@ function profiles(): Record<string, Profile> {
 }
 
 const PROFILES = profiles();
-const CHIEF_ONLY_TOOLS = ["create_bot", "list_team_setup", "list_team_library", "propose_team_setup", "propose_bot_deletion", "create_room", "manage_room", "retry_thread"];
+const CHIEF_ONLY_TOOLS = ["create_bot", "list_team_setup", "list_team_library", "propose_team_setup", "propose_bot_deletion", "create_room", "manage_room", "retry_thread", "set_thread_model", "get_thread_model"];
 const CHIEF_TARGET_TOOLS = ["propose_profile", "propose_model"];
 const CHIEF_PROFILE_TARGET = " A Chief of Staff may pass for_bot_id (from list_bots) for a requested change to another bot in its section.";
 const TEAMWORK_TOOLS = ["list_room_targets", "coordinate_bots", "assignment_status", "list_bots", "list_rooms", "list_threads", "close_thread", "start_thread", "post_to_room"];
@@ -69,14 +69,14 @@ const FULL = "skills+shared+voice+escalations+x+team";
 
 /** Bytes when the budget was last set; a profile may move at most 2% either way (lower it to lock in a win). */
 const BUDGET_BASELINE: Record<string, number> = {
-  "default": 61361,
-  "voice": 62102,
-  "shared": 63294,
-  "shared+voice": 64035,
-  "skills": 64180,
-  "skills+voice": 64921,
-  "skills+shared": 66113,
-  "skills+shared+voice": 66854,
+  "default": 64590,
+  "voice": 65402,
+  "shared": 66523,
+  "shared+voice": 67335,
+  "skills": 67409,
+  "skills+voice": 68221,
+  "skills+shared": 69342,
+  "skills+shared+voice": 70154,
   "non-chief": 51512,
   "voice+non-chief": 52253,
   "shared+non-chief": 53445,
@@ -85,12 +85,12 @@ const BUDGET_BASELINE: Record<string, number> = {
   "skills+voice+non-chief": 55072,
   "skills+shared+non-chief": 56264,
   "skills+shared+voice+non-chief": 57005,
-  "skills+shared+voice+cloud-home": 65909,
+  "skills+shared+voice+cloud-home": 69209,
   "skills+shared+voice+non-chief+cloud-home": 56060,
-  "default+legacy-switches": 61361,
-  "skills+shared+voice+escalations": 67714,
-  "skills+shared+voice+escalations+x": 72352,
-  "skills+shared+voice+escalations+x+team": 73899,
+  "default+legacy-switches": 64590,
+  "skills+shared+voice+escalations": 71014,
+  "skills+shared+voice+escalations+x": 75652,
+  "skills+shared+voice+escalations+x+team": 76317,
 };
 
 const RPC_PREFIX = '{"jsonrpc":"2.0","id":1,"result":';

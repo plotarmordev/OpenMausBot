@@ -65,7 +65,7 @@ export function approvalCardOutcome(card: OptionCardData): string | undefined {
   if (card.expired === true || staleRoutineCard(card)) return t("approval.status.expired");
   if (!card.answered) return undefined;
   if (card.undone === true) return t("approval.status.undone");
-  const isProposal = Boolean(card.routineRequest || card.skillRequest || card.profileRequest || card.modelRequest || card.teamSetupRequest);
+  const isProposal = Boolean(card.routineRequest || card.skillRequest || card.profileRequest || card.modelRequest || card.threadModelRequest || card.teamSetupRequest);
   if (card.answered !== "allow") return isProposal ? t("approval.status.cancelled") : t("approval.status.denied");
   if (card.teamSetupRequest) return card.teamSetupRequest.deletion ? "Bot deleted" : "Team setup applied";
   const routineAction = card.routineRequest?.operation.action;
@@ -73,7 +73,7 @@ export function approvalCardOutcome(card: OptionCardData): string | undefined {
   const skillAction = card.skillRequest?.action;
   if (skillAction) return t(SKILL_SETTLED_LABEL[skillAction]);
   if (card.profileRequest) return t("approval.status.profileUpdated");
-  if (card.modelRequest) return t("approval.status.modelChanged");
+  if (card.modelRequest || card.threadModelRequest) return t("approval.status.modelChanged");
   if (card.routineRequest) return t("approval.status.routineConfirmed");
   if (card.skillRequest) return t("approval.status.skillConfirmed");
   return t("approval.status.allowed");
@@ -172,6 +172,13 @@ export function appliedChange(card: OptionCardData, name: string): { line: strin
       ? t("approval.applied.modelOwn", { name, title })
       : t("approval.applied.modelOther", { name, target: `@${model.targetName}`, title });
     return { line, canUndo: true };
+  }
+  const threadModel = card.threadModelRequest;
+  if (threadModel) {
+    return {
+      line: t("approval.applied.threadModel", { name, target: threadModel.targetName, title: `#${threadModel.targetTitle}`, model: threadModel.selection.model }),
+      canUndo: true,
+    };
   }
   const setup = card.teamSetupRequest;
   if (setup?.deletion) return { line: t("approval.applied.botDeleted", { name, target: `@${setup.deletion.name}` }), canUndo: false };
@@ -435,7 +442,7 @@ export function ApprovalCard({
         })
     : undefined;
 
-  if (!isRoutineRequest && !isSkillRequest && !isProfileRequest && !isTeamSetup && !card.modelRequest) {
+  if (!isRoutineRequest && !isSkillRequest && !isProfileRequest && !isTeamSetup && !card.modelRequest && !card.threadModelRequest) {
     const waiting = !settled && !expired;
     const header = outbound
       ? waiting ? outbound.headline : outbound.headline.replace(/\s*[?？]$/, "")

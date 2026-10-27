@@ -601,6 +601,22 @@ describe("ApprovalCard for a change that applied on its own", () => {
   });
   const render = (message: Message) => renderToStaticMarkup(createElement(ApprovalCard, { bot: { name: "Scout" }, message, threadId: "thread-1" }));
 
+  it("offers Undo for an applied conversation model change and removes it after restoration", () => {
+    const message = applied({
+      tool: "set_thread_model",
+      threadModelRequest: {
+        version: 1, requestId: "routine-request", botId: "chief", threadId: "thread-1",
+        targetBotId: "worker", targetName: "Worker", targetThreadId: "work-thread", targetTitle: "Existing task",
+        createdAt: 1, reason: "Requested switch", beforeDefault: { instanceId: "custom", model: "first" },
+        selection: { instanceId: "custom", model: "second", effort: "medium" }, appliedAt: 2,
+      },
+    });
+    expect(render(message)).toContain(">Undo<");
+    expect(pendingApprovals([message])).toEqual([]);
+    message.card = { ...message.card!, undone: true };
+    expect(render(message)).not.toContain(">Undo<");
+  });
+
   // A create renders the live trigger card (TriggerCard.test.ts); every later change is this one line.
   const update = { action: "update" as const, routineId: "routine-1", expectedUpdatedAt: 1, changes: { name: "Renamed" } };
   const before = { ...createRoutineOperation.routine, enabled: true };

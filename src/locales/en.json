@@ -446,6 +446,7 @@
   "approval.applied.profileOther": "{name} updated {target}'s profile: {title}",
   "approval.applied.modelOwn": "{name} changed its default model: {title}",
   "approval.applied.modelOther": "{name} changed {target}'s default model: {title}",
+  "approval.applied.threadModel": "{name} changed the model of {title} (@{target}): {model}",
   "approval.applied.teamSetup": "{name} set up the team: {title}",
   "approval.applied.teamAdded": "added {names}",
   "approval.applied.teamUpdated": "updated {names}",
