@@ -12,7 +12,7 @@ pnpm exec vitest run server/maintenance-lease-api.test.ts \
   server/maintenance-lease.test.ts server/store.test.ts server/workspace-backup.test.ts
 ```
 
-`maintenance-lease-api.test.ts` launches an isolated fake-engine server. It
+`server/maintenance-lease-api.test.ts` launches an isolated fake-engine server. It
 holds a turn open and proves acquisition is refused as `busy`, granted once the
 turn ends, and that while held direct and room messages are refused before
 they are stored, a competing lease is refused, and no turn starts. It writes the
@@ -22,10 +22,10 @@ sends a turn again. A second case races a message against an acquisition eight
 times and three soul writers against one revision: exactly one side wins each
 race.
 
-`maintenance-lease.test.ts` covers expiry, renewal, release retries, refusal to
+`server/maintenance-lease.test.ts` covers expiry, renewal, release retries, refusal to
 reuse a token, restart persistence, an unreadable state file and failed saves.
-`store.test.ts` covers receipts across a restart, voiding, a failed save and
-the receipt bound. `workspace-backup.test.ts` proves backups neither export
+`server/store.test.ts` covers receipts across a restart, voiding, a failed save and
+the receipt bound. `server/workspace-backup.test.ts` proves backups neither export
 nor overwrite the lease file.
 
 The restart cases persist a held lease and direct/room follow-ups in the

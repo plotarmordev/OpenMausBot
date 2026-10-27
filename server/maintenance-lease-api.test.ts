@@ -14,7 +14,7 @@ import { withoutTurnClock } from "./testing/turn-clock-text.ts";
 
 const TOKEN = "p1b-controller-token-0123456789abcdefghijk";
 const botsBody = z.object({ bots: z.array(z.object({ id: z.string(), busy: z.boolean().optional() })) });
-const linesBody = z.object({ messages: z.array(z.object({ text: z.string().optional() })) });
+const linesBody = z.object({ messages: z.array(z.object({ text: z.string().optional(), role: z.string(), turnSucceeded: z.boolean().optional() })) });
 const createdBot = z.object({ bot: z.object({ id: z.string(), threadId: z.string() }) });
 const createdGroup = z.object({ group: z.object({ id: z.string(), threadId: z.string() }) });
 const leaseBody = z.object({ lease: z.object({ leaseId: z.string() }) });
@@ -147,7 +147,8 @@ describe.skipIf(process.platform === "win32")("deployment controller primitives"
       expect(pending()).toEqual([{ id: "lease-direct", status: "pending" }, { id: "lease-room", status: "pending" }]);
       if (ending === "release") expect((await api("POST", "/api/maintenance/lease/release", { token: TOKEN })).status).toBe(200);
       await expect.poll(() => replied(`/api/threads/${bot.threadId}/messages`, "DIRECT AFTER LEASE"), { timeout: 25_000 }).toBe(true);
-      await expect.poll(() => replied(`/api/threads/${room.threadId}/messages`, "ROOM AFTER LEASE"), { timeout: 10_000 }).toBe(true);
+      await expect.poll(async () => linesBody.parse((await api("GET", `/api/threads/${room.threadId}/messages`)).body).messages
+        .some((line) => line.role === "bot" && line.turnSucceeded === true && line.text?.includes("ROOM AFTER LEASE")), { timeout: 10_000 }).toBe(true);
       await expect.poll(pending, { timeout: 5_000 }).toEqual([]);
     } finally {
       if (restarted) await waitForExit(restarted, { signal: "SIGTERM" });
