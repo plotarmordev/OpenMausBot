@@ -129,6 +129,7 @@ it.each(["equal-ms-before", "equal-ms-restart", "disabled", "dispatching", "pend
           const queuedAt = db.prepare("SELECT json_extract(payload, '$.queuedAt') AS at FROM chat_followups WHERE thread_id = ? AND json_extract(payload, '$.text') = ?").get(threadId, "NEWER_USER_INTENT")!.at;
           expect(queuedAt).toBe((await messages()).find(message => message.text === "RECOVER_ORIGINAL_LINE")!.at);
         } finally { db.close(); }
+        writeFileSync(join(dataDir, "clock-release"), "");
       }
       unlinkSync(failure);
       if (mode === "equal-ms-restart") {

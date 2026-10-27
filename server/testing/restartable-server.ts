@@ -35,7 +35,7 @@ export async function launchRestartableServer(options: { scripted?: boolean; dat
   const planPath = join(dataDir, "room-plan.json");
   if (options.scripted) writeFileSync(planPath, "{}");
   const clockPath = join(dataDir, "frozen-clock.cjs");
-  if (options.frozenNow !== undefined) writeFileSync(clockPath, `Date.now = () => ${JSON.stringify(options.frozenNow)};`);
+  if (options.frozenNow !== undefined) writeFileSync(clockPath, `const now = Date.now; Date.now = () => require("node:fs").existsSync(${JSON.stringify(join(dataDir, "clock-release"))}) ? now() : ${JSON.stringify(options.frozenNow)};`);
   writeFileSync(join(dataDir, "config.json"), JSON.stringify({ language: "en", instances: { claude: {
     driver: "claudeAgent", displayName: "Verification fixture", config: { cli: join(ROOT, "server", "testing", "fake-claude-cli.ts") },
     ...(options.scripted ? { environment: { FAKE_CLAUDE_ROOM_PLAN: planPath } } : {}),

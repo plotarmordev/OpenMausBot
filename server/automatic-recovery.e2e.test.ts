@@ -144,6 +144,40 @@ async function withRecoveryFixture(
   }
 }
 
+it("supersedes equal-ms recovery before committing the backup", async () => {
+  await withRecoveryFixture({ gated: true, frozenNow: Date.now() }, async ({ api, control, calls, backupPrompts, dataDir, failureFile, gateFile }) => {
+    const { bot } = await control("new-bot", "--name", "Equal millisecond");
+    const threadId = bot.activeTaskId;
+    await api("PATCH", `/api/bots/${bot.id}/tasks/${threadId}`, { modelSelection: primary });
+    const messages = async () => (await api("GET", `/api/threads/${threadId}/messages?limit=100`)).messages as WireMessage[];
+    const journal = () => {
+      const db = new DatabaseSync(join(dataDir, "messages.db"), { readOnly: true });
+      try { return db.prepare("SELECT status, json_extract(payload, '$.queuedAt') AS at FROM chat_followups WHERE thread_id = ?").all(threadId); }
+      finally { db.close(); }
+    };
+    const failovers = () => existsSync(join(dataDir, "limit-failovers.json")) ? readFileSync(join(dataDir, "limit-failovers.json"), "utf8") : null;
+    const beforeFailovers = failovers();
+    await api("POST", `/api/bots/${bot.id}/messages`, { threadId, text: "EQUAL_MS_ORIGINAL" }, 202);
+    await expect.poll(() => calls().some(call => call.method === "initialize"), { timeout: 20_000 }).toBe(true);
+    await api("POST", `/api/bots/${bot.id}/messages`, { threadId, text: "EQUAL_MS_NEWER" }, 202);
+    expect(journal()).toEqual([{ status: "pending", at: (await messages()).find(message => message.text === "EQUAL_MS_ORIGINAL")!.at }]);
+    writeFileSync(gateFile, "");
+    await expect.poll(() => calls().some(call => call.method === "initialize.error"), { timeout: 20_000 }).toBe(true);
+    rmSync(failureFile);
+    await expect.poll(async () => (await messages()).some(message => message.turnSucceeded), { timeout: 20_000 }).toBe(true);
+    expect(backupPrompts()).toHaveLength(0);
+    expect((await messages()).filter(message => message.tool?.name.startsWith("recovery:"))).toHaveLength(0);
+    expect(failovers()).toBe(beforeFailovers);
+    const current = (await api("GET", "/api/bots?messages=0")).bots.find((entry: WireBot) => entry.id === bot.id);
+    expect(current.tasks.find((task: WireTask) => task.threadId === threadId).modelSelection).toEqual(primary);
+    expect((await messages()).filter(message => message.role === "user").map(message => message.text)).toEqual(["EQUAL_MS_ORIGINAL", "EQUAL_MS_NEWER"]);
+    expect(calls().filter(call => call.method === "session/prompt")).toHaveLength(1);
+    expect((await messages()).some(message => message.tool?.name.includes("interrupted"))).toBe(false);
+    expect(readHandoffs(dataDir).filter(node => node.threadId === threadId && node.status === "source")).toHaveLength(0);
+    expect(journal()).toEqual([]);
+  });
+}, 90_000);
+
 it.each(["older ordinary head", "pending policy refusal"] as const)("admits recovery safely with %s", async (scenario) => {
   await withRecoveryFixture({ gated: true, parentPort: scenario === "pending policy refusal", ...(scenario === "older ordinary head" ? { frozenNow: Date.now() } : {}) }, async ({ api, control, calls, backupPrompts, applyPolicy, dataDir, gateFile, evidence }) => {
     const marked = scenario === "older ordinary head";
