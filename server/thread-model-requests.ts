@@ -160,7 +160,10 @@ export class ThreadModelRequestService {
 
     const before = task.modelSelection ? structuredClone(task.modelSelection) : undefined;
     const beforeDefault = structuredClone(owner.modelSelection);
-    if (sameSelection(checked.selection, before ?? beforeDefault)) throw new ThreadModelRequestError("Nothing would change");
+    const requestedOverride = sameSelection(checked.selection, beforeDefault) ? undefined : checked.selection;
+    if (sameOverride(before, requestedOverride) && sameSelection(checked.selection, before ?? beforeDefault)) {
+      throw new ThreadModelRequestError("Nothing would change");
+    }
 
     const requestId = newId();
     const payload: ThreadModelRequestCardData = {

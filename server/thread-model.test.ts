@@ -77,6 +77,43 @@ describe("threads follow their bot's model", () => {
     expect(runsOn(store, bot.id, bot.threadId)).toEqual(opus);
   });
 
+  it("clears an explicit pin equal to the default through the native request and follows later defaults", () => {
+    const store = open();
+    const bot = store.createBot();
+    const threadId = bot.threadId;
+    store.switchTaskModel(bot.id, threadId, opus, false, false);
+    store.applyModelDefault(bot.id, opus);
+    const service = new ThreadModelRequestService({
+      store, autoApply: () => "level", authorize: () => null,
+      checkSwitch: (_current, raw) => ({ ok: true, selection: raw as ModelSelection }),
+    });
+    expect(service.submit({ botId: bot.id, threadId, targetThreadId: threadId, selection: opus, reason: "Follow the default" }).state).toBe("applied");
+    expect(ownModel(store, bot.id, threadId)).toBeUndefined();
+    expect(bot.modelSelection).toEqual(opus);
+    const reloaded = open();
+    expect(ownModel(reloaded, bot.id, threadId)).toBeUndefined();
+    reloaded.applyModelDefault(bot.id, codex);
+    expect(ownModel(reloaded, bot.id, threadId)).toBeUndefined();
+    expect(runsOn(reloaded, bot.id, threadId)).toEqual(codex);
+  });
+
+  it("rejects selecting the current default for a follower without creating a card or changing persisted state", () => {
+    const store = open();
+    const bot = store.createBot();
+    const threadId = bot.threadId;
+    const service = new ThreadModelRequestService({
+      store, autoApply: () => "level", authorize: () => null,
+      checkSwitch: (_current, raw) => ({ ok: true, selection: raw as ModelSelection }),
+    });
+    const before = readFileSync(join(DATA_DIR, "bots.json"), "utf8");
+    const messages = store.messagesFor(threadId);
+    expect(() => service.submit({ botId: bot.id, threadId, targetThreadId: threadId, selection: sonnet, reason: "Already following" }))
+      .toThrow("Nothing would change");
+    expect(readFileSync(join(DATA_DIR, "bots.json"), "utf8")).toBe(before);
+    expect(store.messagesFor(threadId)).toEqual(messages);
+    expect(ownModel(open(), bot.id, threadId)).toBeUndefined();
+  });
+
   it.each([undefined, codex])("refuses a stale pending request when the default moves to its requested model, with prior pin %j", (pin) => {
     const store = open();
     const bot = store.createBot();

@@ -30,6 +30,9 @@ revalidates authority and the previous selection, and refuses a stale card if
 someone changed the selection meanwhile. It restores an explicit task pin even
 when that pin equals the current default; later default changes still leave the
 pin alone. Restoring a task that followed its default keeps that behavior.
+Selecting the current default clears an explicit task pin, even when today's
+effective model is unchanged. Selecting that same model for an already-following
+task is a no-op and creates no change card or execution.
 An owner-confirmation-required Cloud request remains pending rather than
 silently applying. Confirmation checks stored overrides, not just effective
 model equality. If default drift would change the requested result between an

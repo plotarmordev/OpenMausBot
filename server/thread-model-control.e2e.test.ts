@@ -203,6 +203,11 @@ it("changes blocked, self and busy task models without dispatch, with explicit r
     const temporarySelfChange = await set(chief.activeTaskId, original);
     await api("POST", `/api/threads/${chief.activeTaskId}/undo`, { requestId: temporarySelfChange.requestId });
     expect(await state(chief.activeTaskId)).toMatchObject({ botDefault: selected, taskOverride: selected, currentExecution: null, dispatched: false });
+    const followDefault = await set(chief.activeTaskId, selected);
+    expect(followDefault.receipt).toMatchObject({ botDefault: selected, taskOverride: null, currentExecution: null, dispatched: false });
+    expect((await set(chief.activeTaskId, selected, 400)).error).toMatch(/Nothing would change/);
+    await api("POST", `/api/threads/${chief.activeTaskId}/undo`, { requestId: followDefault.requestId });
+    expect((await state(chief.activeTaskId)).taskOverride).toEqual(selected);
     expect(prompts()).toEqual([...beforePrompts, ...retried]);
     await control("send", "--bot", chief.id, "--task", chief.activeTaskId, "--text", "ACP_PICKER_SELF_SELECTED Execute my explicit self selection.");
     await settled(chief);
