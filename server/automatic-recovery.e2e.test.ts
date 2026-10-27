@@ -2,6 +2,8 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { closeSync, existsSync, openSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join, sep } from "node:path";
 import { fileURLToPath } from "node:url";
+import { DatabaseSync } from "node:sqlite";
+import { once } from "node:events";
 import { expect, it } from "vitest";
 import { launchVerificationServer, runControlOmb, verificationServerEnvironment } from "../scripts/control-omb.ts";
 import { waitForExit } from "./testing/cleanup.ts";
@@ -20,9 +22,10 @@ const CATALOG_PROBE_FOLDER = ["", "providers", "opencode", "discovery"].join(sep
 const turnCalls = (path: string) => jsonLines(path).filter((call) => !String(call.cwd ?? "").endsWith(CATALOG_PROBE_FOLDER));
 
 async function withRecoveryFixture(
-  options: { enabled?: boolean; method?: string; error?: unknown; afterOutput?: boolean; backupFails?: boolean; gated?: boolean; scripted?: boolean; codexBackup?: boolean },
+  options: { enabled?: boolean; method?: string; error?: unknown; afterOutput?: boolean; backupFails?: boolean; gated?: boolean; scripted?: boolean; codexBackup?: boolean; parentPort?: boolean },
   check: (fixture: {
-    api: (method: string, path: string, body?: unknown, expectedStatus?: number) => Promise<any>;
+    api: (method: string, path: string, body?: unknown, expectedStatus?: number, token?: string) => Promise<any>;
+    applyPolicy: () => Promise<void>;
     control: (...args: string[]) => Promise<any>;
     calls: () => Array<{ pid: number; method: string }>;
     backupPrompts: () => any[];
@@ -39,9 +42,9 @@ async function withRecoveryFixture(
   const backupFile = join(dataDir, "backup-prompts.jsonl");
   const evidence: unknown[] = [{ url, options }];
   let server: ChildProcess | undefined;
-  const api = async (method: string, path: string, body?: unknown, expectedStatus?: number) => {
+  const api = async (method: string, path: string, body?: unknown, expectedStatus?: number, token?: string) => {
     const response = await fetch(url + path, {
-      method, headers: { "content-type": "application/json", origin: url },
+      method, headers: { "content-type": "application/json", origin: url, ...(token ? { authorization: `Bearer ${token}` } : {}) },
       ...(body === undefined ? {} : { body: JSON.stringify(body) }), signal: AbortSignal.timeout(30_000),
     });
     const result = await response.json();
@@ -85,9 +88,11 @@ async function withRecoveryFixture(
     config.automaticRecovery = { enabled: options.enabled !== false, backup };
     writeFileSync(configPath, JSON.stringify(config));
     const log = openSync(logPath, "a", 0o600);
-    server = spawn(process.execPath, ["--experimental-strip-types", fileURLToPath(new URL("./index.ts", import.meta.url))], {
+    server = spawn(process.execPath, ["--experimental-strip-types",
+      ...(options.parentPort ? ["--require", fileURLToPath(new URL("./testing/parent-port-adapter.cjs", import.meta.url))] : []),
+      fileURLToPath(new URL("./index.ts", import.meta.url))], {
       cwd: fileURLToPath(new URL("..", import.meta.url)),
-      env: verificationServerEnvironment({}, dataDir, Number(new URL(url).port)), stdio: ["ignore", log, log],
+      env: verificationServerEnvironment({}, dataDir, Number(new URL(url).port)), stdio: options.parentPort ? ["ignore", log, log, "ipc"] : ["ignore", log, log],
     });
     closeSync(log);
     await expect.poll(async () => {
@@ -109,6 +114,17 @@ async function withRecoveryFixture(
     writeFileSync(failureFile, JSON.stringify(options.error ?? transient));
     await check({
       api, control, calls: () => turnCalls(rpcFile), backupPrompts: () => jsonLines(backupFile),
+      applyPolicy: async () => {
+        const acknowledgement = once(server!, "message", { signal: AbortSignal.timeout(10_000) });
+        server!.send({ type: "openmausbot:managed-desktop-policy", requestId: "recovery-policy", policy: {
+          organizationId: "11111111-1111-4111-8111-111111111111", organizationName: "Fixture Policy",
+          expiresAt: Date.now() + 60_000, version: 3, companyModelsOnly: false, allowedEngines: ["opencodeGo"],
+          mcp: { allowCustom: true, allowlist: [] },
+          computers: { thisComputer: true, localVm: true, box: true, vps: true }, remoteAccess: true,
+        } });
+        const [message] = await acknowledgement;
+        expect(message).toMatchObject({ type: "openmausbot:managed-desktop-result", requestId: "recovery-policy", ok: true });
+      },
       backupReceipt: () => {
         const { argv, prompt, systemPrompt } = JSON.parse(readFileSync(fixture.fixtureDumpPath, "utf8"));
         return { argv, prompt, systemPrompt };
@@ -124,6 +140,104 @@ async function withRecoveryFixture(
     console.info(JSON.stringify({ logPath, evidencePath, fixtureRemoved: !existsSync(dataDir) }));
   }
 }
+
+it.each(["older ordinary head", "pending policy refusal"] as const)("admits recovery safely with %s", async (scenario) => {
+  await withRecoveryFixture({ gated: true, parentPort: scenario === "pending policy refusal" }, async ({ api, control, calls, backupPrompts, applyPolicy, dataDir, gateFile, evidence }) => {
+    const marked = scenario === "older ordinary head";
+    const { bot } = await control("new-bot", "--name", "Recovery admission");
+    const threadId = bot.activeTaskId;
+    const text = marked ? "PERSON_MAIN_NEEDS_RECOVERY" : "ORDINARY_NEEDS_RECOVERY";
+    const older = "OLDER_ORDINARY_QUEUE_HEAD";
+    const holderGate = join(dataDir, "admission-holder-release");
+    const wrapper = join(dataDir, "admission-claude.mjs");
+    writeFileSync(wrapper, [
+      "#!/usr/bin/env node",
+      'import { basename } from "node:path";',
+      `if (basename(process.cwd()) !== ${JSON.stringify(threadId)}) {`,
+      'process.env.FAKE_CLAUDE_MODE = "slow";',
+      `process.env.FAKE_CLAUDE_SLOW_FINISH_GATE = ${JSON.stringify(holderGate)};`,
+      'delete process.env.FAKE_CLAUDE_PROMPTS;',
+      "}",
+      "// The fake CLI reads its environment at module initialization.",
+      `await import(${JSON.stringify(new URL("./testing/fake-claude-cli.ts", import.meta.url).href)});`,
+    ].join("\n"), { mode: 0o700 });
+    await api("PATCH", "/api/instances/claude", { cli: wrapper });
+    await api("PATCH", "/api/config", { threads: { maxConcurrentPerBot: marked ? 1 : 2 } });
+    await api("PATCH", `/api/bots/${bot.id}/tasks/${threadId}`, { modelSelection: primary });
+    const state = () => api("GET", "/api/bots?messages=0");
+    const tasks = async () => (await state()).bots.find((entry: WireBot) => entry.id === bot.id).tasks as WireTask[];
+    const messages = async () => (await api("GET", `/api/threads/${threadId}/messages?limit=100`)).messages as WireMessage[];
+    const journal = () => {
+      const db = new DatabaseSync(join(dataDir, "messages.db"), { readOnly: true });
+      try { return db.prepare("SELECT status FROM chat_followups WHERE thread_id = ? ORDER BY rowid").all(threadId); }
+      finally { db.close(); }
+    };
+    const failovers = () => existsSync(join(dataDir, "limit-failovers.json")) ? readFileSync(join(dataDir, "limit-failovers.json"), "utf8") : null;
+    const beforeFailovers = failovers();
+    if (!marked) {
+      await api("POST", `/api/bots/${bot.id}/messages`, { threadId, text }, 202);
+      await expect.poll(() => calls().some(call => call.method === "initialize"), { timeout: 20_000 }).toBe(true);
+    }
+    const { routine } = await api("POST", "/api/routines", {
+      name: "Admission holder", prompt: "Hold the slot.", target: "bot", botId: bot.id, runOn: "maus", enabled: true,
+      schedule: { type: "daily", time: "23:00" },
+    });
+    try {
+      await api("POST", `/api/routines/${routine.id}/run`);
+      await expect.poll(async () => (await tasks()).some(task => task.threadId !== threadId && task.busy), { timeout: 20_000 }).toBe(true);
+      await api("PATCH", "/api/config", { threads: { maxConcurrentPerBot: 1 } });
+      if (marked) {
+        await api("POST", `/api/bots/${bot.id}/messages`, { threadId, text: older }, 202);
+        expect((await state()).botQueuedMessages[threadId].map((item: { text: string }) => item.text)).toEqual([older]);
+        const paired = await api("POST", "/api/auth/pair", { code: (await api("POST", "/api/auth/pairing", {})).code });
+        await api("POST", `/api/bots/${bot.id}/messages`, { threadId, text }, 202, paired.token);
+      }
+      await expect.poll(() => calls().some(call => call.method === "initialize"), { timeout: 20_000 }).toBe(true);
+      writeFileSync(gateFile, "");
+      await expect.poll(() => calls().some(call => call.method === "initialize.error"), { timeout: 20_000 }).toBe(true);
+      if (marked) {
+        await expect.poll(() => backupPrompts().length, { timeout: 20_000 }).toBe(1);
+        await expect.poll(async () => (await tasks()).find(task => task.threadId === threadId)?.busy, { timeout: 20_000 }).toBe(false);
+        expect((await tasks()).some(task => task.threadId !== threadId && task.busy)).toBe(true);
+        expect((await state()).botQueuedMessages[threadId].map((item: { text: string }) => item.text)).toEqual([older]);
+        expect(journal()).toEqual([{ status: "pending" }]);
+        expect((await messages()).filter(message => message.role === "user" && message.text === older)).toHaveLength(0);
+      } else {
+        await expect.poll(journal, { timeout: 20_000 }).toEqual([{ status: "pending" }]);
+        expect((await tasks()).find(task => task.threadId === threadId)?.modelSelection).toEqual(primary);
+        await applyPolicy();
+      }
+      expect((await messages()).filter(message => message.role === "user" && message.text === text)).toHaveLength(1);
+      writeFileSync(holderGate, "");
+      await expect.poll(async () => ({
+        journal: journal(),
+        ...(!marked ? {
+          selectedModel: (await tasks()).find(task => task.threadId === threadId)?.modelSelection,
+          recoveryActivities: (await messages()).filter(message => message.tool?.name.startsWith("recovery:")).map(message => message.tool!.name),
+        } : {}),
+      }), { timeout: 20_000 }).toEqual({
+        journal: [], ...(!marked ? { selectedModel: primary, recoveryActivities: [] } : {}),
+      });
+      await expect.poll(async () => (await tasks()).some(task => task.busy), { timeout: 20_000 }).toBe(false);
+      const finalMessages = await messages();
+      expect(finalMessages.filter(message => message.role === "user" && message.text === text)).toHaveLength(1);
+      if (marked) {
+        expect(backupPrompts()).toHaveLength(2);
+        expect(finalMessages.filter(message => message.role === "user" && message.text === older)).toHaveLength(1);
+      } else {
+        expect(backupPrompts()).toHaveLength(0);
+        expect(failovers()).toBe(beforeFailovers);
+        expect((await tasks()).find(task => task.threadId === threadId)?.modelSelection).toEqual(primary);
+        expect(finalMessages.filter(message => message.tool?.name.startsWith("recovery:"))).toHaveLength(0);
+        expect(finalMessages.some(message => message.tool?.name.includes("Automatic recovery unavailable:"))).toBe(true);
+      }
+      evidence.push({ scenario, tasks: await tasks(), messages: finalMessages, journal: journal(), backupPrompts: backupPrompts() });
+    } finally {
+      writeFileSync(holderGate, "");
+      await api("DELETE", `/api/routines/${routine.id}`);
+    }
+  });
+}, 90_000);
 
 it.each(["ordinary", "person-main"] as const)("recovers at full capacity for %s without a phantom backup", async (kind) => {
   await withRecoveryFixture({ gated: true }, async ({ api, control, calls, backupPrompts, dataDir, gateFile, evidence }) => {

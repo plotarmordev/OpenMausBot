@@ -241,7 +241,7 @@ import { createOneOnOneGoals } from "./host/one-on-one-goals.ts";
 
 import { BUILT_IN_DRIVERS } from "./drivers/builtIn.ts";
 import { openCodeProviderKeysAllowed, setOpenCodeProviderKeyPolicy } from "./drivers/acp/opencode-go.ts";
-import { readMessageText, recallMessages, recentMessages, closeMessageSearch, closeMessageDb, chatFollowups, hasNewerQueuedInput, cancelledChatFollowup, settleChatFollowups, threadsReferencing, logNotification, lastRowAt } from "./message-db.ts";
+import { readMessageText, recallMessages, recentMessages, closeMessageSearch, closeMessageDb, chatFollowups, hasNewerQueuedInput, hasQueuedInputAfter, cancelledChatFollowup, settleChatFollowups, threadsReferencing, logNotification, lastRowAt } from "./message-db.ts";
 import { briefCrossingLabel, claimRecallCrossings, recallCrossingLabel } from "./recall-disclosure.ts";
 import { parseSince, parseUntil, recentWork, recentWorkPrompt, turnOutcomeLine } from "./recent-work.ts";
 import { chiefEscalationsEnabled, NEEDS_INPUT_GATE, peerApprovalGate, RAISED_GATE } from "./escalations.ts";
@@ -7436,7 +7436,16 @@ function drainQueuedSendsNow() {
         fail("Automatic recovery cancelled: the request or backup selection is no longer current.");
         return;
       }
-      return new Promise<void | "retry">((resolve, reject) => {
+      const target = registry.get(recovery.selection.instanceId)!;
+      const primary = registry.get(recovery.from.instanceId);
+      const refusal = policyModelRefusal(target) ?? (primary ? recoveryCapabilityError(
+        { driverKind: primary.driverKind, capabilities: primary.adapter.capabilities },
+        { driverKind: target.driverKind, capabilities: target.adapter.capabilities }) : undefined);
+      if (refusal) {
+        fail(`Automatic recovery unavailable: ${refusal}`);
+        return;
+      }
+      return new Promise<void | "retry">((resolve) => {
         void startTurn(botId, prompt, {
           ...recovery.options, ...callbacks, threadId, userMessage: recovery.userMessage, recovery,
           ...(recovery.coordination && !callbacks?.coordination ? {
@@ -7450,7 +7459,7 @@ function drainQueuedSendsNow() {
         }).catch(error => {
           if (error instanceof Error && "code" in error && error.code === "thread_limit") { resolve("retry"); return; }
           fail(`Automatic recovery could not start: ${error instanceof Error ? error.message : String(error)}`);
-          reject(error);
+          resolve();
         });
       });
     }
@@ -7890,6 +7899,9 @@ async function startTurn(
     throw Object.assign(new Error(`this bot has reached its limit of ${maxConcurrentBotThreads(cfg)} parallel threads — wait for one to finish`), { status: 409, code: "thread_limit" });
   }
   if (opts?.recovery) {
+    const target = registry.get(opts.recovery.selection.instanceId);
+    const refusal = !target?.enabled ? "The backup AI is unavailable." : policyModelRefusal(target);
+    if (refusal) throw Object.assign(new Error(refusal), { status: 409, code: "managed_policy" });
     commitAutomaticRecovery(botId, threadId, opts.recovery);
     bot = store.projectBotForTask(botId, threadId)!;
     if (opts.coordination || opts.onSettled) directCoordinationSettlers.delete(opts.recovery.generation);
@@ -8844,7 +8856,7 @@ async function startTurn(
         (candidate.instanceId !== instanceId || candidate.model !== model));
       const backup = backups[nextIndex];
       if (mayRecover && backup && current && (!opts?.cardContinuation || opts.coordination) &&
-          !directRequestOwners.get(threadId)?.stopped && !hasQueuedSteeredMessages(bot.id, threadId) &&
+          !directRequestOwners.get(threadId)?.stopped && !hasQueuedInputAfter("bot", bot.id, threadId, userMessage.at) &&
           JSON.stringify(current.modelSelection) === JSON.stringify(bot.modelSelection) &&
           (backup.instanceId !== instanceId || backup.model !== model) &&
           store.activePath(threadId).findLast(m => m.role === "user" && m.kind === "text")?.id === recoveryUserMessageId) {

@@ -380,6 +380,12 @@ export function hasNewerQueuedInput(kind: ChatFollowup["kind"], ownerId: string,
   ).get(kind, ownerId, threadId, recoveryId));
 }
 
+export function hasQueuedInputAfter(kind: ChatFollowup["kind"], ownerId: string, threadId: string, at: number): boolean {
+  return Boolean(db().prepare(
+    "SELECT 1 FROM chat_followups WHERE kind = ? AND owner_id = ? AND thread_id = ? AND status = 'pending' AND json_extract(payload, '$.queuedAt') > ? AND json_extract(payload, '$.recovery') IS NULL LIMIT 1",
+  ).get(kind, ownerId, threadId, at));
+}
+
 export function cancelledChatFollowup(kind: ChatFollowup["kind"], ownerId: string, threadId: string, sendId: string): boolean {
   return Boolean(db().prepare(
     "SELECT 1 FROM chat_followups WHERE kind = ? AND owner_id = ? AND thread_id = ? AND send_id = ? AND status = 'cancelled'",

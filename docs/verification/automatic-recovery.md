@@ -18,9 +18,10 @@ has no free thread slot. While waiting, the task still shows the failed
 attempt's model. The backup selection and recovery activity are committed only
 after admission; cancelling or superseding the queued recovery does not select
 the backup. A verified person-main recovery retains its immediate capacity
-exemption. Queue dispatch rechecks the global enable flag, original request,
-provider eligibility and model selection. It compares the persisted recovery
-plan with the current task fallback or global backup, including its source,
+exemption even behind an older ordinary queued line; only newer input owned by
+the same bot and thread can supersede the failed request. Queue dispatch rechecks
+the global enable flag, original request, provider eligibility and model selection.
+It compares the persisted recovery plan with the current task fallback or global backup, including its source,
 ordered steps, instance, model, effort and variant. Changed, reordered or removed
 plans settle without a prompt, model switch or failover record. Dispatch also
 checks the selected step's index and the source selection.
@@ -29,6 +30,10 @@ in the durable queue. Stop remains
 effective across restart; a newer queued message supersedes recovery without
 being replayed or reordered. Disabling recovery while it waits settles the item
 without selecting the backup or recording a recovery switch.
+Queued admission rechecks managed policy and the backup's recovery capabilities.
+A policy refusal settles the durable item without changing the selected model,
+recording a failover or publishing a recovery activity. The commit boundary also
+checks that the target is enabled and still permitted by managed policy.
 
 A pending recovery survives restart and dispatches once when admitted. A recovery
 already dispatching at shutdown is interrupted, not replayed: restart retains
