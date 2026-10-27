@@ -37,7 +37,6 @@ import type { BotBodyId } from "../../shared/bot-body";
 import type { QuestionRequestCardData } from "../../shared/ask-question";
 import type { ProfileRequestCardData } from "../../shared/profile-request";
 import type { ModelRequestCardData } from "../../shared/model-request";
-import type { ThreadModelRequestCardData } from "../../shared/thread-model-request";
 import type { RoutineRequestCardData } from "../../shared/routine-request";
 import type { RoutineRunCardData } from "../../shared/routine-run";
 import type { GroupGoalRunCardData } from "../../shared/group-goal-run";
@@ -71,7 +70,7 @@ import { reconcileSnapshotQueues, rememberConsumedQueueId, replaceBotQueues } fr
 export type { MausColor } from "@/lib/mascot";
 export type { RoutineRunCardData } from "../../shared/routine-run";
 
-export interface OptionCardData extends Pick<WireOptionCard, "fixedOptions" | "webhookRequest" | "appTriggerRequest"> {
+export interface OptionCardData extends Pick<WireOptionCard, "fixedOptions" | "webhookRequest" | "appTriggerRequest" | "threadModelRequest"> {
   title: string;
   subtitle: string;
   options: string[];
@@ -100,7 +99,6 @@ export interface OptionCardData extends Pick<WireOptionCard, "fixedOptions" | "w
   teamMemoryRequest?: { section: string; entryId: string; kind: string; revision?: string };
   profileRequest?: ProfileRequestCardData;
   modelRequest?: ModelRequestCardData;
-  threadModelRequest?: ThreadModelRequestCardData;
   teamSetupRequest?: import("../../shared/team-setup").TeamSetupRequest;
   questionRequest?: QuestionRequestCardData;
 }

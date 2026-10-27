@@ -110,7 +110,7 @@ import { createDataRoutes } from "./data/routes.ts";
 import { DataSheetRegistry } from "./data/sheet.ts";
 import { DataFailure } from "./data/types.ts";
 import { TeamComputers, teamComputerOwner, type TeamComputerRecord } from "./team-computers.ts";
-import { isEffortLevel, type CardAnswerer, type ResolvedSender, type SignInRequestCardData, type SteerQueueReason, type WireBot, type WireGroup, type WireTask } from "../shared/wire.ts";
+import { type CardAnswerer, type ResolvedSender, type SignInRequestCardData, type SteerQueueReason, type WireBot, type WireGroup, type WireTask } from "../shared/wire.ts";
 import { isPersistentQuestionCard, shouldSettleRequestCard } from "../shared/ask-question.ts";
 import { parseToolScope } from "../shared/tool-scope.ts";
 import type { TeamComputersPayload } from "../shared/team-computer.ts";
@@ -205,7 +205,6 @@ import { HOSTED_CONTRACT_HEADER, HOSTED_CONTRACT_METADATA, HOSTED_CONTRACT_VERSI
 import { cliProbeEnvironment, testCliBinary } from "./cli-probe.ts";
 import { buildMentionNotification, buildNotification, buildSpendNotification, type Notification } from "./notify.ts";
 import {
-  isModelVariant,
   TurnNotStartedError, TurnAuthenticationRefusedError, TurnUsageLimitRefusedError,
   type ModelSelection,
   type RequestOutcome,
@@ -459,6 +458,8 @@ import { createTeamMemoryRequests } from "./team-memory-requests.ts";
 import { createAgentCard } from "./chat-widgets.ts";
 import { createChatAppRoutes, createChatApps, createChatAppsMcp } from "./routes/chat-apps.ts";
 import { buildBotOverview, type BotOverview, connectedAppsFacts } from "./bot-overview.ts";
+import { createModelValidation, createThreadModelHost } from "./model-control-host.ts";
+import { createInternalThreadModelRoutes } from "./routes/internal-thread-model.ts";
 import { ProfileRequestService } from "./profile-requests.ts";
 import { ModelRequestService } from "./model-requests.ts";
 import { ThreadModelRequestService } from "./thread-model-requests.ts";
@@ -2676,125 +2677,12 @@ function retryComputerEngineMove(): Promise<void> {
   return computerEngineMoveRunning;
 }
 
-function checkedModelSelection(
-  raw: unknown,
-  current?: { selection: ModelSelection; busy: boolean },
-  requireAvailableModel = false,
-): { ok: true; selection: ModelSelection } | { ok: false; status: number; error: string } {
-  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
-    return { ok: false, status: 400, error: "modelSelection must be an object" };
-  }
-  const value = raw as { instanceId?: unknown; model?: unknown; effort?: unknown; variant?: unknown };
-  if (typeof value.instanceId !== "string" || !value.instanceId.trim()) {
-    return { ok: false, status: 400, error: "modelSelection.instanceId is required" };
-  }
-  if (typeof value.model !== "string" || !value.model.trim()) {
-    return { ok: false, status: 400, error: "modelSelection.model is required" };
-  }
-  const selection: ModelSelection = {
-    instanceId: value.instanceId.trim(),
-    model: value.model.trim(),
-  };
-  if (hostedModels && !hostedModels.allows(selection)) return { ok: false, status: 400, error: hostedModels.error() };
-  if (value.effort !== undefined) {
-    if (!isEffortLevel(value.effort)) {
-      return { ok: false, status: 400, error: `effort "${String(value.effort)}" is not recognized` };
-    }
-    selection.effort = value.effort;
-  }
-  if (value.variant !== undefined) {
-    if (!isModelVariant(value.variant)) {
-      return { ok: false, status: 400, error: "variant must be a non-empty model variant ID" };
-    }
-    if (value.effort !== undefined) {
-      return { ok: false, status: 400, error: "choose either a model variant or an effort level" };
-    }
-    selection.variant = value.variant;
-  }
-  const changed = current && (
-    selection.instanceId !== current.selection.instanceId ||
-    selection.model !== current.selection.model ||
-    selection.effort !== current.selection.effort ||
-    selection.variant !== current.selection.variant
-  );
-  if (current?.busy && changed) {
-    return { ok: false, status: 409, error: "the bot is working — stop it before changing models" };
-  }
-  const target = registry.get(selection.instanceId);
-  if (providerInstancesChanging.has(selection.instanceId)) {
-    return { ok: false, status: 409, error: "this provider account is being updated — try again shortly" };
-  }
-    // Free-form model ids: custom engines accept ids outside their catalog, and some drivers learn the catalog only at turn start.
-  if (requireAvailableModel) {
-    if (!target || !target.enabled) {
-      return { ok: false, status: 400, error: `model instance "${selection.instanceId}" is unavailable` };
-    }
-    const refusal = policyModelRefusal(target) ?? heldKeys?.refusal(target.instanceId);
-    if (refusal) return { ok: false, status: 403, error: refusal };
-    const offered =
-      selection.model === target.models.default ||
-      target.models.options.some((option) => option.id === selection.model);
-    if (!offered) {
-      return {
-        ok: false,
-        status: 400,
-        error: `model "${selection.model}" is not offered by instance "${selection.instanceId}"`,
-      };
-    }
-  }
-  const allowed: readonly string[] = target?.adapter.capabilities.effortLevels ?? [];
-  if (target && selection.effort !== undefined && !allowed.includes(selection.effort)) {
-    return { ok: false, status: 400, error: `effort "${selection.effort}" is not offered by this bot's engine` };
-  }
-  if (target?.driverKind === "customAcp" && selection.effort !== undefined &&
-      !target.models.options.find((option) => option.id === selection.model)?.variants?.some((option) => option.id === selection.effort)) {
-    return { ok: false, status: 400, error: `effort "${selection.effort}" is not advertised for model "${selection.model}" — refresh the engine catalog first` };
-  }
-  if (target && selection.variant !== undefined && !target.adapter.capabilities.modelVariants) {
-    return { ok: false, status: 400, error: "model variants are not offered by this bot's engine" };
-  }
-  if (target && selection.variant !== undefined && requireAvailableModel &&
-      !target.models.options.find((option) => option.id === selection.model)?.variants?.some((option) => option.id === selection.variant)) {
-    return { ok: false, status: 400, error: `variant "${selection.variant}" is not advertised for model "${selection.model}"` };
-  }
-  return { ok: true, selection };
-}
-
-function engineSwitchNeedsAsk(mode: ApprovalMode, from: ModelSelection, to: ModelSelection): boolean {
-  return modelSwitchNeedsAsk(mode, registry.cliTarget(from.instanceId)?.driverKind, registry.cliTarget(to.instanceId)?.driverKind);
-}
-
-function checkedTaskModelSwitch(current: BotRecord, raw: unknown, updateBotDefault: boolean,
-  resetApprovalToAsk: boolean, requireAvailableModel = false, trusted = false, nextTurnOnly = false) {
-  if (current.approvalGrant) return { ok: false as const, status: 409, error: "Wait for the approval change to finish before switching models" };
-  const checked = checkedModelSelection(raw, {
-    selection: current.modelSelection, busy: !nextTurnOnly && threadBusy(current.id, current.threadId),
-  }, requireAvailableModel);
-  if (!checked.ok) return checked;
-  const profile = store.bot(current.id)!;
-  if (updateBotDefault) {
-    const defaults = checkedModelSelection(checked.selection, {
-      selection: profile.modelSelection, busy: Boolean(activeGroupTurnForBot(current.id)),
-    });
-    if (!defaults.ok) return defaults;
-  }
-  for (const target of updateBotDefault ? [current, profile] : [current]) {
-    const mode = approvalModeFor(target);
-    if (resetApprovalToAsk && mode === "custom" && !trusted) {
-      return { ok: false as const, status: 403, error: "Leaving Custom approval requires confirmation in the packaged desktop app" };
-    }
-    if (!resetApprovalToAsk && modelSwitchNeedsAsk(mode,
-      registry.cliTarget(target.modelSelection.instanceId)?.driverKind,
-      registry.cliTarget(checked.selection.instanceId)?.driverKind)) {
-      return { ok: false as const, status: 400, error: "Confirm switching this model with Ask permissions first (resetApprovalToAsk)" };
-    }
-  }
-  if (resetApprovalToAsk && (threadBusy(current.id, current.threadId) ||
-    (updateBotDefault && activeGroupTurnForBot(current.id)))) {
-    return { ok: false as const, status: 409, error: "Stop work in the selected scope before switching its permissions" };
-  }
-  return checked;
-}
+const { checkedModelSelection, checkedTaskModelSwitch, engineSwitchNeedsAsk,
+  checkedNativeModelSelection, checkedNativeTaskModelSwitch } = createModelValidation({
+  registry, hostedModels, providerInstanceChanging: (id) => providerInstancesChanging.has(id), policyModelRefusal,
+  heldKeyRefusal: (instanceId) => heldKeys?.refusal(instanceId),
+  bot: (id) => store.bot(id), threadBusy, activeGroupTurnForBot,
+});
 
 function threadEngine(instanceId: string): ThreadEngine | undefined {
   const live = registry.get(instanceId);
@@ -9430,7 +9318,7 @@ const chiefPeerTargetRule = (noun: string) => (proposerBotId: string, targetBotI
   return null;
 };
 const validateModelProposal = (selection: ModelSelection, current?: BotRecord): string | null => {
-  const checked = checkedModelSelection(selection, undefined, true);
+  const checked = checkedNativeModelSelection(selection);
   if (!checked.ok) return checked.error;
   if (current?.approvalGrant) return "Wait for the approval-level confirmation before changing this bot's model";
   if (current) {
@@ -9508,28 +9396,15 @@ const threadModelRequests = new ThreadModelRequestService({
     if (CLOUD_TEAM && !teamHost.readableFrom(sourceThreadId)(task.threadId)) return "no such accessible conversation";
     return chiefSetsThreadModel(from, task, task.openedBy ? store.bot(task.openedBy.botId) : undefined, owner);
   },
-  checkSwitch: (current, raw) => checkedTaskModelSwitch(store.projectBotForTask(current.id, current.threadId) ?? current, raw, false, false, true, false, true),
+  checkSwitch: (current, raw) => checkedNativeTaskModelSwitch(store.projectBotForTask(current.id, current.threadId) ?? current, raw),
   resetTask: (from, to) => hostedModels?.resetTask(from, to) ?? {},
   driverCapabilities: driverCapabilitiesFor,
 });
 
-function threadModelReceipt(botId: string, threadId: string) {
-  const bot = store.bot(botId)!;
-  const task = store.taskByThread(botId, threadId);
-  const running = threadBusy(botId, threadId);
-  return {
-    botDefault: bot.modelSelection,
-    taskOverride: task?.modelSelection ?? null,
-    currentExecution: running ? {
-      selection: directTurnBots.get(threadId)?.modelSelection ?? null,
-      model: sessionModelByThread.get(threadId) ?? null,
-      effort: sessionEffortByThread.get(threadId) ?? null,
-      scope: "current_turn",
-    } : null,
-    nextTurn: { selection: turnSelection(botId, threadId) ?? task?.modelSelection ?? bot.modelSelection, scope: "next_turn", resolved: false },
-    dispatched: false,
-  };
-}
+const { threadModelReceipt, resolveAndSendThreadModel } = createThreadModelHost({
+  store, threadModelRequests, threadBusy, directTurnBots, sessionModelByThread, sessionEffortByThread,
+  turnSelection, decide: (row) => appendDecision(DATA_DIR, row), broadcast, wireBot, json,
+});
 const teamSetupTeams = () => [...new Set(["", ...readSections(), ...store.bots.map((bot) => sectionKey(bot.section)), ...store.groups.map((group) => sectionKey(group.section))])];
 const teamSetupRequests = new TeamSetupRequestService({
   store, teams: teamSetupTeams, hasTeamAuthority, canPersist: proposalPersistence, maxBots: MAX_WORKSPACE_BOTS,
@@ -9686,40 +9561,6 @@ function resolveAndSendModel(
   return true;
 }
 
-function resolveAndSendThreadModel(
-  res: ServerResponse,
-  args: { botId: string; botName?: string; threadId: string; requestId: string; behavior: string },
-): boolean {
-  const card = store.messagesFor(args.threadId).find(
-    (message) => message.card?.requestId === args.requestId && message.card.threadModelRequest,
-  )?.card;
-  if (!card) return false;
-  const result = threadModelRequests.resolve(args);
-  if (!result.claimed) return false;
-  if (result.state === "applied" || result.state === "denied") {
-    appendDecision(DATA_DIR, {
-      threadId: args.threadId, requestId: args.requestId, botId: args.botId, botName: args.botName,
-      tool: "set_thread_model", summary: card.subtitle,
-      decision: result.state === "applied" ? "user-approved" : "user-denied", source: "user",
-    });
-  }
-  if (result.state === "applied") {
-    const target = store.bot(result.targetBotId);
-    if (target) broadcast({ kind: "bot", bot: wireBot(target) });
-    json(res, 200, {
-      ok: true, outcome: "allowed-once",
-      ...(result.settlementPending ? { settlementPending: true, message: result.message } : {}),
-    });
-    return true;
-  }
-  if (result.state === "invalid") { json(res, result.status, { error: result.error }); return true; }
-  if (result.state === "already_settled") {
-    json(res, 200, { ok: true, outcome: result.behavior === "allow" ? "allowed-once" : "rejected", alreadySettled: true });
-    return true;
-  }
-  json(res, 200, { ok: true, outcome: "rejected" });
-  return true;
-}
 
 type UndoResult =
   | { claimed: false }
@@ -11551,7 +11392,9 @@ function proposalPersistence(botId: string, threadId: string, opensCard = true) 
   if (!opensCard || fullAccessForSource(botId, threadId)) return { ok: true as const };
   const openRequests = store.activePath(threadId).filter(
     (message) =>
-      (message.card?.routineRequest?.botId === botId || message.card?.profileRequest?.botId === botId || message.card?.modelRequest?.botId === botId || message.card?.teamSetupRequest?.botId === botId) &&
+      (message.card?.routineRequest?.botId === botId || message.card?.profileRequest?.botId === botId ||
+        message.card?.modelRequest?.botId === botId || message.card?.threadModelRequest?.botId === botId ||
+        message.card?.teamSetupRequest?.botId === botId) &&
       !message.card.answered &&
       !message.card.dismissed && !message.card.expired,
   ).length;
@@ -14055,51 +13898,12 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
           ...(targetId === from.id ? { receipt: threadModelReceipt(from.id, body.fromThreadId) } : {}),
         });
       }
-      if (method === "POST" && path === "/api/internal/thread-model-state") {
-        const body = await readInternalBody();
-        const threadId = typeof body.targetThreadId === "string" ? body.targetThreadId : "";
-        const target = store.botByThread(threadId);
-        const task = target && store.taskByThread(target.id, threadId);
-        if (!target || !task || (CLOUD_TEAM && !teamHost.readableFrom(internalCapability.threadId)(threadId))) {
-          return json(res, 404, { error: "no such accessible conversation" });
-        }
-        const refusal = chiefSetsThreadModel(internalSender, task, task.openedBy ? store.bot(task.openedBy.botId) : undefined, target);
-        if (refusal) return json(res, 403, { error: refusal });
-        return json(res, 200, threadModelReceipt(target.id, threadId));
-      }
-      if (method === "POST" && path === "/api/internal/thread-model-requests") {
-        const parsed = z.object({
-          fromBotId: z.string().min(1).max(128),
-          fromThreadId: z.string().min(1).max(128),
-          targetThreadId: z.string().min(1).max(128),
-          modelSelection: z.unknown(),
-          reason: z.unknown(),
-        }).strict().safeParse(await readInternalBody());
-        if (!parsed.success) return json(res, 400, { error: "invalid thread model proposal" });
-        const body = parsed.data;
-        const from = store.bot(body.fromBotId);
-        if (!from) return json(res, 403, { error: "unknown sender" });
-        const owner = connectorThread(from.id, body.fromThreadId);
-        if (!owner) return json(res, 403, { error: "source conversation does not belong to sender" });
-        if (CLOUD_TEAM && !teamHost.readableFrom(body.fromThreadId)(body.targetThreadId)) {
-          return json(res, 404, { error: "no such accessible conversation" });
-        }
-        const proposed = threadModelRequests.submit({
-          botId: from.id,
-          threadId: body.fromThreadId,
-          targetThreadId: body.targetThreadId,
-          selection: body.modelSelection,
-          reason: body.reason,
-          from: owner.group ? { botId: from.id, name: from.name, color: from.color } : undefined,
-        });
-        appendDecision(DATA_DIR, {
-          threadId: body.fromThreadId, requestId: proposed.requestId, botId: from.id, botName: from.name,
-          tool: "set_thread_model", summary: proposed.detail, decision: proposed.state === "applied" ? "auto-approved" : "card-shown",
-          source: proposed.state === "applied" ? proposed.appliedBy ?? "full-access" : "model",
-        });
-        const target = store.botByThread(body.targetThreadId)!;
-        return json(res, 201, { ...proposed, receipt: threadModelReceipt(target.id, body.targetThreadId) });
-      }
+      if (await dispatchRoutes([createInternalThreadModelRoutes({
+        store, sender: internalSender, sourceThreadId: internalCapability.threadId, readInternalBody,
+        readable: (source, target) => !CLOUD_TEAM || teamHost.readableFrom(source)(target),
+        connectorThread, requests: threadModelRequests, receipt: threadModelReceipt,
+        decide: (row) => appendDecision(DATA_DIR, row),
+      })], { req, res, url, path, method, auth, json, readBody })) return;
       if (await dispatchRoutes([createInternalChiefTeamRoutes({ bot: () => store.bot(internalCapability.botId), requireActive: requireActiveInternalCapability,
         teams: teamSetupTeams, bots: () => store.bots, instances: () => registry.describe() })], { req, res, url, path, method, auth, json, readBody })) return;
       if (method === "POST" && path === "/api/internal/team-setup-requests") {

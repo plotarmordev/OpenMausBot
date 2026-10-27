@@ -24,8 +24,7 @@ import {
   type LogSignal, type ProcessSample, type QuietState,
 } from "./quiet-status.ts";
 import { readSessionReport } from "./session-reports.ts";
-import { acpVariantOption, offeredModels } from "./config-options.ts";
-import { EFFORT_LEVELS } from "../../../shared/wire.ts";
+import { offeredModels } from "./config-options.ts";
 import { SessionModelControls, type AcpModelSelection } from "./session-model-controls.ts";
 import { versionFromProbe } from "./version-probe.ts"; import { engineHomes } from "../../engine-homes/engine-homes.ts";
 
@@ -1182,7 +1181,6 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
           report: (model, variants) => emit({ ...base(threadId, turnId), type: "session.model-variants", model, variants }),
         });
         const receiveModelVariants = (result: any, replace = false) => modelControls.receive(result, replace);
-        const requestedVariantOption = () => modelControls.variant(variant);
 
         const flushAssistantText = () => {
           const raw = state.text;
@@ -1359,8 +1357,6 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             const emitSessionStarted = () => {
               if (sessionStarted) return;
               sessionStarted = true;
-              const nativeEffort = support.effortViaVariants
-                ? acpVariantOption(session.sessionConfigResult)?.currentValue : undefined;
               emit({
                 ...base(threadId, turnId),
                 type: "session.started",
@@ -1368,8 +1364,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
                 model: support.effortViaVariants
                   ? modelControls.modelOf(session.sessionConfigResult)
                   : selectedModel ?? init?._meta?.modelState?.currentModelId ?? cliTurn.model ?? null,
-                ...(nativeEffort && EFFORT_LEVELS.includes(nativeEffort as EffortLevel)
-                  ? { effort: nativeEffort as EffortLevel } : {}),
+                ...(support.effortViaVariants ? modelControls.nativeEffortReceipt() : {}),
                 ...(rebuiltFromReplay ? { rebuilt: true } : {}),
               });
             };
@@ -1446,16 +1441,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
                 if (!selectedModel && cliTurn.model) selectedModel = cliTurn.model;
               }
               if (variant !== undefined) {
-                const option = requestedVariantOption();
-                await request(
-                  "session/set_config_option",
-                  { sessionId, configId: option.configId, value: variant },
-                  SESSION_CONFIG_TIMEOUT,
-                  receiveModelVariants,
-                );
-                if (requestedVariantOption().currentValue !== variant) {
-                  throw new Error(`${support.displayName} did not apply variant ${variant}`);
-                }
+                await modelControls.selectVariant(request, sessionId, variant, SESSION_CONFIG_TIMEOUT);
               }
             } catch (error) {
               // session.started is the only place the resume cursor is recorded.
@@ -1489,12 +1475,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             const imageBlocks = support.images === true && runtimeAcceptsImages
               ? await readAcpImageBlocks(turn.images ?? [])
               : [];
-            if (support.modelVariants && cliTurn.model && !modelControls.usesAgentDefault() && modelControls.modelOf(session.sessionConfigResult) !== cliTurn.model) {
-              throw new Error(`${support.displayName} changed model before the prompt`);
-            }
-            if (variant !== undefined && requestedVariantOption().currentValue !== variant) {
-              throw new Error(`${support.displayName} changed variant before the prompt`);
-            }
+            modelControls.confirmBeforePrompt(variant);
             if (state.settled || state.stopped || session.closing) throw new Error("turn stopped");
             state.promptSent = true;
             acknowledge();

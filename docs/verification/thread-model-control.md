@@ -25,6 +25,12 @@ closed. Cloud audience checks apply on inspection, mutation, confirmation and
 Undo. Existing engine/approval compatibility and organization policy apply;
 changing model does not widen permissions.
 
+Native model proposals, confirmations and Undo refuse a saved key while trial
+credit holds that engine. Import validates the catalog and organization policy
+without treating storage as permission to execute: the held key remains saved,
+and the isolated trial lifecycle must prove that the included-credit engine
+answers before the saved key becomes eligible.
+
 Applied changes appear in the proposing conversation with **Undo**. Undo
 revalidates authority and the previous selection, and refuses a stale card if
 the stored override or effective selection differs from the card's applied
@@ -43,6 +49,10 @@ the card unanswered, whether the task previously followed its default or had a
 pin. Confirmed task changes are labeled as conversation changes, not default
 changes.
 
+Pending thread-model cards share the existing eight-open-proposal budget with
+profile, default-model, routine and team-setup requests. Settling a card restores
+capacity; immediately applied owner changes do not consume pending capacity.
+
 `currentExecution.model` and `.effort` are native session evidence, or null when
 unconfirmed. `nextTurn.resolved` is false: a stored choice is not runtime proof.
 In custom ACP, `agent-default` leaves the native session's current model alone;
@@ -57,6 +67,8 @@ changed.
 ```sh
 pnpm exec vitest run server/thread-model-control.e2e.test.ts
 pnpm exec vitest run server/thread-model.test.ts server/thread-model-requests.test.ts server/model-requests.test.ts server/chief-of-staff.test.ts server/drivers/acp/custom.test.ts server/drivers/acp/custom-model-catalog.test.ts src/components/ApprovalCard.test.ts
+pnpm exec vitest run server/model-control-host.test.ts server/one-home-trial-key.e2e.test.ts
+pnpm exec vitest run server/cloud-personal.e2e.test.ts -t "shares the pending proposal budget"
 ```
 
 The end-to-end scenario uses `launchVerificationServer` and `runControlOmb`, a

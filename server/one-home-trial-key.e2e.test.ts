@@ -16,6 +16,7 @@ const CREDIT_TOKEN = `omb_ai_${randomBytes(32).toString("base64url")}`;
 const OPENROUTER_KEY = `sk-or-v1-fake${randomBytes(16).toString("hex")}`;
 const USED_UP = { error: { code: "trial_credit_used_up", type: "insufficient_quota", message: "Your Claude credit is used up.", param: null } };
 const completions: string[] = [];
+const receipts: Array<{ method: string; path: string; creditAuth: boolean; heldKeyAuth: boolean; apiKey: boolean; status?: number }> = [];
 let usedUp = false;
 let relay: Server;
 let fx: CloudSendFixture;
@@ -25,7 +26,10 @@ beforeAll(async () => {
     let body = "";
     req.on("data", (chunk) => { body += chunk; });
     req.on("end", () => {
-      const send = (status: number, payload: unknown) => { res.writeHead(status, { "content-type": "application/json" }); res.end(JSON.stringify(payload)); };
+      const receipt = { method: req.method ?? "", path: req.url ?? "", creditAuth: req.headers.authorization === `Bearer ${CREDIT_TOKEN}`,
+        heldKeyAuth: req.headers.authorization === `Bearer ${OPENROUTER_KEY}`, apiKey: Boolean(req.headers["x-api-key"]), status: undefined as number | undefined };
+      receipts.push(receipt);
+      const send = (status: number, payload: unknown) => { receipt.status = status; res.writeHead(status, { "content-type": "application/json" }); res.end(JSON.stringify(payload)); };
       if (req.headers.authorization !== `Bearer ${CREDIT_TOKEN}`) return send(401, { error: { code: "invalid_api_key", message: "no" } });
       if (req.method === "GET" && req.url === `${RELAY_PATH}/v1/models`) return send(200, { object: "list", data: [{ object: "model", id: "claude-sonnet-5", display_name: "Claude Sonnet 5" }] });
       if (req.method === "POST" && req.url === `${RELAY_PATH}/v1/chat/completions`) {
@@ -52,7 +56,10 @@ type Side = CloudSendFixture["local"];
 type Instance = { instanceId: string; trialCredit?: string; snapshot: { state: string; reason?: string; authenticated?: boolean }; models: { default: string } };
 const instances = async (side: Side) => (await side("GET", "/api/instances")).body.instances as Instance[];
 const engine = async (side: Side, id: string) => (await instances(side)).find((instance) => instance.instanceId === id);
-const botOn = async (side: Side, id: string) => ((await side("GET", "/api/bots")).body.bots as Array<{ id: string; busy?: boolean; modelSelection: { instanceId: string; model: string } }>).find((bot) => bot.id === id)!;
+const botOn = async (side: Side, id: string) => ((await side("GET", "/api/bots?messages=20")).body.bots as Array<{
+  id: string; busy?: boolean; modelSelection: { instanceId: string; model: string };
+  messages: Array<{ role: string; kind: string; text?: string }>;
+}>).find((bot) => bot.id === id)!;
 
 it("a trial's moved key is saved on My Cloud but unused until the included credit runs out, then the bots run on it", async () => {
   const { local, onCloud } = fx;
@@ -77,13 +84,33 @@ it("a trial's moved key is saved on My Cloud but unused until the included credi
   expect(credit!.snapshot.reason).not.toBe(TRIAL_CREDIT_OWN_AI);
   await expect.poll(async () => (await botOn(onCloud, kit.id)).modelSelection.instanceId, { timeout: 30_000, interval: 250 }).toBe(CLOUD_CREDIT_INSTANCE);
   expect((await onCloud("POST", `/api/bots/${kit.id}/messages`, { text: "Hello Kit.", threadId: kit.threadId })).status).toBe(202);
-  await expect.poll(() => completions.length, { timeout: 30_000, interval: 200 }).toBeGreaterThan(0);
-  await expect.poll(async () => !(await botOn(onCloud, kit.id)).busy, { timeout: 30_000, interval: 200 }).toBe(true);
+  // A catalog read or background title request is not evidence that Kit answered this turn.
+  await expect.poll(async () => ({
+    completions: completions.map(body => JSON.parse(body)),
+    receipts,
+    bot: await botOn(onCloud, kit.id),
+  }), { timeout: 30_000, interval: 200 }).toMatchObject({
+    completions: expect.arrayContaining([expect.objectContaining({
+      model: "claude-sonnet-5",
+      messages: expect.arrayContaining([expect.objectContaining({ role: "user", content: expect.stringContaining("Hello Kit.") })]),
+    })]),
+    receipts: expect.arrayContaining([expect.objectContaining({
+      method: "POST", path: `${RELAY_PATH}/v1/chat/completions`, creditAuth: true, heldKeyAuth: false, apiKey: false, status: 200,
+    })]),
+    bot: { busy: false, messages: expect.arrayContaining([
+      expect.objectContaining({ role: "bot", kind: "text", text: "Hello from the trial credit." }),
+    ]) },
+  });
+  expect(receipts.every(receipt => receipt.creditAuth && !receipt.heldKeyAuth && !receipt.apiKey)).toBe(true);
+  expect(await engine(onCloud, "openrouter")).toMatchObject({ snapshot: { state: "unavailable", reason: TRIAL_KEY_HELD } });
 
   // The credit runs out: the key counts now, and Kit goes back to it.
   usedUp = true;
   expect((await onCloud("POST", `/api/bots/${kit.id}/messages`, { text: "And now?", threadId: kit.threadId })).status).toBe(202);
   await expect.poll(async () => (await engine(onCloud, CLOUD_CREDIT_INSTANCE))?.trialCredit, { timeout: 30_000, interval: 250 }).toBe("used_up");
+  expect(receipts).toContainEqual(expect.objectContaining({
+    method: "POST", path: `${RELAY_PATH}/v1/chat/completions`, creditAuth: true, heldKeyAuth: false, status: 402,
+  }));
   await expect.poll(async () => (await botOn(onCloud, kit.id)).modelSelection, { timeout: 30_000, interval: 250 }).toEqual({ instanceId: "openrouter", model });
   expect((await engine(onCloud, "openrouter"))!.snapshot).toMatchObject({ state: "available", authenticated: true });
 }, hostTimeout(300_000));

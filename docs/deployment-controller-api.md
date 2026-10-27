@@ -130,9 +130,11 @@ POST /api/maintenance/lease/release   { "token" }
 ```
 
 - `token`: a secret the controller generates, 32-256 characters of
-  `A-Za-z0-9_-` (use at least 32 random bytes, base64url). It is both the
-  capability and the acquisition's request identity. The server keeps only its
-  SHA-256, in memory and on disk; it is never returned.
+  `A-Za-z0-9_-` (use at least 32 random bytes, base64url). Always generate a
+  fresh random token for each new acquisition; reuse it only to retry that
+  acquisition or operate on its lease. It is both the capability and the
+  acquisition's request identity. The server keeps only its SHA-256, in memory
+  and on disk; it is never returned.
 - `holder`: 1-120 characters naming the controller; shown in refusals.
 - `ttlMs`: integer, 5,000 to 1,800,000 (30 minutes).
 
@@ -147,6 +149,13 @@ the lease's whole life, including renewals; times are epoch milliseconds.
 | check | `200` held | `409 lease-ended { ended: "released" \| "expired", leaseId }`, `409 lease-not-held` |
 | release | `200 { state: "released", leaseId }`; a retry answers `200 { state: "released" \| "expired", leaseId, replayed: true }` | `409 lease-not-held` |
 | `GET` | `200 { held: false }` or `{ held: true, lease }` | |
+
+Ended-token refusals and release replay cover only the last 32 ended leases.
+Once an ended lease is evicted, its token is no longer recognized as ended:
+there is no global token-nonreuse guarantee. A stale token different from the
+current lease's token cannot renew or release that lease, or authorize a write
+under it. Fresh acquisition tokens prevent an old capability from becoming
+the capability of a later lease.
 
 ### Acquisition proves the server is idle
 
@@ -183,10 +192,12 @@ precondition of the write itself.
   `remainingMs` for that step; `renew` well before expiry. Pass `leaseToken`
   on soul writes so validation and write are one atomic step.
 - A lease ends at `expiresAt` with no call needed; turns are admitted again at
-  once. An expired lease cannot be renewed or reacquired with the same token
-  (`lease-ended`): acquire again with a new token, which re-proves idleness.
-- Release is idempotent. After a crash, the controller can learn how its lease
-  ended from `check` or `release`.
+  once. While its ended record is retained, an expired lease cannot be renewed
+  or reacquired with the same token (`lease-ended`). Acquire again with a fresh
+  random token, which re-proves idleness.
+- Release retries are idempotent while the ended record is retained. After a
+  crash, `check` or `release` can report how that lease ended within this bounded
+  retention window; after eviction they cannot recover its outcome.
 
 ### Persistence and server restarts
 

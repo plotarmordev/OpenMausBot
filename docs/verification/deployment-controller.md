@@ -23,7 +23,11 @@ times and three soul writers against one revision: exactly one side wins each
 race.
 
 `server/maintenance-lease.test.ts` covers expiry, renewal, release retries, refusal to
-reuse a token, restart persistence, an unreadable state file and failed saves.
+reuse a retained ended token, restart persistence, an unreadable state file and failed saves.
+Ended-token refusal and release replay retain only the last 32 ended leases;
+after eviction they do not guarantee global token nonreuse or recover the old
+outcome. Controllers must always generate a fresh random acquisition token.
+A stale different token cannot affect the current lease.
 `server/store.test.ts` covers receipts across a restart, voiding, a failed save and
 the receipt bound. `server/workspace-backup.test.ts` proves backups neither export
 nor overwrite the lease file.
@@ -34,6 +38,13 @@ release or expiry. Coordinator and unattended admission also remain held,
 without changing main-chat versus delegated-task capacity rules.
 Move-to-Cloud keeps its bounded move-wait policy; maintenance acquisition uses
 strict idle accounting instead and never ages an active turn out of its gate.
+
+The proposal integration case in `server/cloud-personal.e2e.test.ts`, selected
+with `-t "shares the pending proposal budget"`, uses a real guest turn's source
+capability to fill the shared pending-card budget with profile and thread-model
+proposals. It checks refusal without mutation at capacity, restored capacity
+after cancellation of either type, and immediate thread-model changes in the
+owner's Ask and Full access conversations without consuming pending capacity.
 
 ## By hand
 

@@ -3,14 +3,14 @@ import { join } from "node:path";
 
 import { writeFileAtomic, writeFileAtomicIfChanged } from "./atomic.ts";
 import { commitRegistryChange, keptRevocation, saveRegistryFor } from "./registry-save.ts";
-import { parseToolScope, toolScopeWidens } from "../shared/tool-scope.ts";
+import { parseToolScope } from "../shared/tool-scope.ts";
 import { reorderStable } from "../shared/bot-order.ts";
 import { botOwner, chiefConflict, chiefScope, ownerEmail } from "../shared/bot-owner.ts";
 import { ensureSections, readSections, changeEmptySection } from "./section-context.ts";
 import type { TeamComputers } from "./team-computers.ts";
 import { removeBotFolder, soulFile, soulHash, writeSoulMirror } from "./bot-folder.ts";
 import type { BotProfilePatch } from "./bot-profile.ts";
-import { soulRevision } from "./profile-revision.ts";
+import { StoreProfileWrites } from "./store-profile-writes.ts";
 import { peerAllowKey, type PeerAction } from "./peer-approval-key.ts";
 import { DATA_DIR, EVENTS_DIR, NATIVE_DIR, loadBrowserProfileIdAliases } from "./config.ts";
 import * as mdb from "./message-db.ts";
@@ -36,7 +36,6 @@ import type {
   WireMessage, WireTask, BotProject as BotProjectRecord,
 } from "../shared/wire.ts";
 import { movesThreadToTop, nextOpenThread } from "../shared/wire.ts";
-import { parseConnectorTools } from "./connector-tools.ts";
 import { sameModelSelection } from "../shared/thread-model.ts";
 import { initialGreetingMessage } from "./initial-greeting.ts"; import { createDefaultBot, defaultBotRefusal } from "./default-bot.ts";
 import { appsFromCreator } from "./inherited-apps.ts";
@@ -196,15 +195,6 @@ export type SoulWriteReceipt =
   | { requestId: string; state: "voided"; at: number };
 export const SOUL_WRITE_RECEIPTS = 32;
 
-function withSoulReceipt(bot: BotRecord, receipt: SoulWriteReceipt): Pick<BotRecord, "soulWrites" | "soulWritesTrimmedAt"> {
-  const all = [...(bot.soulWrites ?? []), receipt];
-  const dropped = all.slice(0, -SOUL_WRITE_RECEIPTS);
-  return {
-    soulWrites: all.slice(-SOUL_WRITE_RECEIPTS),
-    ...(dropped.length ? { soulWritesTrimmedAt: Math.max(bot.soulWritesTrimmedAt ?? 0, ...dropped.map((entry) => entry.at)) } : {}),
-  };
-}
-
 export type SoulCompareAndSetResult =
   | { state: "missing" }
   | { state: "applied"; bot: BotRecord; receipt: Extract<SoulWriteReceipt, { state: "applied" }> }
@@ -352,6 +342,15 @@ export class Store {
   private registeringInitialSections = true;
   /** Clearing this slot must not clear a concurrently running task's activity. */
   private legacyActivities = new Map<string, BotActivity>();
+  private profileWrites = new StoreProfileWrites({
+    store: this,
+    saveBots: (bots) => this.saveBots(bots),
+    emit: (change) => this.emit(change),
+    switchNeedsAsk: (botId, threadId, from, to) => this.switchNeedsAsk(botId, threadId, from, to),
+    taskCountsAsBotUnread,
+    askNow: ASK_NOW,
+    receiptLimit: SOUL_WRITE_RECEIPTS,
+  });
 
   constructor(
     defaultSelection: () => ModelSelection,
@@ -1562,46 +1561,7 @@ export class Store {
   }
 
   patchBot(id: string, patch: Partial<BotRecord>): BotRecord | null {
-    const bot = this.bot(id);
-    if (!bot) return null;
-    if (patch.soul !== undefined) patch = { ...patch, soulWriteId: newId() };
-    if (patch.connectorTools !== undefined) {
-      const parsed = parseConnectorTools(patch.connectorTools);
-      if (!parsed.ok) throw new Error(parsed.error);
-      patch = { ...patch, connectorTools: parsed.grants };
-    }
-    if (Object.hasOwn(patch, "toolScope")) {
-      const parsed = parseToolScope(patch.toolScope);
-      if (!parsed.ok) throw new Error(parsed.error);
-      patch = { ...patch, toolScope: parsed.scope };
-    }
-    const wideningToolScope = Object.hasOwn(patch, "toolScope") && toolScopeWidens(bot.toolScope, patch.toolScope);
-    const nextToolScope = patch.toolScope;
-    if (wideningToolScope) {
-      patch = { ...patch };
-      delete patch.toolScope;
-    }
-    const toAsk = patch.modelSelection ? (bot.tasks ?? []).filter((task) => task.modelSelection === undefined &&
-      this.switchNeedsAsk(id, task.threadId, bot.modelSelection, patch.modelSelection!)) : [];
-    // Revocations take effect in memory even when the disk write fails.
-    Object.assign(bot, patch);
-    for (const task of toAsk) Object.assign(task, structuredClone(ASK_NOW));
-    const task = this.activeTask(id);
-    if (task) {
-      for (const key of ["resumeCursors", "rewound", "pinnedMessageId", "unread"] as const) {
-        if (Object.prototype.hasOwnProperty.call(patch, key)) {
-          Object.assign(task, { [key]: structuredClone(patch[key]) });
-        }
-      }
-      bot.unread = bot.tasks!.some(taskCountsAsBotUnread);
-    }
-    if (wideningToolScope) {
-      // New authority goes live only after its durable save succeeds.
-      this.saveBots(this.bots.map((candidate) => candidate === bot ? { ...bot, toolScope: nextToolScope } : candidate));
-      bot.toolScope = nextToolScope;
-    } else this.saveBots();
-    this.emit({ type: "bot", botId: id });
-    return bot;
+    return this.profileWrites.patchBot(id, patch);
   }
 
   clearVoiceSelections(): BotRecord[] {
@@ -1618,66 +1578,23 @@ export class Store {
   }
 
   patchBotProfile(id: string, patch: BotProfilePatch & Partial<Pick<BotRecord, "cwd" | "lastProfileRequestId">>): BotRecord | null {
-    const bot = this.bot(id);
-    return bot ? this.commitProfile(bot, patch) : null;
+    return this.profileWrites.patchBotProfile(id, patch);
   }
 
   /** Writes `soul` only when the bot's soulRevision is still `expectedRevision`. A `requestId` seen before never writes
    * again: it replays its receipt, or refuses when it was voided or carried a different soul or expectation. */
   compareAndSetSoul(id: string, input: { soul: string; expectedRevision: string; requestId: string }): SoulCompareAndSetResult {
-    const bot = this.bot(id);
-    if (!bot) return { state: "missing" };
-    const currentRevision = soulRevision(bot);
-    const prior = bot.soulWrites?.find((receipt) => receipt.requestId === input.requestId);
-    if (prior?.state === "voided") return { state: "voided" };
-    if (prior) {
-      return prior.from === input.expectedRevision && prior.soulSha256 === soulHash(input.soul)
-        ? { state: "replayed", receipt: prior, currentRevision }
-        : { state: "reused" };
-    }
-    if (currentRevision !== input.expectedRevision) return { state: "conflict", currentRevision };
-    let receipt: Extract<SoulWriteReceipt, { state: "applied" }> | undefined;
-    const updated = this.commitProfile(bot, { soul: input.soul }, (next) => (receipt = {
-      requestId: input.requestId, state: "applied", from: currentRevision, to: soulRevision(next), soulSha256: soulHash(input.soul), at: Date.now(),
-    }));
-    return { state: "applied", bot: updated, receipt: receipt! };
+    return this.profileWrites.compareAndSetSoul(id, input);
   }
 
   /** Makes `requestId` unable to write from now on, unless it already did; that applied receipt is returned instead. A
    * void moves soulRevision, so no request that read an earlier revision can write either, even once its receipt is gone. */
   voidSoulWrite(id: string, requestId: string): SoulWriteReceipt | null {
-    const bot = this.bot(id);
-    if (!bot) return null;
-    const prior = bot.soulWrites?.find((receipt) => receipt.requestId === requestId);
-    if (prior) return prior;
-    const voided: SoulWriteReceipt = { requestId, state: "voided", at: Date.now() };
-    const next = { ...bot, soulWriteId: newId(), ...withSoulReceipt(bot, voided) };
-    this.saveBots(this.bots.map((candidate) => candidate.id === id ? next : candidate));
-    Object.assign(bot, next);
-    return voided;
+    return this.profileWrites.voidSoulWrite(id, requestId);
   }
 
   soulWriteReceipt(id: string, requestId: string): SoulWriteReceipt | null {
-    return this.bot(id)?.soulWrites?.find((receipt) => receipt.requestId === requestId) ?? null;
-  }
-
-  private commitProfile(bot: BotRecord, patch: Partial<BotRecord>, receipt?: (next: BotRecord) => SoulWriteReceipt): BotRecord {
-    const next = { ...bot, ...patch };
-    if (patch.soul !== undefined) {
-      next.soulHash = soulHash(patch.soul);
-      next.soulDrift = false;
-      next.soulWriteId = newId();
-    }
-    if (receipt) Object.assign(next, withSoulReceipt(bot, receipt(next)));
-    this.saveBots(this.bots.map((candidate) => candidate.id === bot.id ? next : candidate));
-    Object.assign(bot, next);
-    if (patch.soul !== undefined) {
-      try { writeSoulMirror(bot.id, patch.soul); } catch (e) {
-        console.warn(`[bot-folder] could not write SOUL.md mirror for ${bot.id}: ${(e as Error).message}`);
-      }
-    }
-    this.emit({ type: "bot", botId: bot.id });
-    return bot;
+    return this.profileWrites.soulWriteReceipt(id, requestId);
   }
 
   setSoul(id: string, soul: string): BotRecord | null {
