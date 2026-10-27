@@ -27,8 +27,14 @@ changing model does not widen permissions.
 
 Applied changes appear in the proposing conversation with **Undo**. Undo
 revalidates authority and the previous selection, and refuses a stale card if
-someone changed the selection meanwhile. An owner-confirmation-required Cloud
-request remains pending rather than silently applying.
+someone changed the selection meanwhile. It restores an explicit task pin even
+when that pin equals the current default; later default changes still leave the
+pin alone. Restoring a task that followed its default keeps that behavior.
+An owner-confirmation-required Cloud request remains pending rather than
+silently applying. Confirmation checks stored overrides, not just effective
+model equality: moving the default to a pending request's model does not settle
+that request. Confirmed task changes are labeled as conversation changes, not
+default changes.
 
 `currentExecution.model` and `.effort` are native session evidence, or null when
 unconfirmed. `nextTurn.resolved` is false: a stored choice is not runtime proof.
@@ -43,7 +49,7 @@ changed.
 
 ```sh
 pnpm exec vitest run server/thread-model-control.e2e.test.ts
-pnpm exec vitest run server/thread-model-requests.test.ts server/model-requests.test.ts server/chief-of-staff.test.ts server/drivers/acp/custom.test.ts server/drivers/acp/custom-model-catalog.test.ts src/components/ApprovalCard.test.ts
+pnpm exec vitest run server/thread-model.test.ts server/thread-model-requests.test.ts server/model-requests.test.ts server/chief-of-staff.test.ts server/drivers/acp/custom.test.ts server/drivers/acp/custom-model-catalog.test.ts src/components/ApprovalCard.test.ts
 ```
 
 The end-to-end scenario uses `launchVerificationServer` and `runControlOmb`, a
@@ -59,8 +65,10 @@ Undo, separate explicit retry with native model/effort receipts, preserved
 conversation text and artifacts, self-task/default change and restoration, and
 a held running turn whose current model remains unchanged until its next turn.
 The fake records settings at `session/prompt`, not merely the saved API alias.
-The renderer regression verifies Undo is present before restoration and absent
-afterwards.
+The persisted-store regressions cover stale confirmation after a default change
+and exact Undo restoration across reload and subsequent default changes. The
+renderer regressions verify the conversation/default outcome distinction and
+that Undo is present before restoration and absent afterwards.
 
 Evidence is written beside the persistent fixture server log as
 `*.thread-model-control.json`; the successful fixture removes its disposable

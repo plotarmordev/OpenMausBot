@@ -40,7 +40,7 @@ export interface ThreadModelRequestStore {
   patchMessage(threadId: string, messageId: string, patch: { card: OptionCardLike }): { id: string } | null;
   switchTaskModel(
     botId: string, threadId: string, selection: ModelSelection,
-    updateBotDefault: boolean, resetApprovalToAsk: boolean, taskPatch?: TaskPatch,
+    updateBotDefault: boolean, resetApprovalToAsk: boolean, taskPatch?: TaskPatch, preserveTaskPin?: boolean,
   ): TaskRecord | null;
 }
 
@@ -84,6 +84,9 @@ export type UndoThreadModelRequestResult =
 
 const sameSelection = (a: ModelSelection, b: ModelSelection) =>
   a.instanceId === b.instanceId && a.model === b.model && a.effort === b.effort && a.variant === b.variant;
+
+const sameOverride = (a: ModelSelection | undefined, b: ModelSelection | undefined) =>
+  a === undefined || b === undefined ? a === b : sameSelection(a, b);
 
 function reasonText(value: unknown): string {
   if (typeof value !== "string") throw new ThreadModelRequestError("reason is required");
@@ -257,6 +260,7 @@ export class ThreadModelRequestService {
     const switched = this.store.switchTaskModel(
       owner.id, payload.targetThreadId, checked.selection, false, false,
       this.resetTask ? this.resetTask(payload.selection, checked.selection) : {},
+      payload.before !== undefined,
     );
     if (!switched) return cannot(NO_SUCH_THREAD, 404);
     this.store.patchMessage(args.threadId, message.id, { card: { ...card, undone: true } });
@@ -294,7 +298,8 @@ export class ThreadModelRequestService {
       }
       const refusal = this.authorize(payload.botId, owner, task, payload.threadId);
       if (refusal) throw new ThreadModelRequestError(refusal, 403);
-      if (sameSelection(payload.selection, task.modelSelection ?? owner.modelSelection)) {
+      const appliedOverride = sameSelection(payload.selection, payload.beforeDefault) ? undefined : payload.selection;
+      if (sameOverride(task.modelSelection, appliedOverride) && sameSelection(payload.selection, task.modelSelection ?? owner.modelSelection)) {
         const settled = this.store.patchMessage(args.threadId, message.id, {
           card: { ...card, answered: "allow", held: undefined, threadModelRequest: { ...payload, appliedAt: payload.appliedAt ?? this.now() } },
         });
@@ -302,7 +307,7 @@ export class ThreadModelRequestService {
         return { claimed: true, state: "already_settled", behavior: "allow" };
       }
       const before = payload.before ?? payload.beforeDefault;
-      if (!sameSelection(before, task.modelSelection ?? owner.modelSelection)) {
+      if (!sameOverride(payload.before, task.modelSelection) || !sameSelection(before, task.modelSelection ?? owner.modelSelection)) {
         throw new ThreadModelRequestError("This conversation's model changed after this card was prepared. Ask the bot to review it and propose again.", 409);
       }
       const checked = this.checkSwitch({ ...owner, threadId: payload.targetThreadId, modelSelection: task.modelSelection ?? owner.modelSelection }, payload.selection);

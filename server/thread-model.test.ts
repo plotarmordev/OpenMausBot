@@ -6,6 +6,7 @@ import { DATA_DIR } from "./config.ts";
 import type { ModelSelection, ProviderSnapshot } from "./contracts.ts";
 import { Store, toWireTask, type BotRecord, type TaskRecord } from "./store.ts";
 import { threadModelFallback, type ThreadEngine } from "./thread-model.ts";
+import { ThreadModelRequestService } from "./thread-model-requests.ts";
 import type { TeamSetupRequest } from "../shared/team-setup.ts";
 
 const sonnet: ModelSelection = { instanceId: "claude", model: "claude-sonnet-5" };
@@ -74,6 +75,47 @@ describe("threads follow their bot's model", () => {
     expect(ownModel(store, bot.id, bot.threadId)).toBeUndefined();
     store.patchBot(bot.id, { modelSelection: opus });
     expect(runsOn(store, bot.id, bot.threadId)).toEqual(opus);
+  });
+
+  it("refuses a stale pending request when the default moves to its requested model", () => {
+    const store = open();
+    const bot = store.createBot();
+    const threadId = bot.threadId;
+    const service = new ThreadModelRequestService({
+      store, autoApply: () => null, authorize: () => null,
+      checkSwitch: (_current, raw) => ({ ok: true, selection: raw as ModelSelection }),
+    });
+    const request = service.submit({ botId: bot.id, threadId, targetThreadId: threadId, selection: opus, reason: "Requested task model" });
+    store.applyModelDefault(bot.id, opus);
+    expect(service.resolve({ botId: bot.id, threadId, requestId: request.requestId, behavior: "allow" }))
+      .toMatchObject({ state: "invalid", status: 409 });
+    expect(store.messagesFor(threadId).find((message) => message.card?.requestId === request.requestId)?.card?.answered).toBeUndefined();
+    const reloaded = open();
+    expect(ownModel(reloaded, bot.id, threadId)).toBeUndefined();
+    reloaded.applyModelDefault(bot.id, codex);
+    expect(runsOn(reloaded, bot.id, threadId)).toEqual(codex);
+  });
+
+  it("Undo restores an explicit pin equal to the default across reload and later default changes", () => {
+    const store = open();
+    const bot = store.createBot();
+    const threadId = bot.threadId;
+    store.switchTaskModel(bot.id, threadId, opus, false, false);
+    store.applyModelDefault(bot.id, opus);
+    const follower = store.createTask(bot.id, "Follower")!;
+    const service = new ThreadModelRequestService({
+      store, autoApply: () => "level", authorize: () => null,
+      checkSwitch: (_current, raw) => ({ ok: true, selection: raw as ModelSelection }),
+    });
+    const request = service.submit({ botId: bot.id, threadId, targetThreadId: threadId, selection: codex, reason: "Temporary task model" });
+    expect(service.undo({ botId: bot.id, threadId, requestId: request.requestId })).toMatchObject({ state: "undone" });
+    expect(ownModel(store, bot.id, threadId)).toEqual(opus);
+    const reloaded = open();
+    expect(ownModel(reloaded, bot.id, threadId)).toEqual(opus);
+    reloaded.applyModelDefault(bot.id, sonnet);
+    expect(runsOn(reloaded, bot.id, threadId)).toEqual(opus);
+    expect(runsOn(reloaded, bot.id, follower.threadId)).toEqual(sonnet);
+    expect(reloaded.bot(bot.id)?.modelSelection).toEqual(sonnet);
   });
 
   it("a thread opened from a thread with its own model starts on that model; one opened from a follower follows", () => {

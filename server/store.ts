@@ -2122,12 +2122,12 @@ export class Store {
 
   /** One write: never publish a new provider before its approval downgrade. */
   switchTaskModel(botId: string, threadId: string, selection: ModelSelection,
-    updateBotDefault: boolean, resetApprovalToAsk: boolean, taskPatch: TaskPatch = {}): TaskRecord | null {
+    updateBotDefault: boolean, resetApprovalToAsk: boolean, taskPatch: TaskPatch = {}, preserveTaskPin = false): TaskRecord | null {
     const bot = this.bot(botId);
     const task = this.taskByThread(botId, threadId);
     if (!bot || !task) return null;
     const approval = resetApprovalToAsk ? structuredClone(ASK_NOW) : {};
-    const own = sameModelSelection(selection, updateBotDefault ? selection : bot.modelSelection) ? undefined : structuredClone(selection);
+    const own = !preserveTaskPin && sameModelSelection(selection, updateBotDefault ? selection : bot.modelSelection) ? undefined : structuredClone(selection);
     const nextTask = persistedPin({ ...task, ...taskPatch, modelSelection: own, ...approval,
       ...(typeof taskPatch.title === "string" ? { title: taskPatch.title.trim().slice(0, 80) || UNTITLED_THREAD } : {}) });
     const others = updateBotDefault ? this.withDefaultModel(bot, selection)! : bot.tasks!;

@@ -2,7 +2,7 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
-import { ApprovalCard } from "./ApprovalCard";
+import { ApprovalCard, approvalCardOutcome } from "./ApprovalCard";
 import { pendingApprovals, PendingApprovalPanel, spokenApprovalPrompt, type Pending } from "./PendingApproval";
 import type { Bot, Message } from "@/state/store";
 import { skillRequestBehavior } from "../../shared/skill-request";
@@ -615,6 +615,20 @@ describe("ApprovalCard for a change that applied on its own", () => {
     expect(pendingApprovals([message])).toEqual([]);
     message.card = { ...message.card!, undone: true };
     expect(render(message)).not.toContain(">Undo<");
+  });
+
+  it("identifies a confirmed thread selection as a conversation change, not a default change", () => {
+    const message = applied({
+      autoApplied: false,
+      threadModelRequest: {
+        version: 1, requestId: "confirmed-model", botId: "chief", threadId: "thread-1",
+        targetBotId: "worker", targetName: "Worker", targetThreadId: "work-thread", targetTitle: "Existing task",
+        createdAt: 1, reason: "Requested switch", beforeDefault: { instanceId: "custom", model: "first" },
+        selection: { instanceId: "custom", model: "second" }, appliedAt: 2,
+      },
+    });
+    expect(approvalCardOutcome(message.card!)).toMatch(/conversation/i);
+    expect(approvalCardOutcome(message.card!)).not.toMatch(/default/i);
   });
 
   // A create renders the live trigger card (TriggerCard.test.ts); every later change is this one line.

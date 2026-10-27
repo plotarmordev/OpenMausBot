@@ -58,13 +58,13 @@ class MemoryStore implements ThreadModelRequestStore {
 
   switchTaskModel(
     botId: string, threadId: string, selection: ModelSelection,
-    _updateBotDefault: boolean, _resetApprovalToAsk: boolean, taskPatch: Record<string, unknown> = {},
+    _updateBotDefault: boolean, _resetApprovalToAsk: boolean, taskPatch: Record<string, unknown> = {}, preserveTaskPin = false,
   ): TaskRecord | null {
     const task = this.taskByThread(botId, threadId);
     const bot = this.bots.get(botId);
     if (!task || !bot) return null;
     this.switches.push({ botId, threadId, selection: structuredClone(selection), taskPatch: structuredClone(taskPatch) });
-    task.modelSelection = sameSelectionForTest(selection, bot.modelSelection) ? undefined : structuredClone(selection);
+    task.modelSelection = !preserveTaskPin && sameSelectionForTest(selection, bot.modelSelection) ? undefined : structuredClone(selection);
     return task;
   }
 }
