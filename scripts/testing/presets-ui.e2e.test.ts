@@ -21,7 +21,7 @@ describe("Preset bots in the real renderer", () => {
   let child: ChildProcess | undefined;
   afterAll(async () => { await waitForExit(child, { signal: "SIGINT", graceMs: 30_000 }); });
 
-  (enabled ? it : it.skip)("shares New bot defaults as a preset file, adds it back, and makes bots from file and organization presets", async () => {
+  (enabled ? it : it.skip)("shares New bot defaults as a preset file, adds it back, and makes bots from file and organization presets in a ready-made bot's review", async () => {
     let stdout = "";
     let stderr = "";
     let info: { ui: string; url: string; botId: string; dataDir: string; logPath: string };
@@ -122,7 +122,9 @@ describe("Preset bots in the real renderer", () => {
     const create = async (value: string, expected: string, shot: string) => {
       const before = await bots();
       await clickWhenFree("New or share");
-      await click("New Bot");
+      await click("Templates");
+      await expect.poll(snapshot, { timeout: 20_000 }).toContain("Add Scout, Researcher");
+      await click("Add Scout, Researcher");
       await expect.poll(async () => (await ui("eval", "--js", "[...document.querySelectorAll('[role=dialog] button')].find(button => button.textContent.trim() === 'Create bot')?.disabled")).result, { timeout: 20_000 }).toBe(false);
       await expect.poll(() => evaluate("[...document.querySelectorAll('[role=dialog] select optgroup')].map(group => group.label).join(' | ')"), { timeout: 10_000 })
         .toBe("From Acme Partners | Imported presets | Built-in roles");

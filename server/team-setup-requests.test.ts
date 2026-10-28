@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { TeamSetupError, TeamSetupRequestService } from "./team-setup-requests.ts";
-import { canAccessTeam } from "./peer-roster.ts";
+import { hasTeamAuthority } from "./peer-roster.ts";
 import type { BotRecord, OptionCardData } from "./store.ts";
 import type { TeamSetupRequest, TeamSetupResult } from "../shared/team-setup.ts";
 import type { DirectApply } from "./direct-apply.ts";
@@ -47,7 +47,7 @@ function harness(caps?: Record<string, { driverKind: string; agentsMcp: boolean 
   const targetBusy = vi.fn((id: string, _sourceThreadId?: string) => Boolean(store.bot(id)?.busy));
   const validateChange = vi.fn();
   const canPersist = vi.fn((): { ok: true } | { ok: false; status: number; error: string } => ({ ok: true }));
-  const service = new TeamSetupRequestService({ store, teams: () => teams, maxBots: 100, canAccessTeam,
+  const service = new TeamSetupRequestService({ store, teams: () => teams, maxBots: 100, hasTeamAuthority,
     canPersist, ownsThread: () => sourceExists, targetBusy, deleteBot, autoApply, validateChange,
     validateModel: (selection, current) => {
       if (!({ claude: ["sonnet", "opus"], codex: ["gpt-fixture"] }[selection.instanceId]?.includes(selection.model))) return "Model is not in the current catalog";
@@ -143,7 +143,7 @@ describe("reviewed Chief team setup", () => {
   it("shows what stays owner-owned after creation on create cards, and keeps update cards lean", () => {
     const h = harness();
     const create = h.propose([specialist("Mira", "Work")]);
-    expect(create.detail).toContain("New bots stay owner-owned after creation: connected apps off, the workspace's default access level, a private workspace by default, avatar untouched.");
+    expect(create.detail).toContain("New bots stay owner-owned after creation: the same connected apps as @Clive, the workspace's default access level, a private workspace by default, avatar untouched.");
     expect(create.detail).toContain("Existing execution permissions are unchanged.");
     const update = h.propose([{ action: "update", botId: h.peer.id, fields: { title: "Research lead" } }]);
     expect(update.detail).not.toContain("owner-owned");

@@ -120,9 +120,16 @@ So the harness just adds one entry to a bot's `--mcp-config`:
 } } }
 ```
 
-Electron main writes that descriptor to
-`<userData>/cua-connection.json` (see `electron/cua.mjs`); the harness reads
-it and injects the block. The driver's own non-idempotent-action safety and
+Electron main keeps that descriptor in `<userData>/cua-connection.json` (see
+`electron/cua.mjs`), but no server reads it from there: the app hands it to the
+one server it launched over that child's private utility-process port
+(`electron/local-computer-grant.mjs` → `server/desktop-computer.ts`), and sends
+it again on every change. Only that server injects the block, so a second
+OpenMausBot server on the same computer (a copy run from source, a demo) never
+finds this computer. Before a bot's first action on the person's own computer
+in a request, unless the person picked this computer as the place, the person
+is asked once in plain words (`server/your-computer-consent.ts`), at every
+approval level. The driver's own non-idempotent-action safety and
 the `ax → ax_fg → cgevent → cgevent_fg → cgevent_hid` delivery ladder
 (background pid-addressed input first — does not steal the user's cursor) are
 handled inside the binary; the host adds nothing.

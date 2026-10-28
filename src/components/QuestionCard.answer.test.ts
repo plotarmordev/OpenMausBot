@@ -81,7 +81,8 @@ describe("QuestionCard answered in one step", () => {
     expect(dispatch).toHaveBeenCalledTimes(1);
     expect(dispatch.mock.calls[0]![0]).toMatchObject({ type: "decideRequest", requestId: "req-1", behavior: "answer" });
     expect(dispatch.mock.calls[0]![0].message).toContain("A: Pro");
-    expect(host.querySelector('[data-ask-card="settled"]')?.textContent).toContain("Choose a plan · Pro");
+    // Simple mode, the default here, says whose answer it was; Advanced names the question.
+    expect(host.querySelector('[data-ask-card="settled"]')?.textContent).toContain("Your answer · Pro");
   });
 
   it("sends a single pick from its letter key too", () => {

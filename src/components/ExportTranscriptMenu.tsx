@@ -114,7 +114,7 @@ export function ExportTranscriptMenu({
         <div
           role="menu"
           aria-label="Export options"
-          className={cn("absolute right-0 top-full z-40 mt-1 w-[220px] overflow-hidden rounded-xl border border-hairline/50 bg-card py-1.5 shadow-2xl shadow-black/50", motion.className)} {...motion.exitProps}
+          className={cn("popover-surface absolute right-0 top-full z-40 mt-1 w-[220px] overflow-hidden rounded-xl border border-hairline/50 bg-card py-1.5 shadow-2xl shadow-black/50", motion.className)} {...motion.exitProps}
         >
           <div className="px-3 py-1 text-[11px] font-semibold uppercase tracking-wider text-ink-tertiary">
             Export Conversation

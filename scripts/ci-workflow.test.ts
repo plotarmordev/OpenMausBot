@@ -2,7 +2,7 @@ import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { parse } from "yaml";
-import { vitestMatrix } from "./ci-scope.mjs";
+import { SELECTABLE_JOBS, vitestMatrix } from "./ci-scope.mjs";
 
 const workflow = parse(readFileSync(new URL("../.github/workflows/ci.yml", import.meta.url), "utf8"));
 const requiredRuntimeJobs = ["vitest", "behavior-evals", "packaged-server", "windows-cua", "electron-smokes"];
@@ -21,10 +21,11 @@ function runGate(needs: Record<string, unknown>) {
   return check;
 }
 
-function gateNeeds(runtime: string) {
+/** The gate's needs when static selected `selected`: each required job ran exactly when selected. */
+function gateNeeds(selected: string[]) {
   return {
-    static: { result: "success", outputs: { runtime } },
-    ...Object.fromEntries(requiredRuntimeJobs.map((job) => [job, { result: runtime === "true" ? "success" : "skipped" }])),
+    static: { result: "success", outputs: { jobs: JSON.stringify(selected) } },
+    ...Object.fromEntries(requiredRuntimeJobs.map((job) => [job, { result: selected.includes(job) ? "success" : "skipped" }])),
   };
 }
 
@@ -75,19 +76,22 @@ describe("CI concurrency", () => {
 
   it("runs each selected platform's own shards, and its e2e files, from ci-scope's matrix", () => {
     expect(workflow.jobs.static.outputs.vitest_matrix).toBe("${{ steps.scope.outputs.vitest_matrix }}");
-    expect(workflow.jobs.vitest.name).toBe("vitest (${{ matrix.os }}, shard ${{ matrix.shard }}/${{ matrix.shards }})");
+    expect(workflow.jobs.vitest.name).toBe("vitest (${{ matrix.os }}, ${{ matrix.part }})");
     const run = (workflow.jobs.vitest.steps as { name?: string; run?: string; env?: Record<string, string> }[])
       .find((step) => step.name === "Run tests")!;
-    expect(run.run).toContain("--shard=${{ matrix.shard }}/${{ matrix.shards }} ");
+    expect(run.run).toContain("pnpm exec vitest run ${{ matrix.files }} --shard=${{ matrix.shard }}/${{ matrix.shards }} ");
     expect(run.env?.OMB_VITEST_E2E).toBe("${{ matrix.e2e }}");
+    expect(run.env?.OMB_VITEST_SUBSET).toBe("${{ matrix.files }}");
     const { include } = vitestMatrix(["macos-latest", "ubuntu-latest", "windows-latest"]);
     for (const os of ["macos-latest", "ubuntu-latest", "windows-latest"]) {
       const shards = include.filter((entry) => entry.os === os);
       expect(shards.map((entry) => entry.shard)).toEqual(Array.from({ length: shards[0]!.shards }, (_, i) => i + 1));
       expect(new Set(shards.map((entry) => entry.e2e))).toEqual(new Set([os === "ubuntu-latest" ? "all" : "host"]));
     }
-    const units = (workflow.jobs.vitest.steps as { name?: string; "timeout-minutes"?: number }[]).find((step) => step.name === "Broker and Electron unit tests")!;
+    const units = (workflow.jobs.vitest.steps as { name?: string; if?: string; "timeout-minutes"?: number }[]).find((step) => step.name === "Broker and Electron unit tests")!;
     expect(units["timeout-minutes"]).toBe(5);
+    // Once per platform's full run, and beside the locale tests, never once per shard.
+    expect(units.if).toBe("matrix.node_tests");
     // Browser jobs keep one job per platform.
     expect(workflow.jobs["browser-identity"].strategy.matrix.os).toBe("${{ fromJSON(needs.static.outputs.vitest_os) }}");
   });
@@ -167,26 +171,36 @@ describe("CI concurrency", () => {
     expect(readFileSync(new URL("../vite.config.ts", import.meta.url), "utf8")).toContain('runner: "./scripts/testing/ci-retry-runner.ts"');
   });
 
-  it.each(requiredRuntimeJobs)("fails closed for every required %s outcome", (job) => {
+  it.each(requiredRuntimeJobs)("fails closed for every required %s outcome when selected", (job) => {
     for (const result of ["success", "failure", "cancelled", "skipped"]) {
-      const check = runGate({ ...gateNeeds("true"), [job]: { result } });
+      const check = runGate({ ...gateNeeds(SELECTABLE_JOBS), [job]: { result } });
       expect(check.status, check.stderr).toBe(result === "success" ? 0 : 1);
     }
   });
 
-  it("accepts only deliberately unselected jobs on docs-only PRs", () => {
-    expect(runGate(gateNeeds("false")).status).toBe(0);
+  it.each(requiredRuntimeJobs)("accepts %s skipped only when static left it out", (job) => {
+    const others = SELECTABLE_JOBS.filter((name) => name !== job);
+    expect(runGate(gateNeeds(others)).status).toBe(0);
     for (const result of ["success", "failure", "cancelled"]) {
-      expect(runGate({ ...gateNeeds("false"), vitest: { result } }).status).toBe(1);
+      expect(runGate({ ...gateNeeds(others), [job]: { result } }).status).toBe(1);
+    }
+  });
+
+  it("accepts every required job skipped on a docs-only PR, and nothing else", () => {
+    expect(runGate(gateNeeds([])).status).toBe(0);
+    for (const result of ["success", "failure", "cancelled"]) {
+      expect(runGate({ ...gateNeeds([]), vitest: { result } }).status).toBe(1);
     }
   });
 
   it("rejects failed preflight and missing or malformed selection", () => {
     for (const result of ["failure", "cancelled", "skipped"]) {
-      expect(runGate({ ...gateNeeds("false"), static: { result, outputs: { runtime: "false" } } }).status).toBe(1);
+      expect(runGate({ ...gateNeeds([]), static: { result, outputs: { jobs: "[]" } } }).status).toBe(1);
     }
-    for (const runtime of ["", "yes", "TRUE"]) expect(runGate(gateNeeds(runtime)).status).toBe(1);
-    expect(runGate({ ...gateNeeds("false"), static: { result: "success", outputs: {} } }).status).toBe(1);
+    for (const jobs of ["", "yes", "true", "{}", "[1]", "null", '"vitest"']) {
+      expect(runGate({ ...gateNeeds([]), static: { result: "success", outputs: { jobs } } }).status, jobs).toBe(1);
+    }
+    expect(runGate({ ...gateNeeds([]), static: { result: "success", outputs: {} } }).status).toBe(1);
   });
 
   it("always starts the workflow and validates selection and docs before fanout", () => {
@@ -195,10 +209,17 @@ describe("CI concurrency", () => {
     expect(workflow.jobs.static.steps[0].with["fetch-depth"]).toBe(0);
     expect(workflow.jobs.static.steps.find((step: { id?: string }) => step.id === "scope").run).toBe("node scripts/ci-scope.mjs");
     expect(workflow.jobs.static.outputs).toEqual({
-      runtime: "${{ steps.scope.outputs.runtime }}",
+      jobs: "${{ steps.scope.outputs.jobs }}",
       vitest_os: "${{ steps.scope.outputs.vitest_os }}",
       vitest_matrix: "${{ steps.scope.outputs.vitest_matrix }}",
     });
+    // Only these three static steps depend on the scope's build flag; the rest always run.
+    const built = (workflow.jobs.static.steps as { if?: string; run?: string }[]).filter((step) => step.if !== undefined);
+    expect(built.map((step) => [step.if, step.run])).toEqual([
+      ["steps.scope.outputs.build == 'true'", "pnpm typecheck"],
+      ["steps.scope.outputs.build == 'true'", "pnpm check:electron"],
+      ["steps.scope.outputs.build == 'true'", "pnpm exec vite build"],
+    ]);
     expect(workflow.jobs.static.steps.some((step: { run?: string }) =>
       step.run === "pnpm exec vitest run scripts/ci-scope.test.ts scripts/ci-workflow.test.ts scripts/testing/verification-docs.test.ts",
     )).toBe(true);
@@ -217,11 +238,28 @@ describe("CI concurrency", () => {
         expect(check.env).toEqual({ CLOUDFLARE_API_TOKEN: "${{ secrets.CLOUDFLARE_API_TOKEN }}" });
         expect(check.run).toContain("::warning");
         for (const step of rest) expect(step.if).toBe("steps.token.outputs.present == 'true'");
+        // The broker is typechecked and tested in the same checkout it deploys.
+        const runs = rest.map((step) => step.run);
+        const deploy = rest.findIndex((step) => (step as { uses?: string }).uses?.startsWith("cloudflare/wrangler-action@"));
+        expect(runs.indexOf("pnpm broker:check")).toBeGreaterThan(-1);
+        expect(runs.indexOf("pnpm broker:check")).toBeLessThan(deploy);
+        expect(runs.indexOf("pnpm broker:test")).toBeGreaterThan(-1);
+        expect(runs.indexOf("pnpm broker:test")).toBeLessThan(deploy);
         continue;
       }
       expect(job.needs).toBe("static");
-      expect(job.if).toBe("needs.static.outputs.runtime == 'true'");
+      expect(job.if).toBe(`contains(needs.static.outputs.jobs, '"${name}"')`);
     }
+    // ci-scope selects exactly the jobs the workflow has.
+    expect(Object.keys(workflow.jobs).filter((name) => !["static", "gate", "deploy-composio-broker"].includes(name)).sort())
+      .toEqual([...SELECTABLE_JOBS].sort());
+  });
+
+  it("pins every external action to a full commit SHA", () => {
+    const uses = (Object.values(workflow.jobs) as { steps?: { uses?: string }[] }[])
+      .flatMap((job) => job.steps ?? []).flatMap((step) => (step.uses && !step.uses.startsWith("./") ? [step.uses] : []));
+    expect(uses.length).toBeGreaterThan(0);
+    for (const action of uses) expect(action).toMatch(/^[\w.-]+\/[\w./-]+@[0-9a-f]{40}$/);
   });
 
   it("keeps the redundant Windows workflow available only for manual debugging", () => {

@@ -375,3 +375,37 @@ describe("Settings → Engines → Claude accounts", () => {
   });
 
 });
+
+describe("Settings → AI in Simple mode", () => {
+  const engine = (instanceId: string, driverKind: string, authenticated: boolean, extra: Partial<InstanceInfo> = {}): InstanceInfo => ({
+    instanceId, driverKind, displayName: instanceId, cliDefault: instanceId,
+    snapshot: { state: "available", authenticated }, models: { default: "model", options: [] }, ...extra,
+  });
+  const simple = (open = false) => {
+    vi.stubGlobal("window", {});
+    vi.stubGlobal("navigator", { userAgent: "Linux" });
+    fixture.bots = [];
+    return renderToStaticMarkup(createElement(EnginesSettings, { simple: true, more: { id: "ai-more", open, onToggle: () => {} } }));
+  };
+  const rows = (html: string) => [...html.matchAll(/data-simple-engine="([^"]+)"/g)].map((match) => match[1]);
+
+  it("lists each ready provider, and each one signed in by subscription, as a row with Manage or Set up", () => {
+    fixture.instances = [
+      engine("claude", "claudeAgent", true),
+      engine("codex", "codexAgent", false, { authentication: { method: "device-code" } }),
+      engine("kimi", "kimiAgent", false),
+    ];
+    const html = simple();
+    expect(html).toContain(">Your AI</h3>");
+    expect(rows(html)).toEqual(["claude", "codex"]);
+    expect(html).toMatch(/data-simple-engine="claude"[\s\S]*?>Manage<\/button>/);
+    expect(html).toMatch(/data-simple-engine="codex"[\s\S]*?>Set up<\/button>/);
+    expect(html).not.toContain("Model providers and accounts");
+  });
+
+  it("folds every other provider under More AI providers, with the count", () => {
+    fixture.instances = [engine("claude", "claudeAgent", true), engine("kimi", "kimiAgent", false), engine("mistral", "mistral", false)];
+    expect(simple()).toMatch(/aria-expanded="false"[^>]*>[\s\S]*?More AI providers \(2\)/);
+    expect(simple(true)).toContain('data-engine-card="kimi"');
+  });
+});

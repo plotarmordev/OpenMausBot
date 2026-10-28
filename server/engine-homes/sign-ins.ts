@@ -1,7 +1,7 @@
 // The team's engine sign-ins in an audience's home. Each audience keeps a copy where its engine looks; inside a bot box the
 // team's file itself is bound over that copy, so a refreshed token lands in the team's file. Outside a box the engine
 // writes its copy, and the next spawn in any audience takes the newest settled copy back into the team's file.
-import { closeSync, fstatSync, lstatSync, mkdirSync, openSync, readFileSync, renameSync, rmSync, statSync, utimesSync, writeFileSync, type Stats } from "node:fs";
+import { closeSync, fstatSync, ftruncateSync, lstatSync, mkdirSync, openSync, readFileSync, renameSync, rmSync, statSync, utimesSync, writeFileSync, type Stats } from "node:fs";
 import { basename, dirname, join } from "node:path";
 
 import type { SharedFile } from "./layout.ts";
@@ -32,6 +32,7 @@ function writeInPlace(source: string, bytes: Buffer, from: Stats): void {
   try {
     if (!fstatSync(fd).isFile()) return;
     writeFileSync(fd, bytes);
+    ftruncateSync(fd, bytes.length);
   } finally {
     closeSync(fd);
   }

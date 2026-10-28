@@ -77,6 +77,7 @@ vi.mock("@/lib/interface-mode", () => ({
   setAdvancedMode: fixture.setAdvancedMode,
 }));
 vi.mock("@/lib/analytics", () => ({ analyticsEnabled: () => false, setAnalyticsEnabled: vi.fn() }));
+vi.mock("./PeopleSection", () => ({ PeopleSection: () => null }));
 vi.mock("./SettingsPrimitives", async (importOriginal) => {
   const original = await importOriginal<typeof import("./SettingsPrimitives")>();
   return {
@@ -114,11 +115,12 @@ afterEach(() => {
 const render = () => renderToStaticMarkup(createElement(SettingsModal));
 
 describe("Settings → Appearance", () => {
-  it.each([true, false])("flips Advanced mode from the top of General when the switch is %s", (enabled) => {
+  it.each([true, false])("flips Advanced mode from General, first in Advanced and last in Simple, when the switch is %s", (enabled) => {
     fixture.section = "general";
     fixture.advancedMode = enabled;
     const html = render();
-    expect(html.indexOf('aria-label="Advanced mode"')).toBeLessThan(html.indexOf("Language"));
+    if (enabled) expect(html.indexOf('aria-label="Advanced mode"')).toBeLessThan(html.indexOf("Language"));
+    else expect(html.indexOf('aria-label="Advanced mode"')).toBeGreaterThan(html.indexOf("Language"));
     expect(html).toContain('aria-label="Advanced mode"');
     expect(html).toContain("Nothing is deleted either way");
     const toggle = fixture.switches.find((props) => props["aria-label"] === "Advanced mode")!;

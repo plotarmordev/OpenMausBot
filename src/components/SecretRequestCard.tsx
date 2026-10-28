@@ -174,7 +174,7 @@ export function SecretRequestCard({
       dismissLabel="Not now"
     >
       {remoteClient ? (
-        <div className="text-[12.5px] leading-relaxed text-ink-secondary">
+        <div className="text-[13px] leading-relaxed text-ink-secondary">
           This key must be saved on the host computer. Open this conversation on the host to continue securely.
         </div>
       ) : (
@@ -197,7 +197,7 @@ export function SecretRequestCard({
               {savedLocally ? "Continue task" : "Save securely"}
             </button>
           </div>
-          <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11.5px] text-ink-tertiary">
+          <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[12px] text-ink-tertiary">
             <span className="flex items-center gap-1">
               <LockKeyhole size={11} /> Stored securely by OpenMausBot and never added to chat.
             </span>

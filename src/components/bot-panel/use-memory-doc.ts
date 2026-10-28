@@ -10,8 +10,9 @@ export interface MemoryIndex {
   reload: () => Promise<void>;
 }
 
-/** MEMORY.md for a bot whose memory is on; `doc` stays null until it has been read. */
-export function useMemoryDoc(bot: Pick<Bot, "id" | "memoryEnabled">): MemoryIndex {
+/** MEMORY.md for a bot whose memory is on; `doc` stays null until it has been read. It is read again as a turn starts and
+ * ends, so a note the bot just saved shows. */
+export function useMemoryDoc(bot: Pick<Bot, "id" | "memoryEnabled" | "busy">): MemoryIndex {
   const [state, setState] = useState<{ botId: string; doc: MemoryDoc | null; error: boolean }>({ botId: bot.id, doc: null, error: false });
   const memoryOn = bot.memoryEnabled !== false;
 
@@ -24,12 +25,13 @@ export function useMemoryDoc(bot: Pick<Bot, "id" | "memoryEnabled">): MemoryInde
     }
   };
 
+  const busy = Boolean(bot.busy);
   useEffect(() => {
     if (!memoryOn) return;
     let cancelled = false;
     void read(bot.id, () => cancelled);
     return () => { cancelled = true; };
-  }, [bot.id, memoryOn]);
+  }, [bot.id, memoryOn, busy]);
 
   const own = state.botId === bot.id;
   return {

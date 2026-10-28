@@ -28,6 +28,10 @@ export interface EnvironmentDescriptor {
     lendingDetails?: true;
     /** A Cloud home with lending on: a lent computer may open the device link and lend its internet connection. */
     deviceLink?: true;
+    /** A personal Cloud home with lending on: a lent computer may lend its Chrome to the bots here. Never a team Cloud. */
+    myChromeLink?: true;
+    /** A lent computer may say it takes run_command's timeout_seconds; only then does this server send it. */
+    commandTimeouts?: true;
     /** A person's own OMB Cloud home. */
     cloudHome?: true;
     /** A Cloud home that takes the one-time move from the person's computer: by-row chats, the manifest, the chats and
@@ -66,7 +70,22 @@ function readEnvironmentId(file: string): string | undefined {
   return id;
 }
 
-/** Read or create the id. Written once, never rotated by the server itself. */
+/** Every response to an `/api/` or `/.well-known/openmausbot/` request, errors and WebSocket handshakes included,
+ * names the install that answered it in this header: the descriptor's `environmentId`, byte for byte. A response
+ * without it comes from an install of unknown identity. */
+export const ENVIRONMENT_HEADER = "OpenMausBot-Environment";
+
+/** The header name and value pairs a response carries. */
+export type Attestation = readonly (readonly [name: string, value: string])[];
+
+export function environmentAttestation(environmentId: string): (path: string) => Attestation {
+  const attested: Attestation = [[ENVIRONMENT_HEADER, environmentId]];
+  return (path) => path.startsWith("/api/") || path.startsWith("/.well-known/openmausbot/") ? attested : [];
+}
+
+/** Read or create the id. Written once, never rotated by the server itself. A created id is lowercase; an existing one
+ * is kept exactly as written, uppercase hex included, because rewriting its case would change the bytes every saved
+ * copy holds. Either case names the same UUID, so compare ids case-insensitively. */
 export function loadEnvironmentId(dataDir: string): string {
   const file = join(dataDir, "environment-id");
   const existing = readEnvironmentId(file);
@@ -119,7 +138,7 @@ export function serverVersion(root = SERVER_ROOT): string {
   return "unknown";
 }
 
-export function environmentDescriptor(input: { environmentId: string; desktopManaged: boolean; emailSignIn?: boolean; sharedComputers?: boolean; cloudHome?: boolean; label?: string }): EnvironmentDescriptor {
+export function environmentDescriptor(input: { environmentId: string; desktopManaged: boolean; emailSignIn?: boolean; sharedComputers?: boolean; cloudHome?: boolean; cloudTeam?: boolean; label?: string }): EnvironmentDescriptor {
   return {
     environmentId: input.environmentId,
     label: input.label?.trim() || process.env.OMB_ENVIRONMENT_LABEL?.trim() || hostname(),
@@ -129,8 +148,9 @@ export function environmentDescriptor(input: { environmentId: string; desktopMan
       remoteSessions: true,
       // Never advertise a protocol this server would refuse.
       // lendingDetails: a lent computer may say its platform, and this server remembers what was lent to it.
-      ...(input.sharedComputers === true ? { sharedComputers: true as const, lendingDetails: true as const } : {}),
+      ...(input.sharedComputers === true ? { sharedComputers: true as const, lendingDetails: true as const, commandTimeouts: true as const } : {}),
       ...(input.sharedComputers === true && input.cloudHome === true ? { deviceLink: true as const } : {}),
+      ...(input.sharedComputers === true && input.cloudHome === true && input.cloudTeam !== true ? { myChromeLink: true as const } : {}),
       ...(input.cloudHome === true ? { cloudHome: true as const, move: 1 as const } : {}),
       selfUpdate: input.desktopManaged ? "desktop-managed" : "operator",
       emailSignIn: input.emailSignIn === true,

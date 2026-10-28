@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import type { ServerResponse } from "node:http";
 import { z } from "zod";
 
@@ -14,8 +15,10 @@ import type { ModelSelection, RequestOutcome, SteerOutcome } from "../contracts.
 import { parseDataContext, type DataContext } from "../data-context.ts";
 import { preparePointed } from "../pointed.ts";
 import type { Handoffs } from "../delta-context.ts";
+import type { OneOnOneGoals } from "../host/one-on-one-goals.ts";
 import type { ProviderRegistry } from "../harness/registry.ts";
 import { spokenLineFields } from "../live-call-record.ts";
+import { stopReachesLiveTurn } from "../person-stops.ts";
 import type { PhoneSecretSubmissionRegistry } from "../phone-secret.ts";
 import type { ReplyTarget } from "../replies.ts";
 import type { RequestAuth } from "../request-auth.ts";
@@ -24,6 +27,7 @@ import { acceptedSendMatch, parseSendId } from "../send-idempotency.ts";
 import { cancelSteeredMessage, holdSteeredQueue, queuedSteeredMessage, restoreHeldSteeredQueue, settleHeldSteeredQueue } from "../steer-queue.ts";
 import type { BotRecord, GroupRecord, Message, Store } from "../store.ts";
 import { extractSteerImages } from "../turn-images.ts";
+import { followupFacts, helperFollowup, helperFollowupBody, mayFollowUp } from "../helper-followup.ts";
 import type { UsageTrigger } from "../usage-ledger.ts";
 import { pinnedClientThreadGuard } from "./pinned-client-thread.ts";
 import { PASS, type RouteHandler } from "./table.ts";
@@ -49,12 +53,15 @@ export interface BotMessageRouteDeps {
     | "patchMessage" | "patchTask" | "projectBotForTask" | "setActiveLeaf" | "setTaskAskedAt" | "taskByThread" | "tasks">;
   registry: Pick<ProviderRegistry, "get">;
   routines(): RoutineManager | null;
-  handoffs: Pick<Handoffs, "current" | "steered" | "stoppedByPerson">;
+  handoffs: Pick<Handoffs, "current" | "steered">;
+  /** The turn running in a thread now, as its runtime events name it. */
+  liveTurn(threadId: string): string | undefined;
   phoneSecretSubmissions: Pick<PhoneSecretSubmissionRegistry, "hasThread">;
   directTurnDispatchClaims: { get(threadId: string): { threadId: string } | undefined };
   groupSpeakers: ReadonlyMap<string, { botId: string }>;
   desktopManaged: boolean;
   cloudHome: boolean;
+  environmentId: string;
   DirectSendRefused: abstract new (...args: never[]) => { readonly status: number; readonly body: Record<string, unknown> };
   acceptDirectSend(
     input: {
@@ -102,7 +109,7 @@ export interface BotMessageRouteDeps {
     decidedFor?: { id: string; name: string }, always?: boolean, rememberCommand?: boolean,
   ): Promise<RequestOutcome>;
   deliverLateQuestionAnswer(auth: RequestAuth, threadId: string, requestId: string, answer: string, cardMessage: Message, owner: BotRecord): Promise<{ queued: boolean }>;
-  interruptDirectThread(botId: string, threadId: string): Promise<void>;
+  stopThreadForPerson(botId: string, threadId: string): Promise<void>;
   cancelDirectTurnDispatch(botId: string, expectedThreadId?: string): unknown;
   revokeInternalCapabilitiesForThread(threadId: string): void;
   cancelGroupTurnOperations(groupId: string, threadId: string): void;
@@ -117,12 +124,30 @@ export interface BotMessageRouteDeps {
   relayedReaction(threadId: string, messageId: string, person: { email?: string; name?: string }, emoji: string): void;
   /** The conversation an answer to this card belongs to: a run's own, for the copy its automation posted in a chat. */
   answeredIn(threadId: string, requestId: string): string;
+  /** The request came from one of the owner's registered phones. */
+  fromPhone(auth: RequestAuth): boolean;
+  /** Records a send a registered phone made, so the turn it starts knows the person is talking from the phone. */
+  notePhoneSend(sendId: string): void;
+  goals: Pick<OneOnOneGoals, "start">;
+  /** A Team Cloud: the person's reply to a line in their own inbox goes back where that line came from, with no turn
+   * here; null for any other message. */
+  inboxReply?(auth: RequestAuth, threadId: string, replyToId: string, text: string, line: { sendId?: string; sender?: ResolvedSender }): { status: number; message?: Message; error?: string } | null;
 }
 
 /** External interfaces (the Slack worker) opt in. `onBehalfOf`, advertised by /api/health as
  * capabilities.guardedOnBehalfOf, books the turn to that person; only this admin-scoped route reads it. `reaction`
  * replaces `text` when the person reacted in that app: a 👍 or 👎 (Slack's name for it, or the emoji any platform
- * sends) on the message in `replyToId`, made by `onBehalfOf`. */
+ * sends) on the message in `replyToId`, made by `onBehalfOf`.
+ *
+ * `expectedEnvironmentId`, advertised as capabilities.guardedEnvironment, names the install the sender means, in either
+ * case. Any other install answers 409 `guarded_environment` with its own `environmentId` before it stores, reserves,
+ * queues or starts anything, and before it looks the `sendId` up. The comparison runs synchronously once the body is
+ * parsed, against the id loaded at start and never reloaded; acceptance of a matching send may wait on provider
+ * discovery only after it.
+ *
+ * A retry with the same `sendId`, text and `replyToId` answers with the message first accepted under it. That match
+ * reads the stored conversation (messages.db in the data directory), so it survives a restart, and the message keeps
+ * its `sendId` for as long as it exists: nothing expires it; only deleting its whole conversation removes it. */
 const guardedSendSchema = z.object({
   threadId: z.string().regex(/^[\w-]+$/),
   sendId: z.string().regex(/^[A-Za-z0-9_-]{16,80}$/),
@@ -130,6 +155,7 @@ const guardedSendSchema = z.object({
   reaction: z.string().max(64).optional(),
   expectedActiveLeafId: z.string().regex(/^[\w-]+$/).nullable(),
   expectedApprovalMode: z.enum(["ask", "full"]).optional(),
+  expectedEnvironmentId: z.uuid().optional(),
   replyToId: z.string().optional(),
   onBehalfOf: z.object({
     email: z.string().trim().toLowerCase().max(254).pipe(z.email()).optional(),
@@ -139,15 +165,15 @@ const guardedSendSchema = z.object({
 
 export function createBotMessageRoutes(deps: BotMessageRouteDeps): RouteHandler {
   const {
-    store, registry, handoffs, phoneSecretSubmissions, directTurnDispatchClaims, groupSpeakers,
-    desktopManaged: DESKTOP_MANAGED, cloudHome: CLOUD_HOME, DirectSendRefused,
+    store, registry, handoffs, liveTurn, phoneSecretSubmissions, directTurnDispatchClaims, groupSpeakers,
+    desktopManaged: DESKTOP_MANAGED, cloudHome: CLOUD_HOME, environmentId, DirectSendRefused,
     acceptDirectSend, directSendRefusal, startTurn, usageTriggerFor, messageSender, cloudGuestSendRefusal, cloudThreadRefusal,
     cardAnswerRefusal, commandRememberRefusal, requestBehavior, requestedTaskBot, botForThread, threadBusy,
     botAtThreadCapacity, parksBehindCoordination, activeGroupTurnForBot, runningTurnInstance, engineSteersImages, resolveReplyTarget,
     turnSelection, policyModelRefusal, clearUnattended, drainQueuedSends, answeringCardAs, resolveAndSendTrust, resolveAndSendTeamSetup,
     resolveAndSendRoutine, resolveAndSendProfile, resolveAndSendModel, resolveSkillRequest, sendSkillResolution, answerRequest,
-    deliverLateQuestionAnswer, interruptDirectThread, cancelDirectTurnDispatch, revokeInternalCapabilitiesForThread,
-    cancelGroupTurnOperations, closeOpenApprovals, harnessCardOutcome, pressRecords, serverPress, relayedReaction, answeredIn,
+    deliverLateQuestionAnswer, stopThreadForPerson, cancelDirectTurnDispatch, revokeInternalCapabilitiesForThread,
+    cancelGroupTurnOperations, closeOpenApprovals, harnessCardOutcome, pressRecords, serverPress, relayedReaction, answeredIn, fromPhone, notePhoneSend, goals,
   } = deps;
   const pinnedClientThread = pinnedClientThreadGuard(store);
   /** widget -> sendId of a press on its way in: a second tap before acceptance must not send a second answer. */
@@ -174,10 +200,16 @@ export function createBotMessageRoutes(deps: BotMessageRouteDeps): RouteHandler 
       // A distinct route, so an older server answers 404 instead of ignoring the safety preconditions.
       const guardedBody = guarded ? guardedSendSchema.safeParse(body) : null;
       if (guardedBody && !guardedBody.success) {
-        const onBehalfOfInvalid = guardedBody.error.issues.some((issue) => issue.path[0] === "onBehalfOf");
-        return json(res, 400, { error: onBehalfOfInvalid
+        const invalidFields = new Set(guardedBody.error.issues.map((issue) => issue.path[0]));
+        return json(res, 400, { error: invalidFields.has("onBehalfOf")
           ? "onBehalfOf must name the person with an email address, a name, or both"
-          : "guarded sends require threadId, sendId, text (or a reaction) and expectedActiveLeafId" });
+          : invalidFields.has("expectedEnvironmentId")
+            ? "expectedEnvironmentId must be an install's environmentId"
+            : "guarded sends require threadId, sendId, text (or a reaction) and expectedActiveLeafId" });
+      }
+      const expectedEnvironment = guardedBody?.data.expectedEnvironmentId;
+      if (expectedEnvironment !== undefined && expectedEnvironment.toLowerCase() !== environmentId.toLowerCase()) {
+        return json(res, 409, { error: "this message is meant for another OpenMausBot install", code: "guarded_environment", environmentId });
       }
       const relayed = guardedBody?.data?.reaction === undefined ? null : normalizeReaction(guardedBody.data.reaction);
       if (guardedBody?.data?.reaction !== undefined && (!reactionAnswer(relayed) || !body.replyToId || !guardedBody.data.onBehalfOf)) {
@@ -194,13 +226,28 @@ export function createBotMessageRoutes(deps: BotMessageRouteDeps): RouteHandler 
       const threadId = body.threadId ?? bot.threadId;
       const notYours = cloudGuestSendRefusal(auth, threadId);
       if (notYours) return json(res, 403, { error: notYours });
+      if (body.mode !== undefined && body.mode !== "chat" && body.mode !== "goal") return json(res, 400, { error: "mode must be chat or goal" });
+      if (body.mode === "goal") {
+        if (guarded || pressed || fromAnApp || pointing) return json(res, 400, { error: "a goal is a plain typed message" });
+        if (!store.taskByThread(bot.id, threadId)) return json(res, 404, { error: "no such conversation" });
+        const goalRefused = directSendRefusal(bot.id, threadId);
+        if (goalRefused) return json(res, goalRefused.status, goalRefused.body);
+        const goalSendId = parseSendId(body.sendId);
+        const accepted = goalSendId ? acceptedSendMatch(store.messagesFor(threadId), goalSendId, typed, undefined, "goal") : null;
+        if (accepted?.kind === "conflict") return json(res, 409, { error: "sendId already belongs to another message" });
+        if (accepted?.kind === "match") return json(res, 202, { ok: true, threadId, message: accepted.message });
+        const message = goals.start(bot.id, threadId, typed, { sendId: goalSendId, sender: messageSender(auth) });
+        return json(res, 202, { ok: true, threadId, message });
+      }
       const onBehalfOf = guardedBody?.data?.onBehalfOf;
       const trigger: UsageTrigger = onBehalfOf
         ? { kind: "user", ...(onBehalfOf.email ? { email: onBehalfOf.email } : {}), ...(onBehalfOf.name ? { label: onBehalfOf.name } : {}) }
         : usageTriggerFor(auth);
       // Security invariant: another bot's thread answers like a missing one, before anything reads a widget in it.
       if (pressed && !store.taskByThread(bot.id, threadId)) return json(res, 409, { error: "the bot switched tasks before it could receive the message" });
-      const sendId = parseSendId(body.sendId);
+      const phone = fromPhone(auth);
+      // A phone's send without an id gets one, so the turn it starts can be known as the phone's.
+      const sendId = parseSendId(body.sendId) ?? (phone ? randomUUID() : undefined);
       const press = pressed ? prepareWidgetPress(store, threadId, body.widgetAction, sendId) : null;
       if (press && !press.ok) return json(res, press.status, { error: press.error });
       const answered = press ? serverPress(bot, threadId, press.messageId, press.action, auth) : null;
@@ -216,6 +263,8 @@ export function createBotMessageRoutes(deps: BotMessageRouteDeps): RouteHandler 
       const text = press ? press.text : appSent ? appSent.text : typed;
       const target = resolveReplyTarget(threadId, press ? press.messageId : appSent ? appSent.messageId : body.replyToId);
       if (relayed && target?.role !== "bot") return json(res, 400, { error: "a relayed reaction answers a bot's message" });
+      const passedBack = !guarded && !press && !appSent && !pointed && target ? deps.inboxReply?.(auth, threadId, target.id, text, { sendId, sender: messageSender(auth) }) : null;
+      if (passedBack) return json(res, passedBack.status, passedBack.message ? { ok: true, threadId, message: passedBack.message } : { error: passedBack.error });
       // Only a real press or reaction, or an app's own words, marks the reply; a typed reply to the same row never does, whatever its words.
       const records = press && target ? pressRecords(bot, press.action) : null;
       const replyTo: ReplyTarget | undefined = press && target ? { ...target, widgetPress: { label: press.label, action: press.action, ...(records ? { records } : {}) } }
@@ -265,6 +314,7 @@ export function createBotMessageRoutes(deps: BotMessageRouteDeps): RouteHandler 
             return { ok: true as const, threadId, message };
           }
         : undefined;
+      if (phone && sendId) notePhoneSend(sendId);
       if (pressKey) pressesInFlight.set(pressKey, sendId);
       try {
         const receipt = await acceptDirectSend({
@@ -374,6 +424,20 @@ export function createBotMessageRoutes(deps: BotMessageRouteDeps): RouteHandler 
       return json(res, 200, { ok: true, queued: true, threadId: bot.threadId });
     }
 
+    m = path.match(/^\/api\/bots\/([\w-]+)\/helper-followup$/);
+    if (m && method === "POST") {
+      const bot = store.bot(m[1]!);
+      if (!bot?.defaultBot || bot.hidden) return json(res, 404, { error: "no such MausBot" });
+      if (!mayFollowUp(bot, auth)) return json(res, 403, { error: "only MausBot's own person can do this" });
+      const parsed = helperFollowupBody.safeParse(await readBody(req));
+      if (!parsed.success) return json(res, 400, { error: "body must be { ai, apps?, threadId? }" });
+      const threadId = parsed.data.threadId ?? bot.threadId;
+      if (store.botByThread(threadId)?.id !== bot.id) return json(res, 404, { error: "no such conversation" });
+      const next = helperFollowup(store.messagesFor(threadId), () => followupFacts(bot, parsed.data, store.bots, routines?.listRoutines() ?? []));
+      if (!next) return json(res, 409, { error: "this conversation has no intro to follow up" });
+      if ("existing" in next) return json(res, 200, { message: next.existing });
+      return json(res, 201, { message: store.appendMessage(threadId, next.append) });
+    }
     m = path.match(/^\/api\/bots\/([\w-]+)\/compact$/);
     if (m && method === "POST") {
       const body = await readBody(req);
@@ -653,13 +717,15 @@ export function createBotMessageRoutes(deps: BotMessageRouteDeps): RouteHandler 
       if (expectedThreadId !== undefined && (typeof expectedThreadId !== "string" || !/^[\w-]+$/.test(expectedThreadId))) {
         return json(res, 400, { error: "threadId must be a task id" });
       }
+      // The turn the person saw running. Once it is over (the second click of a double click), the Stop is done:
+      // the turn after it, often their queued message, is not theirs to stop with it.
+      const turnId = typeof body.turnId === "string" ? body.turnId : undefined;
+      if (body.turnId !== undefined && (!turnId || turnId.length > 200)) {
+        return json(res, 400, { error: "turnId must name a turn" });
+      }
       if (typeof expectedThreadId === "string" && store.taskByThread(bot.id, expectedThreadId)) {
-        const routine = routines!.activeBotRunForBot(bot.id);
-        if (routine?.threadId === expectedThreadId) await routines!.cancelRun(routine.id);
-        else {
-          handoffs.stoppedByPerson(expectedThreadId);
-          await interruptDirectThread(bot.id, expectedThreadId);
-        }
+        if (!stopReachesLiveTurn(turnId, liveTurn(expectedThreadId))) return json(res, 200, { ok: true, outcome: "already-stopped" });
+        await stopThreadForPerson(bot.id, expectedThreadId);
         return json(res, 200, { ok: true });
       }
       const directClaim = directTurnDispatchClaims.get(bot.threadId);
@@ -695,8 +761,8 @@ export function createBotMessageRoutes(deps: BotMessageRouteDeps): RouteHandler 
       ) {
         return json(res, 409, { error: "the bot switched tasks before it could be interrupted" });
       }
-      handoffs.stoppedByPerson(expectedThreadId ?? bot.threadId);
-      await interruptDirectThread(bot.id, expectedThreadId ?? bot.threadId);
+      if (!stopReachesLiveTurn(turnId, liveTurn(expectedThreadId ?? bot.threadId))) return json(res, 200, { ok: true, outcome: "already-stopped" });
+      await stopThreadForPerson(bot.id, expectedThreadId ?? bot.threadId);
       return json(res, 200, { ok: true });
     }
     return PASS;

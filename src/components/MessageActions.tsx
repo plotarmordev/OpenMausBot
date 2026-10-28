@@ -194,7 +194,7 @@ export function MessageActions({
           aria-label={t("chat.messageActions")}
           onKeyDown={moveFocus}
           className={cn(
-            "absolute z-40 min-w-52 max-w-[calc(100vw-2rem)] overflow-hidden rounded-xl border border-hairline/50 bg-menu py-1.5 shadow-2xl shadow-black/50",
+            "popover-surface absolute z-40 min-w-52 max-w-[calc(100vw-2rem)] overflow-hidden rounded-xl border border-hairline/50 bg-menu py-1.5 shadow-2xl shadow-black/50",
             menuAbove ? "bottom-full mb-1" : "top-full mt-1",
             mirrored !== menuFlipped ? "end-0" : "start-0",
           )}
@@ -211,7 +211,7 @@ export function MessageActions({
                 setMenuOpen(false);
                 moreRef.current?.focus();
               }}
-              className="flex w-full items-center gap-3 px-3.5 py-2 text-start text-[14px] text-ink hover:bg-raised/70 focus-visible:bg-raised/70 focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-60"
+              className="flex w-full items-center gap-3 px-3.5 py-2 text-start text-[14px] text-ink hover:bg-menu-hover focus-visible:bg-menu-hover focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-60"
             >
               <span className="flex size-5 shrink-0 items-center justify-center text-ink-secondary" aria-hidden="true">{item.icon}</span>
               <span className="min-w-0 flex-1 truncate">{item.label}</span>

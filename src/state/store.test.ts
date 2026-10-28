@@ -1638,6 +1638,27 @@ describe("browser profile announcements", () => {
   });
 });
 
+describe("phone grant announcements", () => {
+  const granted: Bot = {
+    id: "phone-bot", threadId: "phone-thread", name: "Pepper", title: "", description: "",
+    notifications: true, color: "green", unread: false,
+    modelSelection: { instanceId: "codex", model: "default" }, phoneApps: { location: "read" },
+    messages: [{ id: "message", role: "user", kind: "text", at: 1, text: "Keep this conversation" }],
+  };
+  const { messages, phoneApps: _old, ...announcement } = granted;
+
+  it("clears a stale grant when a complete frame omits it", () => {
+    const next = reducer({ ...initialState, bots: [granted] }, { type: "botPatched", bot: announcement });
+    expect(next.bots[0]?.phoneApps).toBeUndefined();
+    expect(next.bots[0]?.messages).toBe(messages);
+  });
+
+  it("clears it on the thread-snapshot path too", () => {
+    const next = reducer({ ...initialState, bots: [{ ...granted, awaitingThreadSnapshot: true }] }, { type: "botPatched", bot: { ...announcement, messages } });
+    expect(next.bots[0]?.phoneApps).toBeUndefined();
+  });
+});
+
 describe("section Chiefs", () => {
   const bot = (id: string, section: string, chiefOfStaff = false) => ({
     id,
@@ -2520,6 +2541,12 @@ describe("live config frames", () => {
     const automaticRecovery = { enabled: true, backup: { instanceId: "backup", model: "fixture-model" } };
     expect(configStatusFromFrame({ ...baseFrame, automaticRecovery }).automaticRecovery).toEqual(automaticRecovery);
     expect(configStatusFromFrame({ ...baseFrame, automaticRecovery: { enabled: false } }).automaticRecovery).toEqual({ enabled: false });
+  });
+
+  it("keeps a Team Cloud's team through live config refreshes, so its people stay in the @ list", () => {
+    const team = { id: "team-acme", name: "Acme", cloudPage: "https://cloud.example.test/cloud" };
+    expect(configStatusFromFrame({ ...baseFrame, team }).team).toEqual(team);
+    expect(configStatusFromFrame(baseFrame)).not.toHaveProperty("team");
   });
 
   it("keeps an OMB Cloud home's flag through live config refreshes, and adds none elsewhere", () => {

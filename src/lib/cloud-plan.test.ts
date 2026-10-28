@@ -3,7 +3,7 @@ import type { CloudAccountState, CloudPlanSnapshot } from "../../electron/cloud-
 import { CHECKOUT_SOURCES } from "../../electron/cloud-account.mjs";
 import type { CloudCredit, CloudOffer, CloudOfferPlan, CloudTeam, CloudTrial } from "../../electron/cloud-home.mjs";
 import { buyOfferAllowed, CLOUD_SOURCES, cloudAddView, cloudCreditLine, cloudIntroView, cloudNoticeKind, cloudPlanLine, cloudPlanView, cloudTrialNotice, cloudTrialView,
-  cloudBeatTerms, dueToday, moneyBackLine, moneyBackShort, offerPlan, offerTrialDays, planCardRows, planCards, sameTerms, sharedTrialDays, trialTimeline, usd,
+  dueToday, moneyBackLine, moneyBackShort, offerPlan, offerTrialDays, planCardRows, planCards, sameTerms, sharedTrialDays, trialTimeline, usd,
   type CloudSignInPhase } from "./cloud-plan";
 import { setLocale } from "./i18n";
 
@@ -220,16 +220,6 @@ describe("what is for sale, as the Admin says", () => {
     expect(offerPlan(OFFER).tier).toBe("pro"); expect(offerPlan(OFFER, "max").tier).toBe("max"); expect(offerPlan(OFFER, "team").tier).toBe("pro");
     expect(moneyBackLine(OFFER)).toBe("14-day money-back on every plan.");
     expect(moneyBackLine({ ...OFFER, refundDays: undefined })).toBeNull();
-  });
-
-  it("the welcome's Cloud beat says the Admin's offer in one line: trial and lowest price, credit and money-back only when offered", () => {
-    expect(cloudBeatTerms(OFFER)).toEqual({ trial: true, action: "Start free trial",
-      line: "Free for 7 days, then from $15/month + tax. Includes $5 of Claude credit. 14-day money-back." });
-    expect(cloudBeatTerms({ ...OFFER, creditUsd: undefined, refundDays: undefined }).line).toBe("Free for 7 days, then from $15/month + tax.");
-    expect(cloudBeatTerms(noTrial(OFFER))).toEqual({ trial: false, action: "See plans", line: "From $15/month + tax. 14-day money-back." });
-    expect(cloudBeatTerms({ ...OFFER, plans: [{ ...PLANS[0]!, trialDays: undefined }, PLANS[1]!, PLANS[2]!] }).line, "the lowest price among plans with the trial")
-      .toContain("then from $49/month");
-    expect(cloudBeatTerms({ ...noTrial(OFFER), creditUsd: 5 }).line, "credit comes only with a trial").not.toContain("credit");
   });
 
   it("the account's own terms are the same as those shown only with the same price and the same trial for that plan", () => {

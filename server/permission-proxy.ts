@@ -4,6 +4,7 @@ import { connect } from "node:net";
 import { randomUUID } from "node:crypto";
 import { parseAskQuestions, questionAnswersByQuestion, type AskQuestion } from "../shared/ask-question.ts";
 import { allowsTool, parseToolScope } from "../shared/tool-scope.ts";
+import { REFUSED_NEXT_STEP } from "./reply-habits.ts";
 
 const selection = parseToolScope(process.env.OMB_PERMISSION_TOOL_SCOPE === undefined
   ? undefined : (() => { try { return JSON.parse(process.env.OMB_PERMISSION_TOOL_SCOPE); } catch { return null; } })());
@@ -188,7 +189,7 @@ async function handle(msg: any) {
         if (answer.always && suggestions) result.updatedPermissions = suggestions;
         text = JSON.stringify(result);
       } else {
-        text = JSON.stringify({ behavior: "deny", message: answer.message || "Denied from OpenMausBot" });
+        text = JSON.stringify({ behavior: "deny", message: (answer.message || "Denied from OpenMausBot") + (answer.source === "user" ? REFUSED_NEXT_STEP : "") });
       }
     }
     return reply(text);

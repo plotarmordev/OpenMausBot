@@ -12,7 +12,10 @@ import { memorySearchText } from "./memory-search-text.ts";
 import { boundedAgentResult } from "./agents-result.ts";
 import { callResearchTool, RESEARCH_TOOL_NAMES } from "./agents-research-tools.ts";
 import { callHelperTool, HELPER_TOOL_NAMES } from "./agents-helper-tools.ts";
+import { callMausBotTool, MAUSBOT_TOOL_NAMES } from "./agents-mausbot-tools.ts";
 import { callPageTool, PAGE_TOOL_NAMES } from "./agents-pages-tools.ts";
+import { callPersonTool, PERSON_TOOL_NAMES } from "./agents-person-tools.ts";
+import { callDevsTool, DEVS_TOOL_NAMES } from "./agents-devs-tools.ts";
 
 export interface ToolCallContext {
   botId: string;
@@ -94,6 +97,20 @@ function handoffIds(r: Json): string[] {
   return receipts.map((receipt) => receipt.requestId).filter((id): id is string => typeof id === "string" && id.trim().length > 0);
 }
 const MOVED_ENTRIES_SHOWN = 5;
+const FORGOTTEN_SHOWN = 8;
+
+function forgetText(passage: string, r: Json): string {
+  const list = (value: unknown) => Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
+  const notes = list(r.forgotten);
+  const aboutMe = list(r.aboutMe);
+  if (!notes.length && !aboutMe.length) {
+    return `Nothing saved mentions ${JSON.stringify(passage)}: not in your notes, not in About me. Try other words for it once; if nothing matches, tell the person it was not saved.`;
+  }
+  const facts = [...new Set([...notes, ...aboutMe])];
+  const shown = facts.slice(0, FORGOTTEN_SHOWN).map((fact) => JSON.stringify(fact)).join(", ");
+  const more = facts.length > FORGOTTEN_SHOWN ? ` and ${facts.length - FORGOTTEN_SHOWN} more` : "";
+  return `Forgotten everywhere it was saved${aboutMe.length ? ", About me included, which all their bots read" : ""}: ${shown}${more}. Confirm to the person in one plain line what you forgot.`;
+}
 
 export const capResult = (text: string, context: ToolCallContext) => boundedAgentResult(text, (retained, truncated) => {
   if (context.externalRuntime) throw new Error("External runtime results are not cached");
@@ -181,7 +198,10 @@ export async function callTool(name: string, args: Json, context: ToolCallContex
   if (CARD_TOOL_NAMES.has(name)) return callCardTool(name, args, context);
   if (RESEARCH_TOOL_NAMES.has(name)) return callResearchTool(name, args, context);
   if (HELPER_TOOL_NAMES.has(name)) return callHelperTool(name, args, context);
+  if (MAUSBOT_TOOL_NAMES.has(name)) return callMausBotTool(name, args, context);
   if (PAGE_TOOL_NAMES.has(name)) return callPageTool(name, args, context);
+  if (PERSON_TOOL_NAMES.has(name)) return callPersonTool(name, args, context);
+  if (DEVS_TOOL_NAMES.has(name)) return callDevsTool(name, args, context);
   if (TRIGGER_TOOL_NAMES.has(name)) return callTriggerTool(name, args, context);
   // Second lock: with sharing off the catalog already omits these tools.
   if (SHARED_COMPUTER_TOOL_NAMES.has(name) && !context.sharedComputers) {
@@ -226,10 +246,10 @@ export async function callTool(name: string, args: Json, context: ToolCallContex
       && (canonical.thread === undefined || canonical.thread === "standing" || canonical.thread === "new")
       && (canonical.reply === undefined || canonical.reply === "resume" || canonical.reply === "none")
       && optional("consult", "boolean") && optional("in_my_folder", "boolean")
-      && optional("done_when", "string") && optional("reason", "string");
+      && optional("done_when", "string") && optional("reason", "string") && optional("title", "string");
     if (!usable) {
       return {
-        text: `coordinate_bots takes snake_case arguments: bot_ids (an array of 1-4 teammate ids) and message are required; group_id, reason, rework, thread ("standing" or "new"), reply ("resume" or "none"), consult (true or false), in_my_folder (true or false) and done_when are optional. Received: ${Object.keys(args).join(", ") || "none"}.`,
+        text: `coordinate_bots takes snake_case arguments: bot_ids (an array of 1-4 teammate ids) and message are required; group_id, reason, rework, title, thread ("standing" or "new"), reply ("resume" or "none"), consult (true or false), in_my_folder (true or false) and done_when are optional. Received: ${Object.keys(args).join(", ") || "none"}.`,
         isError: true,
       };
     }
@@ -237,7 +257,8 @@ export async function callTool(name: string, args: Json, context: ToolCallContex
       groupId: canonical.group_id, botIds: ids, message: canonical.message,
       reason: typeof canonical.reason === "string" && canonical.reason.trim() ? canonical.reason.trim() : undefined,
       rework: canonical.rework,
-      thread: canonical.thread, reply: canonical.reply, consult: canonical.consult, inMyFolder: canonical.in_my_folder,
+      thread: canonical.thread, reply: canonical.reply,
+      title: typeof canonical.title === "string" && canonical.title.trim() ? canonical.title.trim() : undefined, consult: canonical.consult, inMyFolder: canonical.in_my_folder,
       done_when: typeof canonical.done_when === "string" && canonical.done_when.trim() ? canonical.done_when.trim() : undefined,
     }) });
     return { text: JSON.stringify(r), ...(r.error ? { isError: true } : {}) };
@@ -271,18 +292,18 @@ export async function callTool(name: string, args: Json, context: ToolCallContex
   if (name === "list_bots") {
     const r = await api(`/api/internal/agents?self=${encodeURIComponent(BOT_ID)}`);
     const bots = (r.bots as Array<Json>) ?? [];
-    if (!bots.length) return { text: "No other reachable bots yet." };
+    if (!bots.length) return { text: "No other bots you can reach yet." };
     const lines = bots.map((b) => {
       const role = b.title ? ` — ${b.title}` : "";
       const about = b.description ? ` (${String(b.description).slice(0, 120)})` : "";
       const state = typeof b.statusText === "string"
         ? (b.status === "available" ? "" : b.statusText)
         : (b.busy ? "busy" : "");
-      const team = typeof b.section === "string" ? `, team: ${peerName(b.section) || "General"}` : "";
+      const team = typeof b.section === "string" ? `, department: ${peerName(b.section) || "General"}` : "";
       return `- ${b.name}${role}${about} [id: ${b.id}, model: ${b.model}${team}${state ? `, ${state}` : ""}]`;
     });
     return {
-      text: `Reachable teammates:\n${lines.join("\n")}\n\nUse coordinate_bots for concrete work or, with consult: true, for advice, then end your turn. Busy teammates queue and results resume you automatically.`,
+      text: `Bots you can reach (every department; you can contact any of them):\n${lines.join("\n")}\n\nUse coordinate_bots for concrete work or, with consult: true, for advice, then end your turn. Busy teammates queue and results resume you automatically.`,
     };
   }
   if (name === "list_rooms") {
@@ -437,7 +458,7 @@ export async function callTool(name: string, args: Json, context: ToolCallContex
     };
   }
   if (name === "create_room") {
-    if (args.section !== undefined) return { text: "Room sections are fixed to your own section; ask the user to move rooms.", isError: true };
+    if (args.section !== undefined) return { text: "A room you create stays in your own department; ask the user to move it.", isError: true };
     const roomName = String(args.name ?? "").trim();
     const memberIds = Array.isArray(args.member_bot_ids)
       ? args.member_bot_ids.map((id) => String(id).trim()).filter(Boolean)
@@ -611,10 +632,11 @@ export async function callTool(name: string, args: Json, context: ToolCallContex
     return confirmationResult(r, "the default model change", "model");
   }
   if (name === "memory_update") {
-    if (!["append", "replace", "remove", "supersede"].includes(String(args.action))
-      || (args.action !== "remove" && (typeof args.text !== "string" || !args.text.trim()))
+    const passageOnly = args.action === "remove" || args.action === "forget";
+    if (!["append", "replace", "remove", "supersede", "forget"].includes(String(args.action))
+      || (!passageOnly && (typeof args.text !== "string" || !args.text.trim()))
       || (args.action !== "append" && (typeof args.old_text !== "string" || !args.old_text.trim()))) {
-      return { text: "Use memory_update action=append with text, replace or supersede with text and old_text, or remove with old_text.", isError: true };
+      return { text: "Use memory_update action=append with text, replace or supersede with text and old_text, remove with old_text, or forget with old_text naming what to forget.", isError: true };
     }
     const { body: r } = await apiResponse("/api/internal/memory", {
       method: "POST",
@@ -628,15 +650,16 @@ export async function callTool(name: string, args: Json, context: ToolCallContex
       }),
     });
     if (r.error || r.ok !== true) return { text: String(r.error ?? "Memory update was not confirmed."), isError: true };
+    if (args.action === "forget") return { text: forgetText(String(args.old_text), r) };
     const entry = typeof r.entry === "string" && r.entry ? ` Entry: ${r.entry}` : "";
     const moved = Array.isArray(r.moved) ? r.moved.filter((line) => typeof line === "string") : [];
     const full = r.truncated
-      ? "\nSaved, but the lines that never move out of MEMORY.md (hand-written ones, health and safety facts) fill what loads each session, so the newest entries do not load. Ask the person to trim MEMORY.md in Settings."
+      ? "\nSaved, but the lines that never move out of MEMORY.md (hand-written ones, health and safety facts) fill what loads each session, so the newest entries do not load. Tell the person their saved notes are full, and that they can remove ones they no longer need under What it remembers in your panel."
       : "";
     const shown = moved.slice(0, MOVED_ENTRIES_SHOWN).map((text) => text.split("\n")[0]);
     const more = moved.length > shown.length ? `\n…and ${moved.length - shown.length} more` : "";
     const movedNote = moved.length
-      ? `\nTo stay within what loads each session, moved ${moved.length === 1 ? "1 older entry" : `${moved.length} older entries`} to memory/archive.md (session_search finds them):\n${shown.join("\n")}${more}`
+      ? `\nTo stay within what loads each session, moved ${moved.length === 1 ? "1 older entry" : `${moved.length} older entries`} to your archive (session_search finds them):\n${shown.join("\n")}${more}`
       : "";
     return { text: `Memory updated.${entry}${full}${movedNote}` };
   }

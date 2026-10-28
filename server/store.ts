@@ -19,6 +19,7 @@ import { workspaceDir } from "./workspace.ts";
 import type { Destination } from "./surface.ts";
 import { newId, type ModelSelection } from "./contracts.ts";
 import { pickBotName } from "./names.ts";
+import { rotationColor } from "./bot-look.ts";
 import { redactBotAuthored } from "./message-redaction.ts";
 import { AVATAR_FOCUS_CENTER, AVATAR_ZOOM_MIN, botAvatarProfile, clampAvatarFocus, clampAvatarZoom } from "../shared/bot-avatar.ts";
 import { approvalModeFor, isApprovalMode, modelSwitchNeedsAsk, threadApproval, type ApprovalMode } from "../shared/approval-mode.ts";
@@ -30,14 +31,15 @@ import { isMentionBoundary, isMentionNameContinuation } from "../shared/mention-
 import type { HandedState } from "./delta-context.ts";
 import type { AgentPart, PartPair, RoomPart } from "./package-parts.ts";
 import type {
-  BotActivity, GroupDefaultResponder, GroupTask as GroupTaskRecord, MausColor,
+  BotActivity, GroupDefaultResponder, GroupTask as GroupTaskRecord,
   TaskClosedBy, TaskOpenedBy, TaskUsage, WireBot, WireGroup,
   WireMessage, WireTask, BotProject as BotProjectRecord,
 } from "../shared/wire.ts";
 import { movesThreadToTop, nextOpenThread } from "../shared/wire.ts";
 import { parseConnectorTools } from "./connector-tools.ts";
 import { sameModelSelection } from "../shared/thread-model.ts";
-import { initialGreetingMessage } from "./initial-greeting.ts"; import { createDefaultBot, defaultBotRefusal } from "./default-bot.ts";
+import { initialGreetingMessage } from "./initial-greeting.ts"; import { createDefaultBot, defaultBotRefusal, type DefaultBotIntro } from "./default-bot.ts";
+import { appsFromCreator } from "./inherited-apps.ts";
 import { ThreadCache, type ThreadState } from "./thread-cache.ts";
 export type {
   BotActivity, ConnectorCardData, GroupDefaultResponder, OptionCardData,
@@ -102,7 +104,7 @@ const ASK_NOW = { approvalMode: "ask" as const, autoApprove: false, alwaysAllow:
 const TASK_PATCH_FIELDS = [
   "title", "projectId", "modelSelection", "approvalMode", "autoApprove", "alwaysAllow",
   "unread", "lastReadMessageId", "rewound", "archivedAt", "pinned", "pinnedMessageId", "resumeCursors", "lastInstanceId", "cwd",
-  "routineRunId", "surface", "surfaceSource", "snoozedUntil", "link", "linkAuto", "appliedCompactionId", "contextFloor", "lastContextModel",
+  "routineRunId", "surface", "surfaceSource", "snoozedUntil", "link", "linkAuto", "appliedCompactionId", "contextFloor", "lastContextModel", "setupRequest",
 ] as const satisfies readonly (keyof TaskRecord)[];
 export type TaskPatch = Partial<Pick<TaskRecord, typeof TASK_PATCH_FIELDS[number]>>;
 
@@ -202,19 +204,6 @@ function tightenRegistryFile(file: string): void {
   }
 }
 const messagesFile = (threadId: string) => join(DATA_DIR, `messages-${threadId}.json`);
-
-const COLORS: MausColor[] = [
-  "green",
-  "blue",
-  "red",
-  "orange",
-  "purple",
-  "cyan",
-  "pink",
-  "yellow",
-  "teal",
-  "coral",
-];
 
 export const sectionKey = (section?: string | null): string => section?.trim() || "";
 
@@ -318,6 +307,7 @@ export class Store {
   private completeNewBotSelection: (selection: ModelSelection) => ModelSelection;
   private driverKindOf: (instanceId: string) => string | undefined;
   private initialLanguage: string | (() => string);
+  private personName: () => string | undefined;
   private listeners = new Set<(change: StoreChange) => void>();
   private registeringInitialSections = true;
   /** Clearing this slot must not clear a concurrently running task's activity. */
@@ -329,11 +319,15 @@ export class Store {
     /** Unknown counts as another driver, so Full and Custom fall back to Ask. */
     driverKindOf: (instanceId: string) => string | undefined = () => undefined,
     initialLanguage: string | (() => string) = Intl.DateTimeFormat().resolvedOptions().locale,
+    /** The person a new bot's greeting names, read as each bot is created; undefined where no one person owns the
+     * server. */
+    personName: () => string | undefined = () => undefined,
   ) {
     this.defaultSelection = defaultSelection;
     this.completeNewBotSelection = completeNewBotSelection;
     this.driverKindOf = driverKindOf;
     this.initialLanguage = initialLanguage;
+    this.personName = personName;
     mkdirSync(DATA_DIR, { recursive: true });
     for (const file of [BOTS_FILE, GROUPS_FILE]) tightenRegistryFile(file);
     // An unreadable bots.json must never read as "every member was deleted".
@@ -974,7 +968,7 @@ export class Store {
     fallbackDetail = "OpenMausBot restarted before this goal finished.",
     fallbackFinishedAt = Date.now(),
   ): number {
-    const ownedThreadIds = new Set<string>();
+    const ownedThreadIds = new Set<string>(this.bots.flatMap((bot) => (bot.tasks ?? []).map((task) => task.threadId)));
     for (const group of this.groups) {
       ownedThreadIds.add(group.threadId);
       for (const task of group.tasks ?? []) ownedThreadIds.add(task.threadId);
@@ -1352,7 +1346,7 @@ export class Store {
       soul: profile.soul ?? "",
       soulHash: soulHash(profile.soul ?? ""),
       notifications: true,
-      color: profile.color ?? COLORS[this.bots.length % COLORS.length],
+      color: profile.color ?? rotationColor(this.bots.length),
       ...(profile.mascotExpression ? { mascotExpression: profile.mascotExpression } : {}),
       ...(profile.mascotBody ? { mascotBody: profile.mascotBody } : {}),
       // Restricted from its first frame: no one else is ever told it exists.
@@ -1388,7 +1382,7 @@ export class Store {
     // Before its transcript: clients need the bot/thread mapping to place either message.
     this.emit({ type: "bot", botId: bot.id });
     if (opts.seedMessages !== false) {
-      this.appendMessage(bot.threadId, initialGreetingMessage(name, this.initialLanguage));
+      this.appendMessage(bot.threadId, initialGreetingMessage(name, this.initialLanguage, !bot.soul?.trim() && !bot.description.trim(), this.personName()));
     }
     return bot;
   }
@@ -1410,11 +1404,9 @@ export class Store {
         const createdAt = Date.now();
         const modelSelection = this.newBotSelection(operation.fields.modelSelection);
         next = { id: operation.botId, threadId: operation.threadId, name: operation.fields.name,
-          title: "", description: "", soul: "", notifications: true, color: COLORS[nextBots.length % COLORS.length], unread: false,
+          title: "", description: "", soul: "", notifications: true, color: rotationColor(nextBots.length), unread: false,
           resumeCursors: {}, createdAt, ...operation.fields, modelSelection,
-          autoApprove: false, composio: false, approvePeerComms: false,
-          // Absent would mean every tool once connected apps are turned on.
-          connectorTools: {},
+          autoApprove: false, approvePeerComms: false,
           // A restricted Chief never creates a bot everyone sees.
           ...(chief.visibility && chief.visibility !== "everyone" ? { visibility: structuredClone(chief.visibility) } : {}),
           // A Chief's new specialist reports to the Chief's own person.
@@ -1422,6 +1414,7 @@ export class Store {
           tasks: [{ threadId: operation.threadId, title: UNTITLED_THREAD, createdAt, updatedAt: createdAt, resumeCursors: {},
             unread: false, activity: "idle", busy: false }],
         };
+        Object.assign(next, appsFromCreator(chief, next));
         if (!next.cwd) delete next.cwd;
         nextBots.unshift(next);
       } else {
@@ -2323,8 +2316,8 @@ export class Store {
   needsSeed() { return this.bots.length === 0; }
 
   /** A new place's first bot is its MausBot and its Chief; a Team Cloud's (`defaultBot: false`) is the team's Chief only. */
-  seedIfEmpty({ defaultBot = true }: { defaultBot?: boolean } = {}) {
+  seedIfEmpty({ defaultBot = true, intro }: { defaultBot?: boolean; intro?: DefaultBotIntro } = {}) {
     if (!this.needsSeed()) return;
-    if (defaultBot) createDefaultBot(this, { chief: (id) => this.setChiefOfStaff(id) }); else this.setChiefOfStaff(this.createBot().id);
+    if (defaultBot) createDefaultBot(this, { chief: (id) => this.setChiefOfStaff(id), ...(intro ? { intro } : {}) }); else this.setChiefOfStaff(this.createBot().id);
   }
 }

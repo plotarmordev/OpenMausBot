@@ -11,6 +11,11 @@ import { AskingLine } from "./TeamOwner";
  * Called, not mounted: a quiz that dropped out must come back as null so the transcript draws no row and no day
  * separator.
  */
+function typedPast(card: Message, transcript: Message[]): boolean {
+  const index = transcript.findIndex((entry) => entry.id === card.id);
+  return index >= 0 && transcript.slice(index + 1).some((later) => later.role === "user" && later.kind === "text");
+}
+
 export function optionsCardRow({ message: m, transcript, botId, botName, threadId }: {
   message: Message;
   transcript: Message[];
@@ -18,10 +23,13 @@ export function optionsCardRow({ message: m, transcript, botId, botName, threadI
   botName: string;
   threadId: string;
 }): ReactNode {
+  // MausBot's follow-up is drawn under its intro (HelperIntro), never as a row of its own.
+  if (m.helperFollowup) return null;
   const card = m.helperIntro ? (
-    <HelperIntro botId={botId} threadId={threadId} message={m} asksDone={shouldHideOnboardingCard(m, transcript)} />
+    <HelperIntro botId={botId} threadId={threadId} message={m} answered={shouldHideOnboardingCard(m, transcript)}
+      followup={transcript.find((entry) => entry.helperFollowup)} />
   ) : m.card?.requestId && m.card.questionRequest ? (
-    <QuestionCard threadId={threadId} bot={{ name: botName }} message={m} />
+    <QuestionCard threadId={threadId} bot={{ name: botName }} message={m} typedPast={typedPast(m, transcript)} />
   ) : m.card?.requestId && m.card.tool ? (
     <ApprovalCard bot={{ name: botName }} message={m} threadId={threadId} />
   ) : shouldHideOnboardingCard(m, transcript) ? null : (

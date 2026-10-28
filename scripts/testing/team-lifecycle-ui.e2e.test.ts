@@ -121,8 +121,8 @@ if (!enabled) console.log("skipping team lifecycle UI e2e: set OMB_UI_E2E=1 to i
     await manage("Delivery");
     await click("Move bots to Delivery");
     await click("Researcher");
-    // Hold only the creation response: persistence and SSE remain real. The
-    // user can dismiss the nested dialog while that request is in flight.
+    // Hold only the creation response: persistence and SSE remain real, and
+    // the unsaved ticks above must survive the wait.
     await ui("eval", "--js", `(() => {
       const original = window.fetch.bind(window);
       window.fetch = async (input, init) => {
@@ -136,14 +136,11 @@ if (!enabled) console.log("skipping team lifecycle UI e2e: set OMB_UI_E2E=1 to i
       return true;
     })()`);
     await click("New Bot");
-    await expect.poll(async () => (await ui("eval", "--js", "[...document.querySelectorAll('[role=dialog] button')].find(button => button.textContent.trim() === 'Create bot')?.disabled")).result).toBe(false);
-    await click("Create bot");
     let created: { id: string; name: string };
     await expect.poll(async () => {
       created = (await ui("eval", "--js", "window.createdTeamMember ?? null")).result;
       return Boolean(created?.id);
     }, { timeout: 10_000 }).toBe(true);
-    await click("Close");
     await ui("eval", "--js", "window.releaseTeamMember(); true");
     const checked = async (name: string) => (await ui("eval", "--js",
       `document.querySelector(${JSON.stringify(`[role="checkbox"][aria-label=${JSON.stringify(name)}]`)})?.getAttribute('aria-checked')`)).result;

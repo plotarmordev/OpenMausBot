@@ -230,18 +230,6 @@ export function trialTimeline(offer: CloudOffer, now: number): Array<{ when: str
   return [today, ...reminder, { when: shortDate(charge), text: t("cloudBuy.timeline.firstPayment") }];
 }
 
-/** The welcome's Cloud beat: the Admin's offer in one line (trial days and the lowest price, the credit, money-back) and
- * its one action, Start free trial, or See plans without a trial. No number is the app's own. */
-export function cloudBeatTerms(offer: CloudOffer): { trial: boolean; line: string; action: string } {
-  const days = offerTrialDays(offer);
-  const priced = days ? offer.plans.filter(plan => plan.trialDays) : offer.plans;
-  const price = usd(Math.min(...priced.map(plan => plan.amount)) / 100);
-  const line = [days ? t("onboarding.cloud.trial", { days, price }) : t("onboarding.cloud.price", { price }),
-    days && offer.creditUsd ? t("onboarding.cloud.credit", { credit: usd(offer.creditUsd) }) : null,
-    offer.refundDays ? t("onboarding.cloud.moneyBack", { days: offer.refundDays }) : null].filter(Boolean).join(" ");
-  return { trial: Boolean(days), line, action: days ? t("cloudIntro.start") : t("onboarding.cloud.seePlans") };
-}
-
 /** The plan picked before signing in costs and starts the same for this account (its session's own offer); otherwise
  * Choose shows the account's terms before any checkout, so "$0.00 today" is never said of a paid one. */
 export function sameTerms(shown: CloudOffer | null | undefined, mine: CloudOffer | null | undefined, tier: string): boolean {

@@ -118,7 +118,7 @@ export function PairPage({ initialCode, initialEmail = null, reason }: { initial
           <p role="status" className="text-[20px] font-semibold">{cloudHome ? "Opening the Cloud…" : `Connecting to ${environment?.label ?? "this OpenMausBot"}…`}</p>
         ) : <>
         <h1 className="text-[20px] font-semibold">{cloudHome ? "My Cloud" : `${mode === "email" ? "Sign in to" : "Connect to"} ${environment?.label ?? "this OpenMausBot"}`}</h1>
-        <p className="mt-1.5 text-[13.5px] leading-relaxed text-ink-secondary">
+        <p className="mt-1.5 text-[14px] leading-relaxed text-ink-secondary">
           {environment && !cloudHome ? `Version ${environment.version} on ${environment.platform}. ` : ""}
           {pairIntro({ mode, sent, email, cloudHome })}
         </p>
@@ -126,7 +126,7 @@ export function PairPage({ initialCode, initialEmail = null, reason }: { initial
         {error && cloudHome && initialCode ? <p className="mt-3 text-[13px] text-ink-secondary">This link has expired or was already used. In the OpenMausBot app on your computer, open Settings → MausBot Cloud and choose Open the Cloud.</p> : null}
         </>}
         {opening ? null : connected ? (
-          <p className="mt-4 text-[13.5px]">
+          <p className="mt-4 text-[14px]">
             This browser is already connected.{" "}
             <a href="/" className="text-accent underline">
               Open the app

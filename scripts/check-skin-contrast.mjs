@@ -31,12 +31,47 @@ function parseBase(source) {
 /** Every `[data-skin="x"] { … }` block, as id → {token: value}, over the
  * inherited base so a skin is measured as it actually renders. */
 function parseSkins(source) {
-  const base = parseBase(source);
+  const { desktop, phone } = splitPhone(source);
+  const base = parseBase(desktop);
   const skins = new Map();
-  for (const [, id, body] of source.matchAll(/\[data-skin="([a-z-]+)"\]\s*\{([^}]*)\}/g)) {
+  for (const [, id, body] of desktop.matchAll(/\[data-skin="([a-z-]+)"\]\s*\{([^}]*)\}/g)) {
     skins.set(id, { ...base, ...declarations(body) });
   }
+  // The phone block re-declares some tokens of a skin under a width query, so
+  // that skin is measured twice: as it renders on desktop and as "<id> (phone)".
+  const phoneTokens = new Map();
+  for (const [, id, body] of phone.matchAll(/\[data-skin="([a-z-]+)"\]\)?\s*\{([^}]*)\}/g)) {
+    phoneTokens.set(id, declarations(body));
+    skins.set(`${id} (phone)`, { ...skins.get(id), ...phoneTokens.get(id) });
+  }
+  // Advanced mode re-declares some tokens of a skin, measured as "<id> (advanced)",
+  // and with the phone block over it as "<id> (advanced, phone)".
+  for (const [, id, body] of desktop.matchAll(/\[data-skin="([a-z-]+)"\]:where\(:root\[data-interface="advanced"\][^{]*\{([^}]*)\}/g)) {
+    const advanced = { ...skins.get(id), ...declarations(body) };
+    skins.set(`${id} (advanced)`, advanced);
+    if (phoneTokens.has(id)) skins.set(`${id} (advanced, phone)`, { ...advanced, ...phoneTokens.get(id) });
+  }
   return skins;
+}
+
+/** The `@media (max-width: 767.98px) { … }` block that re-declares skin tokens,
+ * cut out of the source so its skin selectors are not mistaken for a second
+ * definition of the skin. Other blocks under the same query hold layout only. */
+function splitPhone(source) {
+  for (const { index: start } of source.matchAll(/@media \(max-width: 767\.98px\)\s*\{/g)) {
+    let depth = 0;
+    let end = source.indexOf("{", start);
+    for (let i = end; i < source.length; i++) {
+      if (source[i] === "{") depth++;
+      else if (source[i] === "}" && --depth === 0) {
+        end = i + 1;
+        break;
+      }
+    }
+    const phone = source.slice(start, end);
+    if (phone.includes("[data-skin=")) return { desktop: source.slice(0, start) + source.slice(end), phone };
+  }
+  return { desktop: source, phone: "" };
 }
 
 function parseHex(value) {
@@ -167,22 +202,22 @@ for (const [id, tokens] of skins) {
     continue;
   }
   for (const { fg, bg, ratio } of problems) {
-    const floor = BASELINE_FLOORS.get(`${id}|${fg}|${bg}`);
+    const floor = BASELINE_FLOORS.get(`${id.replace(/ \(.*\)$/, "")}|${fg}|${bg}`);
     if (floor === undefined || ratio < floor - BASELINE_DRIFT) skinFailed = true;
   }
   console.log(`${skinFailed ? "✗" : "~"} ${id}${skinFailed ? "" : " (known upstream gaps)"}`);
   for (const { fg, bg, ratio, min } of problems) {
-    const floor = BASELINE_FLOORS.get(`${id}|${fg}|${bg}`);
+    const floor = BASELINE_FLOORS.get(`${id.replace(/ \(.*\)$/, "")}|${fg}|${bg}`);
     const baseline = floor === undefined ? "" : `; baseline ${floor.toFixed(2)}:1`;
     console.log(`    ${fg} on ${bg}: ${ratio.toFixed(2)}:1 (needs ${min}:1${baseline})`);
   }
   if (skinFailed) failed = true;
 }
 
-// The inverted bubbles (Daylight's ink-black, Meadow's green-black, Pop's ink) have
+// The inverted bubbles (Daylight's ink-black, Pop's ink) have
 // their own inherited context: the editor, labels, quotes and file chips
 // explicitly use these tokens, not parent color.
-for (const skinId of ["daylight", "meadow", "pop"]) {
+for (const skinId of ["daylight", "pop"]) {
   const scope = css.match(new RegExp(`@scope \\(\\[data-skin="${skinId}"\\]\\) to \\(\\[data-skin\\]\\)\\s*\\{\\s*\\.bg-bubble-user\\s*\\{([^}]*)\\}`))?.[1];
   if (!scope) {
     failed = true;

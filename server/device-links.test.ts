@@ -1,14 +1,16 @@
 // The device link end to end in one process: the real shared-computers routes behind a real HTTP server's upgrades,
 // My Cloud's DeviceLinks, and the computer's own link client with its own check on each connection.
 import { randomUUID } from "node:crypto";
-import { getEventListeners } from "node:events";
+import { getEventListeners, once } from "node:events";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { connect as tcpConnect, createServer as createTcpServer, type AddressInfo, type Socket } from "node:net";
 import { afterEach, describe, expect, it } from "vitest";
+import { WebSocketServer } from "ws";
 
 import { runDeviceLink } from "../electron/device-link.mjs";
 import { LINK_ENDED, linkPath } from "../electron/device-link-protocol.mjs";
 import { DeviceLinks } from "./device-links.ts";
+import { environmentAttestation } from "./environment.ts";
 import { json, readBody } from "./harness/http.ts";
 import { createSharedComputerRoutes } from "./routes/shared-computers.ts";
 import { createUpgrades } from "./routes/upgrades.ts";
@@ -17,6 +19,7 @@ import type { RequestAuth } from "./request-auth.ts";
 
 const secret = "a".repeat(64);
 const PERSON = "cloud-home";
+const INSTALL = "11111111-1111-4111-8111-111111111111";
 const cleanups: Array<() => unknown> = [];
 afterEach(async () => { for (const cleanup of cleanups.splice(0).reverse()) await cleanup(); });
 
@@ -26,10 +29,10 @@ async function cloud(options: { sleeping?: () => boolean; sleep?: AbortControlle
   const links = new DeviceLinks({ pingMs: 100 });
   const lent = new LentComputers(`/nonexistent-${randomUUID()}/lent-computers.json`);
   const computers = new SharedComputers((id) => live.has(id), lent, links);
-  const upgrades = createUpgrades();
+  const upgrades = createUpgrades(environmentAttestation(INSTALL));
   const sleep = options.sleep ?? new AbortController();
   const route = createSharedComputerRoutes({
-    enabled: () => true, computers, sessionLive: (id) => live.has(id), environmentId: "11111111-1111-4111-8111-111111111111",
+    enabled: () => true, computers, sessionLive: (id) => live.has(id), environmentId: INSTALL,
     cloudHomeLender: PERSON, principal: () => PERSON, personKey: () => PERSON,
     power: () => ({ sleeping: options.sleeping ?? (() => false), sleepSignal: () => sleep.signal }),
     links, upgrades,
@@ -50,9 +53,9 @@ async function cloud(options: { sleeping?: () => boolean; sleep?: AbortControlle
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
   cleanups.push(() => new Promise<void>((resolve) => { computers.close(); links.close(); upgrades.close(); server.closeAllConnections(); server.close(() => resolve()); }));
-  const register = async (session = "owner", internet = true, id: string = randomUUID()) => {
+  const register = async (session = "owner", internet = true, id: string = randomUUID(), chrome = false) => {
     const response = await fetch(`${base}/api/shared-computers/connect`, { method: "POST", headers: { authorization: `Bearer session-${session}`, "content-type": "application/json", "x-omb-computer-secret": secret },
-      body: JSON.stringify({ id, name: "Ash's MacBook", environmentId: "11111111-1111-4111-8111-111111111111", folders: [], terminal: false, computer: false, platform: "darwin", internet }) });
+      body: JSON.stringify({ id, name: "Ash's MacBook", environmentId: INSTALL, folders: [], terminal: false, computer: false, platform: "darwin", internet, ...(chrome ? { chrome } : {}) }) });
     expect(response.status, await response.clone().text()).toBe(200);
     return id;
   };
@@ -235,6 +238,45 @@ describe("the device link", () => {
     expect((await link(home.base, id, site.port).ended).code, "a link dialled while My Cloud sleeps is told so at once").toBe(4001);
   });
 
+  it("a Chrome stream goes only to a computer that lends Chrome, through its own door", async () => {
+    const home = await cloud();
+    const echo = createTcpServer((socket) => socket.pipe(socket));
+    await new Promise<void>((resolve) => echo.listen(0, "127.0.0.1", resolve));
+    cleanups.push(() => new Promise<void>((resolve) => { echo.close(() => resolve()); }));
+    const id = await home.register("owner", false, randomUUID(), true);
+    const stop = new AbortController();
+    const ended = runDeviceLink({
+      url: `${home.base.replace("http", "ws")}${linkPath(id)}`, signal: stop.signal,
+      headers: { authorization: "Bearer session-owner", "x-omb-computer-secret": secret },
+      lends: () => ({ internet: false, chrome: true }),
+      chrome: { open: async () => ({ socket: tcpConnect((echo.address() as AddressInfo).port, "127.0.0.1") }) },
+    });
+    cleanups.push(() => { stop.abort(); return ended; });
+    await until(() => home.links.chromeRoute(PERSON) !== null, "the link to be offered as a way to Chrome");
+    expect(home.links.route(PERSON), "it does not lend its internet connection").toBeNull();
+    const opened = await home.links.chromeRoute(PERSON)!.open();
+    expect("join" in opened).toBe(true);
+    const relay = createTcpServer();
+    await new Promise<void>((resolve) => relay.listen(0, "127.0.0.1", resolve));
+    const accepted = new Promise<Socket>((resolve) => relay.once("connection", resolve));
+    const client = tcpConnect((relay.address() as AddressInfo).port, "127.0.0.1");
+    (opened as { join: (socket: Socket, head: Buffer[]) => void }).join(await accepted, []);
+    client.write("ping");
+    const echoed = await new Promise<string>((resolve) => client.once("data", (chunk) => resolve(String(chunk))));
+    expect(echoed).toBe("ping");
+    client.destroy();
+    relay.close();
+  });
+
+  it("a computer registered without Chrome has no Chrome route, while its internet route still works", async () => {
+    const home = await cloud();
+    const site = await website();
+    const id = await home.register();
+    link(home.base, id, site.port);
+    await until(() => home.links.route(PERSON) !== null, "the link");
+    expect(home.links.chromeRoute(PERSON)).toBeNull();
+  });
+
   it("drops a link that stops answering, so My Cloud's browsing never waits on a computer that went to sleep", async () => {
     const home = await cloud();
     const id = await home.register();
@@ -248,5 +290,42 @@ describe("the device link", () => {
     socket.pause();
     await until(() => home.links.route(PERSON) === null, "the silent link to be dropped", 2_000);
     socket.destroy();
+  });
+
+  it("names My Cloud's install on the link's handshake and on a handshake the WebSocket server refuses", async () => {
+    const home = await cloud();
+    const id = await home.register();
+    const url = new URL(`${home.base}${linkPath(id)}`);
+    // Bare ws, as the link's server was before it named the install: its refusals are the reference.
+    const bare = new WebSocketServer({ noServer: true });
+    const reference: Server = createServer();
+    reference.on("upgrade", (req, socket, head) => bare.handleUpgrade(req, socket as Socket, head, (ws) => ws.close()));
+    await new Promise<void>((resolve) => reference.listen(0, "127.0.0.1", resolve));
+    cleanups.push(() => new Promise<void>((resolve) => { bare.close(); reference.closeAllConnections(); reference.close(() => resolve()); }));
+    const handshake = async (port: number, headers: { key: string; version?: string }) => {
+      const socket = tcpConnect(port, "127.0.0.1");
+      socket.on("error", () => {});
+      await once(socket, "connect");
+      socket.write(`GET ${url.pathname} HTTP/1.1\r\nhost: ${url.host}\r\nupgrade: websocket\r\nconnection: Upgrade\r\nsec-websocket-version: ${headers.version ?? "13"}\r\nsec-websocket-key: ${headers.key}\r\nauthorization: Bearer session-owner\r\nx-omb-computer-secret: ${secret}\r\n\r\n`);
+      let answer = "";
+      for await (const chunk of socket) {
+        answer += chunk;
+        if (answer.startsWith("HTTP/1.1 101") && answer.includes("\r\n\r\n")) break;
+      }
+      socket.destroy();
+      return answer;
+    };
+    const attestationLine = `\r\nOpenMausBot-Environment: ${INSTALL}`;
+    const key = Buffer.from(randomUUID().slice(0, 16)).toString("base64");
+    for (const refusal of [{ key: "not-a-key" }, { key, version: "12" }]) {
+      const answer = await handshake(Number(url.port), refusal);
+      expect(answer).toContain(`${attestationLine}\r\n\r\n`);
+      expect(answer.replace(attestationLine, "")).toBe(await handshake((reference.address() as AddressInfo).port, refusal));
+    }
+    expect(await handshake(Number(url.port), { key: "not-a-key" })).not.toContain("Sec-WebSocket-Version");
+    expect(await handshake(Number(url.port), { key, version: "12" })).toContain("\r\nSec-WebSocket-Version: 13, 8\r\n");
+    const accepted = (await handshake(Number(url.port), { key })).split("\r\n");
+    expect(accepted[0]).toBe("HTTP/1.1 101 Switching Protocols");
+    expect(accepted).toContain(`OpenMausBot-Environment: ${INSTALL}`);
   });
 });

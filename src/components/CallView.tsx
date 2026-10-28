@@ -36,13 +36,17 @@ const CALL_ENDPOINT_MS = 850;
  * composer's own button: two buttons answering it would start two calls. */
 export type CallButtonPlacement = "header" | "composer" | "panel";
 
-/** `fill` (Simple composer): a round button in that colour, with no chevron; the + menu picks the call mode. */
-export function CallButton({ bot, placement = "header", fill }: { bot: Bot; placement?: CallButtonPlacement; fill?: string }) {
+/** `fill` (Simple composer): a round button in that colour with its glyph in `ink`, and no chevron; the + menu picks the
+ * call mode. */
+/** `inverse` (phone composer): a round ink-coloured button with an app-coloured glyph: white on Midnight, dark on Meadow. */
+export function CallButton({ bot, placement = "header", fill, ink, inverse }: { bot: Bot; placement?: CallButtonPlacement; fill?: string; ink?: string; inverse?: boolean }) {
   const { state } = useStore();
   return (
     <CallTargetButton
       placement={placement}
       fill={fill}
+      ink={ink}
+      inverse={inverse}
       targetId={bot.id}
       targetName={bot.name}
       threadId={bot.threadId}
@@ -66,9 +70,13 @@ export function CallTargetButton({
   onStart,
   placement = "header",
   fill,
+  ink = "#ffffff",
+  inverse,
 }: {
   placement?: CallButtonPlacement;
   fill?: string;
+  ink?: string;
+  inverse?: boolean;
   targetId: string;
   targetName: string;
   threadId?: string;
@@ -127,7 +135,7 @@ export function CallTargetButton({
   const keyId = useId();
   const elsewhereName = liveElsewhere ? state.bots.find((candidate) => candidate.id === media.botId)?.name : undefined;
   const composer = placement === "composer";
-  const round = Boolean(fill) || placement === "panel";
+  const round = Boolean(fill) || Boolean(inverse) || placement === "panel";
   const label = active
     ? t("call.hangUpOn", { name: targetName })
     : liveElsewhere
@@ -246,15 +254,17 @@ export function CallTargetButton({
         aria-label={label}
         title={label}
         data-call-button={placement}
-        style={fill && !active ? { backgroundColor: fill } : undefined}
+        style={fill && !active ? { backgroundColor: fill, color: ink } : undefined}
         className={cn(
           "relative flex shrink-0 items-center justify-center disabled:opacity-60",
           round ? "rounded-full transition-[color,background,filter]" : "rounded-l-3xl rounded-r-lg active:rounded-3xl transition-[color,background,border-radius]",
-          composer || placement === "panel" ? "size-8" : "size-9",
+          composer && fill ? "size-7" : composer || placement === "panel" ? "size-8" : "size-9",
           active
             ? "bg-danger text-white hover:brightness-110"
+            : inverse
+              ? "bg-ink text-app hover:opacity-90 max-md:size-9"
             : fill
-              ? "text-white hover:brightness-110"
+              ? "hover:brightness-110"
             : placement === "panel"
               ? unavailable ? "bg-ink/[0.06] text-ink-tertiary hover:text-ink-secondary" : "bg-ink/[0.06] text-ink hover:bg-ink/[0.11]"
             : composer
@@ -268,7 +278,7 @@ export function CallTargetButton({
       >
         {active
           ? <PhoneOff size={composer || round ? 15 : 17} />
-          : composer ? <AudioLines size={16} aria-hidden="true" /> : <Phone size={round ? 15 : 17} />}
+          : composer ? fill ? <AudioLines size={15} strokeWidth={1.75} absoluteStrokeWidth aria-hidden="true" /> : <AudioLines size={16} aria-hidden="true" /> : <Phone size={round ? 15 : 17} />}
         {unavailable && (
           <span className="absolute right-1 top-1 size-1.5 rounded-full bg-warning ring-2 ring-app" aria-hidden="true" />
         )}
@@ -408,7 +418,7 @@ export function CallModeMenu({ id, mode, onChoose, onClose, placement = "header"
         if (event.key === "Tab") onClose();
         else navigateThreadMenu(event);
       }}
-      className={cn("animate-pop-in absolute right-0 z-30 w-[280px] rounded-xl border border-hairline bg-panel p-1.5 text-left shadow-2xl space-y-1", placement === "composer" ? "bottom-full mb-1.5" : "top-full mt-1.5")}
+      className={cn("popover-surface animate-pop-in absolute right-0 z-30 w-[280px] rounded-xl border border-hairline bg-panel p-1.5 text-left shadow-2xl space-y-1", placement === "composer" ? "bottom-full mb-1.5" : "top-full mt-1.5")}
     >
       {CALL_MODES.map((entry) => {
         const unavailable = entry.id === "turns" ? turnsUnavailable : null;
@@ -430,7 +440,7 @@ export function CallModeMenu({ id, mode, onChoose, onClose, placement = "header"
           >
             <span className="min-w-0 flex-1">
               <span className={cn("block text-[13px] font-medium", unavailable ? "text-ink-tertiary" : "text-ink")}>{t(entry.label)}</span>
-              <span className="mt-0.5 block text-[11.5px] leading-[1.4] text-ink-secondary">
+              <span className="mt-0.5 block text-[12px] leading-[1.4] text-ink-secondary">
                 {unavailable ? `${unavailable.label}. ${unavailable.reason}` : callModeHint(entry.id, { cloudHome })}
               </span>
             </span>
@@ -776,7 +786,7 @@ function Call({ bot }: { bot: Bot }) {
 
       <div className="flex flex-col items-center gap-1.5 text-center">
         <div className="text-[20px] font-medium text-ink">{bot.name}</div>
-        <div className="flex items-center gap-2 text-[13.5px] text-ink-secondary">
+        <div className="flex items-center gap-2 text-[14px] text-ink-secondary">
           {(phase === "working" || phase === "sending") && <Loader2 size={13} className="animate-spin" />}
           {status}
         </div>
@@ -795,7 +805,7 @@ function Call({ bot }: { bot: Bot }) {
       </div>
 
       {note && (
-        <div className="flex max-w-[460px] flex-col items-center gap-2 text-center text-[12.5px] text-warning">
+        <div className="flex max-w-[460px] flex-col items-center gap-2 text-center text-[13px] text-warning">
           <span>{note}</span>
           <button
             onClick={listen}
@@ -805,7 +815,7 @@ function Call({ bot }: { bot: Bot }) {
           </button>
         </div>
       )}
-      {speech.error && <div className="max-w-[420px] text-center text-[12.5px] text-danger">{speech.error}</div>}
+      {speech.error && <div className="max-w-[420px] text-center text-[13px] text-danger">{speech.error}</div>}
 
       <div className="flex items-center gap-3">
         {speaker.isSpeaking() && (
@@ -815,7 +825,7 @@ function Call({ bot }: { bot: Bot }) {
               speaker.stop();
               listen();
             }}
-            className="rounded-full border border-hairline/50 px-4 py-2 text-[13.5px] text-ink hover:bg-raised"
+            className="rounded-full border border-hairline/50 px-4 py-2 text-[14px] text-ink hover:bg-raised"
           >
             Interrupt
           </button>
@@ -828,7 +838,7 @@ function Call({ bot }: { bot: Bot }) {
         </button>
       </div>
 
-      <div className="text-[11.5px] text-ink-tertiary">
+      <div className="text-[12px] text-ink-tertiary">
         Hold Control + Option to talk · Space interrupts · Esc hangs up
       </div>
     </>

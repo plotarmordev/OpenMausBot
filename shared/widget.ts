@@ -61,7 +61,9 @@ export function threadActionTarget(action: WidgetAction): { botId?: string; grou
 
 export const isThreadAction = (action: WidgetAction): boolean => threadActionTarget(action) !== undefined;
 
-const CLIENT_ACTION = (action: WidgetAction): boolean => action.type === "open_url" || action.type === "open_thread";
+/** `open_phone_pairing` opens the app's own phone pairing (the QR code and link) on the device. */
+export const PHONE_PAIRING_ACTION = "open_phone_pairing";
+const CLIENT_ACTION = (action: WidgetAction): boolean => action.type === "open_url" || action.type === "open_thread" || action.type === PHONE_PAIRING_ACTION;
 
 /** `confirm` and `cancel` on a root: the buttons under the card. */
 export interface WidgetButtonSpec {
@@ -693,7 +695,7 @@ export interface WidgetActionEntry {
   action: WidgetAction;
   /** Present when the press settles the widget. */
   tone?: "confirm" | "cancel" | "submit";
-  /** Handled on the device and never sent (open_url, open_thread). */
+  /** Handled on the device and never sent (open_url, open_thread, open_phone_pairing). */
   client?: true;
   kind: "button" | "item" | "confirm" | "cancel";
 }
@@ -893,9 +895,9 @@ export function resolveWidgetAction(payload: WidgetPayload, ref: string, values:
 }
 
 /** A word to the bot about a widget that parses but does not do what it
- * looks like it is for: rows to choose between and no way to choose, or a
- * time, date or days the person is asked to type. Undefined when there is
- * nothing to say. */
+ * looks like it is for: rows to choose between and no way to choose, or one
+ * time, date or set of days typed in a one-line field (a Textarea may list
+ * several). Undefined when there is nothing to say. */
 export function widgetAdvice(root: WidgetRoot): string | undefined {
   const notes: string[] = [];
   const rows = Array.isArray(root.children) ? root.children.length : 0;
@@ -912,7 +914,7 @@ export function widgetAdvice(root: WidgetRoot): string | undefined {
     const unsent = fields.filter((field) => !sent.has(field.name)).map((field) => JSON.stringify(field.label));
     if (unsent.length) notes.push(`${unsent.join(", ")} sits outside the Form whose button is the only way to send, so it is never sent. Call update_widget with it inside that Form, or with confirm on the Card.`);
   }
-  const typed = fields.filter((field) => field.type === "Input" || field.type === "Textarea");
+  const typed = fields.filter((field) => field.type === "Input");
   // "each time", "every time" and "how many times" are not a time of day
   const phrase = (field: WidgetField) => `${field.name} ${field.label} ${widgetString(field.node, "placeholder") ?? ""}`
     .replace(/\b(each|every|this|next|first|last|any|some|one|other|same|spare|free|full|part|lead|over|down)[\s-]+times?\b/gi, " ")

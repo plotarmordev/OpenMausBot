@@ -20,7 +20,7 @@ describe("guarded external messages through an isolated runtime", () => {
       method, headers: { "content-type": "application/json", origin: fixture.info.url, ...headers },
       ...(body === undefined ? {} : { body: JSON.stringify(body) }),
     });
-    const result = { status: response.status, body: await response.json() as any };
+    const result = { status: response.status, environment: response.headers.get("openmausbot-environment"), body: await response.json() as any };
     evidence.push({ method, path, body, result });
     return result;
   };
@@ -105,6 +105,38 @@ describe("guarded external messages through an isolated runtime", () => {
     expect((await page(foreign.activeTaskId)).messages).toEqual([]);
     await noQueuedWork(bot.activeTaskId);
   });
+
+  it("binds a send to its install: another install's id is refused before any effect, its own is accepted", async () => {
+    const { body: descriptor } = await api("GET", "/.well-known/openmausbot/environment");
+    const own: string = descriptor.environmentId, other = randomUUID();
+    expect(own).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
+    const health = await api("GET", "/api/health");
+    expect(health.body.capabilities.guardedEnvironment).toBe(1);
+    const bot = await newBot();
+    const refusedInput = { ...payload(bot, "OTHER_INSTALL_MUST_NOT_RUN"), expectedEnvironmentId: other };
+    const refused = await guarded(bot, refusedInput);
+    expect(refused.status).toBe(409);
+    expect(refused.body).toMatchObject({ code: "guarded_environment", environmentId: own });
+    expect(await guarded({ id: "no-such-bot", activeTaskId: bot.activeTaskId }, refusedInput)).toMatchObject({ status: 409, body: { code: "guarded_environment" } });
+    expect((await guarded(bot, { ...refusedInput, expectedEnvironmentId: "not-an-id" })).status).toBe(400);
+    expect((await page(bot.activeTaskId)).messages).toEqual([]);
+    await noQueuedWork(bot.activeTaskId);
+    expect(existsSync(file(bot.activeTaskId, "launch.json"))).toBe(false);
+    // The refused sendId was never reserved: the same id with other words is a new message, not a conflict.
+    const reused = await guarded(bot, { ...refusedInput, text: "OWN_INSTALL_RUNS", expectedEnvironmentId: own.toUpperCase() });
+    expect(reused.status).toBe(202);
+    expect(reused.body.message).toMatchObject({ sendId: refusedInput.sendId, text: "OWN_INSTALL_RUNS" });
+    const retry = await guarded(bot, { ...refusedInput, text: "OWN_INSTALL_RUNS", expectedEnvironmentId: own.toUpperCase() });
+    expect(retry.status).toBe(202); expect(retry.body.message.id).toBe(reused.body.message.id);
+    expect((await guarded(bot, { ...refusedInput, text: "OWN_INSTALL_RUNS" })).status).toBe(409);
+    await finish(bot);
+    expect((await page(bot.activeTaskId)).messages.filter(message => message.role === "user").map(message => message.text)).toEqual(["OWN_INSTALL_RUNS"]);
+    expect((await api("POST", `/api/bots/${bot.id}/messages/guarded`, refusedInput, { origin: "https://untrusted.example.test" })).status).toBe(403);
+    expect((await api("GET", "/api/no-such-route")).status).toBe(404);
+    const answered = evidence.flatMap(entry => entry && typeof entry === "object" && "result" in entry && "method" in entry ? [entry.result as { environment: string | null }] : []);
+    expect(answered.length).toBeGreaterThan(10);
+    expect(answered.every(result => result.environment === own)).toBe(true);
+  }, 30_000);
 
   it("replays only the canonical receipt after a lost response, completion and stale leaf", async () => {
     const bot = await newBot(), input = payload(bot, "LOST_RECEIPT_MUST_NOT_REPEAT");
