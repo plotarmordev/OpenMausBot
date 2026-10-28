@@ -378,6 +378,13 @@ it("keeps a queued recovery out of a person's running turn when someone steers i
       await expect.poll(journal, { timeout: 20_000 }).toEqual([{ status: "pending" }]);
       const [queued] = (await state()).botQueuedMessages[threadId] as Array<{ queueId: string; text: string }>;
       expect(queued.text).toBe(text);
+      const queuedIds = async () => ((await state()).botQueuedMessages[threadId] ?? []).map((item: { queueId: string }) => item.queueId);
+      // A busy thread on a steering engine steers a new line at once, so the ordinary item queues behind the full bot first.
+      const ordinary = "ORDINARY_ITEM_STEERED_PAST_THE_RECOVERY";
+      const behindReceipt = await api("POST", `/api/bots/${bot.id}/messages`, { threadId, text: ordinary }, 202);
+      expect(behindReceipt).toMatchObject({ queued: true, reason: "capacity" });
+      const behind = behindReceipt.queueId as string;
+      expect(await queuedIds()).toEqual([queued.queueId, behind]);
       // The person's own main-chat line runs beside the full bot, on an engine that takes steering mid-turn.
       await api("PATCH", `/api/bots/${bot.id}/tasks/${threadId}`, { modelSelection: backup });
       const paired = await api("POST", "/api/auth/pair", { code: (await api("POST", "/api/auth/pairing", {})).code });
@@ -389,15 +396,9 @@ it("keeps a queued recovery out of a person's running turn when someone steers i
       expect(refused.code).toBe("recovery_not_steerable");
       expect(existsSync(steerReceived)).toBe(false);
       expect(await originals()).toHaveLength(1);
-      expect((await state()).botQueuedMessages[threadId].map((item: { queueId: string }) => item.queueId)).toEqual([queued.queueId]);
-      expect(journal()).toEqual([{ status: "pending" }]);
-
-      const ordinary = "ORDINARY_ITEM_STEERED_PAST_THE_RECOVERY";
-      await api("POST", `/api/bots/${bot.id}/messages`, { threadId, text: ordinary }, 202);
-      const queuedIds = async () => ((await state()).botQueuedMessages[threadId] ?? []).map((item: { queueId: string }) => item.queueId);
-      const [, behind] = await queuedIds();
-      expect(behind).toBeDefined();
       expect(await queuedIds()).toEqual([queued.queueId, behind]);
+      expect(journal()).toEqual([{ status: "pending" }, { status: "pending" }]);
+
       const steer = await api("POST", `/api/bots/${bot.id}/queue/${behind}/steer`, { threadId });
       expect(steer).toMatchObject({ steered: true, queueIds: [behind] });
       await expect.poll(() => existsSync(steerReceived), { timeout: 20_000 }).toBe(true);
