@@ -37,9 +37,14 @@ included, carries `OpenMausBot-Environment: <environmentId>`, the id
 `/.well-known/openmausbot/environment` serves, byte for byte. The server sets
 it once per request before any route runs, so the header on a page or receipt
 names the install that produced that body, also through a proxy that forwards
-responses. That covers the 500 an unexpected fault ends in and WebSocket
-upgrades: the upgrade gate's own refusals, the `101 Switching Protocols` of an
-accepted handshake, and a handshake the WebSocket server refuses.
+responses. That covers the 500 an unexpected fault ends in, the answers Node
+gives itself to a parsed HTTP/1.1 request (400 without a Host header, 417 for an
+Expect other than `100-continue`), and WebSocket upgrades: the upgrade gate's
+own refusals, the `101 Switching Protocols` of an accepted handshake, and a
+handshake the WebSocket server refuses, which otherwise stays exactly as `ws`
+writes it. Two answers carry no header: the interim `100 Continue`, which takes
+none (the final answer after it does), and Node's 400 for bytes that never
+parse as an HTTP request, which have no path to scope.
 
 The id a server creates is a lowercase UUID. An install that inherited an
 `environment-id` file written in uppercase keeps it exactly as written, in the
@@ -78,7 +83,8 @@ settings, busy/capacity refusal without enqueueing or steering, concurrent
 guarded admissions, duplicate receipt identity, and the install binding: the
 environment header on every response and another install's id refused without
 storing or reserving anything. `install-attestation-api.test.ts` adds the
-header on WebSocket upgrade refusals and on a 500 from a fault with no status,
+header on WebSocket upgrade refusals, on Node's own 400 and 417, and on a 500
+from a fault with no status,
 which a fixture launched with `OMB_TEST_ROUTE_FAULT=1` throws while
 `<data dir>/fail-thread-read` exists. A running ordinary turn
 remains unchanged when a guarded send is refused. Ordinary composer sends

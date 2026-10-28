@@ -5,6 +5,7 @@ import { getEventListeners, once } from "node:events";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { connect as tcpConnect, createServer as createTcpServer, type AddressInfo, type Socket } from "node:net";
 import { afterEach, describe, expect, it } from "vitest";
+import { WebSocketServer } from "ws";
 
 import { runDeviceLink } from "../electron/device-link.mjs";
 import { LINK_ENDED, linkPath } from "../electron/device-link-protocol.mjs";
@@ -295,23 +296,35 @@ describe("the device link", () => {
     const home = await cloud();
     const id = await home.register();
     const url = new URL(`${home.base}${linkPath(id)}`);
-    const handshake = async (key: string) => {
-      const socket = tcpConnect(Number(url.port), "127.0.0.1");
+    // Bare ws, as the link's server was before it named the install: its refusals are the reference.
+    const bare = new WebSocketServer({ noServer: true });
+    const reference: Server = createServer();
+    reference.on("upgrade", (req, socket, head) => bare.handleUpgrade(req, socket as Socket, head, (ws) => ws.close()));
+    await new Promise<void>((resolve) => reference.listen(0, "127.0.0.1", resolve));
+    cleanups.push(() => new Promise<void>((resolve) => { bare.close(); reference.closeAllConnections(); reference.close(() => resolve()); }));
+    const handshake = async (port: number, headers: { key: string; version?: string }) => {
+      const socket = tcpConnect(port, "127.0.0.1");
       socket.on("error", () => {});
       await once(socket, "connect");
-      socket.write(`GET ${url.pathname} HTTP/1.1\r\nhost: ${url.host}\r\nupgrade: websocket\r\nconnection: Upgrade\r\nsec-websocket-version: 13\r\nsec-websocket-key: ${key}\r\nauthorization: Bearer session-owner\r\nx-omb-computer-secret: ${secret}\r\n\r\n`);
-      let head = "";
+      socket.write(`GET ${url.pathname} HTTP/1.1\r\nhost: ${url.host}\r\nupgrade: websocket\r\nconnection: Upgrade\r\nsec-websocket-version: ${headers.version ?? "13"}\r\nsec-websocket-key: ${headers.key}\r\nauthorization: Bearer session-owner\r\nx-omb-computer-secret: ${secret}\r\n\r\n`);
+      let answer = "";
       for await (const chunk of socket) {
-        head += chunk;
-        if (head.includes("\r\n\r\n")) break;
+        answer += chunk;
+        if (answer.startsWith("HTTP/1.1 101") && answer.includes("\r\n\r\n")) break;
       }
       socket.destroy();
-      return head.slice(0, head.indexOf("\r\n\r\n")).split("\r\n");
+      return answer;
     };
-    const refused = await handshake("not-a-key");
-    expect(refused[0]).toBe("HTTP/1.1 400 Bad Request");
-    expect(refused).toContain(`OpenMausBot-Environment: ${INSTALL}`);
-    const accepted = await handshake(Buffer.from(randomUUID().slice(0, 16)).toString("base64"));
+    const attestationLine = `\r\nOpenMausBot-Environment: ${INSTALL}`;
+    const key = Buffer.from(randomUUID().slice(0, 16)).toString("base64");
+    for (const refusal of [{ key: "not-a-key" }, { key, version: "12" }]) {
+      const answer = await handshake(Number(url.port), refusal);
+      expect(answer).toContain(`${attestationLine}\r\n\r\n`);
+      expect(answer.replace(attestationLine, "")).toBe(await handshake((reference.address() as AddressInfo).port, refusal));
+    }
+    expect(await handshake(Number(url.port), { key: "not-a-key" })).not.toContain("Sec-WebSocket-Version");
+    expect(await handshake(Number(url.port), { key, version: "12" })).toContain("\r\nSec-WebSocket-Version: 13, 8\r\n");
+    const accepted = (await handshake(Number(url.port), { key })).split("\r\n");
     expect(accepted[0]).toBe("HTTP/1.1 101 Switching Protocols");
     expect(accepted).toContain(`OpenMausBot-Environment: ${INSTALL}`);
   });

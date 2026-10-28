@@ -5,6 +5,7 @@ import { Socket } from "node:net";
 import type { Duplex } from "node:stream";
 import { WebSocketServer, type ServerOptions, type WebSocket } from "ws";
 import type { Attestation } from "../environment.ts";
+import { requestPath } from "../harness/attested-server.ts";
 
 const HANDSHAKE_MS = 10_000;
 const EARLY_BYTES = 64 * 1024;
@@ -26,11 +27,6 @@ export interface Upgrades {
   pending(req: IncomingMessage): PendingUpgrade | undefined;
   /** Refuses new upgrades and drops every one not answered yet. */
   close(): void;
-}
-
-function pathOf(url: string): string | undefined {
-  try { return new URL(url, "http://localhost").pathname; }
-  catch { return undefined; }
 }
 
 function headerLines(attestation: Attestation): string[] {
@@ -55,7 +51,7 @@ export function createUpgrades(attest: (path: string) => Attestation = () => [])
         res.setHeader("connection", "close");
         socket.on("error", () => socket.destroy());
         res.once("finish", () => socket.end(() => socket.destroy()));
-        const path = pathOf(req.url ?? "");
+        const path = requestPath(req.url ?? "");
         const attestation = attest(path ?? req.url ?? "");
         for (const [name, value] of attestation) res.setHeader(name, value);
         if (path === undefined) { res.writeHead(400).end(); return; }
@@ -102,7 +98,8 @@ export function createHandshakes(options: Pick<ServerOptions, "perMessageDeflate
   const server = new WebSocketServer({ ...options, noServer: true });
   const attested = new WeakMap<IncomingMessage, Attestation>();
   server.on("headers", (lines, req) => { lines.push(...headerLines(attested.get(req) ?? [])); });
-  // ws 8 writes a malformed handshake's refusal itself unless a wsClientError listener answers it.
+  // ws 8.22 writes a malformed handshake's refusal itself unless a wsClientError listener answers it, and hands that
+  // listener only the error: the refusal ws would write follows from the request method and the message.
   server.on("wsClientError", (error, socket, req) => refuse(socket, req.method === "GET" ? 400 : 405, error.message, attested.get(req) ?? []));
   return (handshake, opened) => {
     attested.set(handshake.req, handshake.attestation);
@@ -118,10 +115,14 @@ export function switchingProtocols(accept: string, attestation: Attestation): st
   ].join("\r\n") + "\r\n\r\n";
 }
 
+const WS_VERSION_REFUSAL = "Missing or invalid Sec-WebSocket-Version header";
+
+/** ws 8.22's own refusal (`abortHandshake`), byte for byte, with the attestation after its headers. */
 function refuse(socket: Duplex, status: number, message: string, attestation: Attestation): void {
   const head = [
-    `HTTP/1.1 ${status} ${STATUS_CODES[status]}`, "Connection: close", "Content-Type: text/plain; charset=utf-8",
-    `Content-Length: ${Buffer.byteLength(message)}`, "Sec-WebSocket-Version: 13, 8", ...headerLines(attestation),
+    `HTTP/1.1 ${status} ${STATUS_CODES[status]}`, "Connection: close", "Content-Type: text/html",
+    `Content-Length: ${Buffer.byteLength(message)}`,
+    ...(message === WS_VERSION_REFUSAL ? ["Sec-WebSocket-Version: 13, 8"] : []), ...headerLines(attestation),
   ];
   socket.once("finish", () => socket.destroy());
   socket.end(`${head.join("\r\n")}\r\n\r\n${message}`);
