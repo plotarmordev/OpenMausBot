@@ -359,12 +359,15 @@ export function markThreadNotificationLogRead(threadId: string): string[] {
   return rows.map((row) => row.id);
 }
 
-export function saveChatFollowup(followup: Omit<ChatFollowup, "status">): void {
+/** `replaces` rows leave in the same transaction: the new row takes over their dispatch. */
+export function saveChatFollowup(followup: Omit<ChatFollowup, "status">, replaces: readonly string[] = []): void {
   writeFollowups((connection) => {
     connection.prepare("UPDATE input_order SET value = value + 1 WHERE id = 1").run();
     connection.prepare(
       "INSERT INTO chat_followups(id, kind, owner_id, thread_id, send_id, status, payload, input_order) VALUES (?, ?, ?, ?, ?, 'pending', ?, (SELECT value FROM input_order WHERE id = 1))",
     ).run(followup.id, followup.kind, followup.ownerId, followup.threadId, followup.payload.sendId ?? null, JSON.stringify(followup.payload));
+    const retire = connection.prepare("DELETE FROM chat_followups WHERE id = ? AND status = 'dispatching'");
+    for (const id of replaces) retire.run(id);
   });
 }
 

@@ -9,7 +9,7 @@ import { limitBackupAllowed, type LimitFailovers } from "../limit-failover.ts";
 import { hasQueuedInputAfter } from "../message-db.ts";
 import { cancelSteeredMessage, isSteeredMessageQueued, onSteeredRecoveryCancelled, queueSteeredMessage, type SteerQueueHead } from "../steer-queue.ts";
 import type { BotRecord, Message, Store } from "../store.ts";
-import type { QueuedAutomaticRecovery, TurnOptions } from "../turn-options.ts";
+import type { QueuedAutomaticRecovery, SerializableTurnOptions, TurnOptions } from "../turn-options.ts";
 
 type RecoveryCallbacks = Pick<TurnOptions, "coordination" | "onSettled" | "onTurnSettled" | "onDispatchError">;
 
@@ -33,6 +33,8 @@ export interface QueuedRecoveryDeps {
   startTurn(botId: string, text: string, opts?: TurnOptions): Promise<Message>;
   interruptDirectThread(botId: string, threadId: string): Promise<void>;
   drainQueuedSends(): void;
+  /** The turn-failed notification and could-not-start incident a person-facing turn gets when it never started. */
+  reportCouldNotStart(bot: BotRecord, threadId: string, message: string, options: SerializableTurnOptions): void;
 }
 
 export function createQueuedRecovery(deps: QueuedRecoveryDeps) {
@@ -41,14 +43,24 @@ export function createQueuedRecovery(deps: QueuedRecoveryDeps) {
   const coordinatedAtBoot = new Map<string, string>();
   const pendingRootsAtBoot = new Set<string>();
 
-  onSteeredRecoveryCancelled((id, threadId, recovery) => {
-    const callbacks = callbacksByQueueId.get(id);
-    callbacksByQueueId.delete(id);
-    const message = "Automatic recovery cancelled before the backup started.";
-    store.appendMessage(threadId, { role: "bot", kind: "activity", tool: failedTurnTool(message) });
+  function settleUnstarted(botId: string, threadId: string, queueId: string, recovery: QueuedAutomaticRecovery, message: string) {
+    const callbacks = callbacksByQueueId.get(queueId);
+    callbacksByQueueId.delete(queueId);
     deps.settleDirectFollowup(recovery.generation, { ok: false, text: message });
+    store.appendMessage(threadId, { role: "bot", kind: "activity", turnSucceeded: false, tool: failedTurnTool(message) });
+    const bot = store.projectBotForTask(botId, threadId);
+    if (bot) deps.reportCouldNotStart(bot, threadId, message, recovery.options);
     callbacks?.onDispatchError?.(message);
-  });
+  }
+
+  onSteeredRecoveryCancelled((botId, id, threadId, recovery) =>
+    settleUnstarted(botId, threadId, id, recovery, "Automatic recovery cancelled before the backup started."));
+
+  /** One currency rule for an immediate and a queued recovery: the live request decides; after a restart, only a stopped line that was the request itself. */
+  function requestStopped(threadId: string, line: Message | undefined, coordinated: boolean): boolean {
+    const owner = directRequestOwners.get(threadId);
+    return owner ? Boolean(owner.stopped) : !coordinated && Boolean(line?.requestCancelled);
+  }
 
   function commit(botId: string, threadId: string, recovery: QueuedAutomaticRecovery) {
     store.switchTaskModel(botId, threadId, recovery.selection, false, false, {
@@ -66,7 +78,8 @@ export function createQueuedRecovery(deps: QueuedRecoveryDeps) {
 
   function prepare(opts: TurnOptions | undefined, threadId: string, userMessage: Message, automaticRecoveryIndex: number,
     fields: Omit<QueuedAutomaticRecovery, "options" | "coordination">): QueuedAutomaticRecovery {
-    const { coordination, onSettled: _onSettled, onTurnSettled: _onTurnSettled, onDispatchError: _onDispatchError, recovery: _recovery, ...serializable } = opts ?? {};
+    const { coordination, onSettled: _onSettled, onTurnSettled: _onTurnSettled, onDispatchError: _onDispatchError, recovery: _recovery,
+      followupIds: _followupIds, ...serializable } = opts ?? {};
     return {
       ...fields,
       options: { ...serializable, threadId, userMessage, editedMessageId: undefined,
@@ -80,13 +93,13 @@ export function createQueuedRecovery(deps: QueuedRecoveryDeps) {
     if (!deps.botAtThreadCapacity(botId, opts?.capacity)) return false;
     const queued = queueSteeredMessage(botId, threadId, text, {
       reason: "capacity", recovery, capacity: opts?.capacity, trigger: opts?.trigger,
-      origin: opts?.origin, peerAsk: opts?.peerAsk, via: opts?.via, callId: opts?.callId,
+      origin: opts?.origin, peerAsk: opts?.peerAsk, via: opts?.via, callId: opts?.callId, replaces: opts?.followupIds,
     });
     callbacksByQueueId.set(queued.id, { coordination: opts?.coordination, onSettled: opts?.onSettled, onTurnSettled: opts?.onTurnSettled, onDispatchError: opts?.onDispatchError });
     return true;
   }
 
-  /** The commit boundary inside startTurn: nothing may await between this and the turn it admits. */
+  /** Throws `recovery_refused` when the recovery is no longer current; otherwise commits the backup selection. */
   function admit(botId: string, threadId: string, recovery: QueuedAutomaticRecovery, ownsOutcome: boolean) {
     const refused = refusal(botId, threadId, recovery);
     if (refused) throw Object.assign(new Error(refused), { status: 409, code: "recovery_refused" });
@@ -95,7 +108,7 @@ export function createQueuedRecovery(deps: QueuedRecoveryDeps) {
     else deps.settleDirectCoordination(recovery.generation, { ok: false, text: "The failed attempt is being retried on the backup." });
   }
 
-  /** Reads only: the caller commits on an undefined result with no await in between. */
+  /** Why a recovery may no longer commit; undefined when it may. */
   function refusal(botId: string, threadId: string, recovery: QueuedAutomaticRecovery): string | undefined {
     const current = store.projectBotForTask(botId, threadId);
     const configured = plan(current);
@@ -104,8 +117,7 @@ export function createQueuedRecovery(deps: QueuedRecoveryDeps) {
     const latestInput = store.activePath(threadId).findLast(m => m.role === "user" && m.kind === "text");
     const target = registry.get(recovery.selection.instanceId);
     if (cfg.automaticRecovery?.enabled !== true || !current || !store.taskByThread(botId, threadId)?.cwd ||
-        directRequestOwners.get(threadId)?.stopped ||
-        latestInput?.id !== recovery.recoveryUserMessageId || latestInput?.requestCancelled ||
+        latestInput?.id !== recovery.recoveryUserMessageId || requestStopped(threadId, latestInput, Boolean(recovery.coordination)) ||
         hasQueuedInputAfter("bot", botId, threadId, recovery.recoveryUserMessageId, recovery.coordinatedInputOrder) ||
         JSON.stringify(current.modelSelection) !== JSON.stringify(recovery.from) ||
         JSON.stringify(configured) !== JSON.stringify(recovery.plan) ||
@@ -134,25 +146,25 @@ export function createQueuedRecovery(deps: QueuedRecoveryDeps) {
     return Boolean(head.recovery?.coordination && !callbacksByQueueId.has(head.messageId ?? "") && !coordinationEnded(head.recovery.coordination.id));
   }
 
-  function dispatch(botId: string, threadId: string, prompt: string, queueId: string, recovery: QueuedAutomaticRecovery): void | Promise<void | "retry"> {
-    const callbacks = callbacksByQueueId.get(queueId);
-    const fail = (message: string) => {
-      callbacksByQueueId.delete(queueId);
-      store.appendMessage(threadId, { role: "bot", kind: "activity", turnSucceeded: false, tool: failedTurnTool(message) });
-      deps.settleDirectFollowup(recovery.generation, { ok: false, text: message });
-      callbacks?.onDispatchError?.(message);
-    };
-    const refused = recovery.coordination && !callbacks
-      ? "Automatic recovery cancelled: the coordinated work it continued has ended."
-      : refusal(botId, threadId, recovery);
-    if (refused) {
-      fail(refused);
-      deps.drainQueuedSends();
-      return;
-    }
+  function dispatch(botId: string, threadId: string, prompt: string, queueId: string, recovery: QueuedAutomaticRecovery): Promise<void | "retry"> {
     return new Promise<void | "retry">((resolve) => {
+      const callbacks = callbacksByQueueId.get(queueId);
+      let refused: string | undefined;
+      try {
+        refused = recovery.coordination && !callbacks
+          ? "Automatic recovery cancelled: the coordinated work it continued has ended."
+          : refusal(botId, threadId, recovery);
+      } catch (error) {
+        refused = `Automatic recovery could not start: ${error instanceof Error ? error.message : String(error)}`;
+      }
+      if (refused) {
+        settleUnstarted(botId, threadId, queueId, recovery, refused);
+        resolve();
+        deps.drainQueuedSends();
+        return;
+      }
       void deps.startTurn(botId, prompt, {
-        ...recovery.options, ...callbacks, threadId, userMessage: recovery.userMessage, recovery,
+        ...recovery.options, ...callbacks, threadId, userMessage: recovery.userMessage, recovery, followupIds: [queueId],
         onTurnSettled: () => { callbacks?.onTurnSettled?.(); resolve(); },
       }).then(() => {
         callbacksByQueueId.delete(queueId);
@@ -162,7 +174,7 @@ export function createQueuedRecovery(deps: QueuedRecoveryDeps) {
         const code = error instanceof Error && "code" in error ? error.code : undefined;
         if (code === "thread_limit") { resolve("retry"); return; }
         const message = error instanceof Error ? error.message : String(error);
-        fail(code === "recovery_refused" ? message : `Automatic recovery could not start: ${message}`);
+        settleUnstarted(botId, threadId, queueId, recovery, code === "recovery_refused" ? message : `Automatic recovery could not start: ${message}`);
         resolve();
       });
     });
@@ -194,7 +206,7 @@ export function createQueuedRecovery(deps: QueuedRecoveryDeps) {
   }
 
   return {
-    plan, prepare, queueIfFull, admit, commit, waitsForNode, dispatch, resumeRestored,
+    plan, prepare, queueIfFull, admit, commit, waitsForNode, dispatch, resumeRestored, requestStopped,
     noteBootRow: (queueId: string, recovery: QueuedAutomaticRecovery | undefined) => {
       if (recovery?.coordination) coordinatedAtBoot.set(recovery.coordination.id, queueId);
       else if (recovery) pendingRootsAtBoot.add(recovery.generation);

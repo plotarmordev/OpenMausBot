@@ -264,7 +264,7 @@ import {
   queueSteeredMessage,
   restoreSteeredMessages,
 } from "./steer-queue.ts";
-import type { TurnOptions } from "./turn-options.ts";
+import type { SerializableTurnOptions, TurnOptions } from "./turn-options.ts";
 import { createQueuedRecovery } from "./host/queued-recovery.ts";
 import {
   drainChannelMessages,
@@ -3990,7 +3990,7 @@ let bootFollowups: Map<string, "dispatched" | "pending"> | undefined;
 const queuedRecovery = createQueuedRecovery({
   store, cfg, registry, hostedModels, coordinator: () => coordinator, ended: ENDED, limitFailovers: () => limitFailovers, directRequestOwners,
   directCoordinationSettlers, directFollowupSettlers, checkedTaskModelSwitch, policyModelRefusal, settleDirectFollowup, startTurn,
-  settleDirectCoordination, botAtThreadCapacity, interruptDirectThread, drainQueuedSends,
+  settleDirectCoordination, botAtThreadCapacity, interruptDirectThread, drainQueuedSends, reportCouldNotStart,
 });
 function followupAtBoot(threadId: string): "dispatched" | "pending" | undefined {
   if (!bootFollowups) {
@@ -7371,7 +7371,7 @@ function drainQueuedSendsNow() {
     if (head.recovery) return queuedRecovery.dispatch(botId, threadId, prompt, head.messageId!, head.recovery);
     return new Promise<void>((resolve, reject) => {
       void startTurn(botId, prompt, {
-        threadId, userMessage, excludeMessageIds: excludeIds, unattended, onTurnSettled: resolve, capacity: head.capacity, allowRoomTurnElsewhere: !head.peerAsk,
+        threadId, userMessage, excludeMessageIds: excludeIds, unattended, onTurnSettled: resolve, followupIds: head.followupIds, capacity: head.capacity, allowRoomTurnElsewhere: !head.peerAsk,
         trigger: queuedTurnTrigger(head), ...(head.origin ? { origin: head.origin } : {}),
       }).catch((err) => {
         const why = err instanceof Error ? err.message : String(err);
@@ -8763,11 +8763,12 @@ async function startTurn(
           : !(e instanceof TurnAuthenticationRefusedError) || candidate.instanceId !== instanceId) &&
         (candidate.instanceId !== instanceId || candidate.model !== model));
       const backup = backups[nextIndex];
+      const latestInput = store.activePath(threadId).findLast(m => m.role === "user" && m.kind === "text");
       if (mayRecover && backup && current && (!opts?.cardContinuation || opts.coordination) &&
-          !directRequestOwners.get(threadId)?.stopped && !hasQueuedInputAfter("bot", bot.id, threadId, recoveryUserMessageId, coordinatedInputOrder) &&
+          !queuedRecovery.requestStopped(threadId, latestInput, Boolean(opts?.coordination)) && !hasQueuedInputAfter("bot", bot.id, threadId, recoveryUserMessageId, coordinatedInputOrder) &&
           JSON.stringify(current.modelSelection) === JSON.stringify(bot.modelSelection) &&
           (backup.instanceId !== instanceId || backup.model !== model) &&
-          store.activePath(threadId).findLast(m => m.role === "user" && m.kind === "text")?.id === recoveryUserMessageId) {
+          latestInput?.id === recoveryUserMessageId) {
         // No await between releasing the failed attempt and admitting its replacement: a newer send or Stop must never lose to a stale retry.
         store.setTaskActivity(bot.id, threadId, "idle");
         directTurnBots.delete(threadId);
@@ -8808,12 +8809,7 @@ async function startTurn(
         turnSucceeded: false,
         tool: failedTurnTool(message, e instanceof PlaceUnavailableError ? { place: e.row } : e instanceof TurnUsageLimitRefusedError ? { limitResetsAt: e.resetsAt } : {}),
       });
-      if (opts?.automationSource === undefined && !opts?.commsDepth && !opts?.cardContinuation) {
-        notify(
-          buildNotification("turn-failed", bot, threadId, redactSecretsInText(message), { avatarUrl: bot.avatarUrl }),
-        );
-        reportIncident({ kind: "could-not-start", bot, threadId, detail: message });
-      }
+      reportCouldNotStart(bot, threadId, message, opts);
       store.setTaskActivity(bot.id, threadId, "idle");
       directTurnBots.delete(threadId);
       opts?.onDispatchError?.(message);
@@ -8822,6 +8818,12 @@ async function startTurn(
     }
   })();
   return userMessage;
+}
+
+function reportCouldNotStart(bot: BotRecord, threadId: string, message: string, opts: SerializableTurnOptions | undefined): void {
+  if (opts?.automationSource !== undefined || opts?.commsDepth || opts?.cardContinuation) return;
+  notify(buildNotification("turn-failed", bot, threadId, redactSecretsInText(message), { avatarUrl: bot.avatarUrl }));
+  reportIncident({ kind: "could-not-start", bot, threadId, detail: message });
 }
 
 function routineSourceOwner(run: Pick<RoutineRun, "botId" | "sourceThreadId" | "resultsThreadId">) {

@@ -187,7 +187,7 @@ it("supersedes equal-ms recovery before committing the backup", async () => {
   });
 }, 90_000);
 
-it.each(["older ordinary head", "pending policy refusal"] as const)("admits recovery safely with %s", async (scenario) => {
+it.each(["older ordinary head", "pending policy refusal", "pending cancellation", "pending journal fault"] as const)("admits recovery safely with %s", async (scenario) => {
   await withRecoveryFixture({ gated: true, parentPort: scenario === "pending policy refusal", ...(scenario === "older ordinary head" ? { frozenNow: Date.now() } : {}) }, async ({ api, control, calls, backupPrompts, applyPolicy, dataDir, gateFile, evidence }) => {
     const marked = scenario === "older ordinary head";
     const { bot } = await control("new-bot", "--name", "Recovery admission");
@@ -215,8 +215,20 @@ it.each(["older ordinary head", "pending policy refusal"] as const)("admits reco
     const messages = async () => (await api("GET", `/api/threads/${threadId}/messages?limit=100`)).messages as WireMessage[];
     const journal = () => {
       const db = new DatabaseSync(join(dataDir, "messages.db"), { readOnly: true });
-      try { return db.prepare("SELECT status FROM chat_followups WHERE thread_id = ? ORDER BY rowid").all(threadId); }
+      try { return db.prepare("SELECT status FROM chat_followups WHERE thread_id = ? AND id <> 'journal-fault' ORDER BY rowid").all(threadId); }
       finally { db.close(); }
+    };
+    const notifications = () => {
+      const db = new DatabaseSync(join(dataDir, "messages.db"), { readOnly: true });
+      try { return db.prepare("SELECT kind FROM notification_log WHERE thread_id = ? AND kind = 'turn-failed'").all(threadId); }
+      finally { db.close(); }
+    };
+    const starter = (await api("GET", "/api/bots")).bots.find((entry: WireBot) => entry.id !== bot.id) as WireBot;
+    const incidents = async () => {
+      const notices = (await state()).bots.find((entry: WireBot) => entry.id === starter.id).tasks.find((task: WireTask & { title?: string }) => task.title === "Team incidents");
+      if (!notices) return [];
+      const lines = (await api("GET", `/api/threads/${notices.threadId}/messages?limit=100`)).messages as Array<WireMessage & { threadRef?: { threadId: string } }>;
+      return lines.filter(line => line.threadRef?.threadId === threadId).map(line => line.tool?.name);
     };
     const failovers = () => existsSync(join(dataDir, "limit-failovers.json")) ? readFileSync(join(dataDir, "limit-failovers.json"), "utf8") : null;
     const beforeFailovers = failovers();
@@ -258,7 +270,16 @@ it.each(["older ordinary head", "pending policy refusal"] as const)("admits reco
       } else {
         await expect.poll(journal, { timeout: 20_000 }).toEqual([{ status: "pending" }]);
         expect((await tasks()).find(task => task.threadId === threadId)?.modelSelection).toEqual(primary);
-        await applyPolicy();
+        await api("PATCH", `/api/bots/${starter.id}`, { chiefOfStaff: true });
+        if (scenario === "pending policy refusal") await applyPolicy();
+        else if (scenario === "pending cancellation") await api("DELETE", `/api/bots/${bot.id}/queue/${(await state()).botQueuedMessages[threadId][0].queueId}`, { threadId });
+        else {
+          // A row the recovery's newer-input check cannot read makes that check throw.
+          const db = new DatabaseSync(join(dataDir, "messages.db"));
+          try {
+            db.prepare("INSERT INTO chat_followups(id, kind, owner_id, thread_id, status, payload, input_order) VALUES ('journal-fault', 'bot', ?, ?, 'pending', 'not json', 1000000000)").run(bot.id, threadId);
+          } finally { db.close(); }
+        }
       }
       expect((await messages()).filter(message => message.role === "user" && message.text === text)).toHaveLength(1);
       writeFileSync(holderGate, "");
@@ -269,7 +290,7 @@ it.each(["older ordinary head", "pending policy refusal"] as const)("admits reco
           recoveryActivities: (await messages()).filter(message => message.tool?.name.startsWith("recovery:")).map(message => message.tool!.name),
         } : {}),
       }), { timeout: 20_000 }).toEqual({
-        journal: [], ...(!marked ? { selectedModel: primary, recoveryActivities: [] } : {}),
+        journal: scenario === "pending cancellation" ? [{ status: "cancelled" }] : [], ...(!marked ? { selectedModel: primary, recoveryActivities: [] } : {}),
       });
       await expect.poll(async () => (await tasks()).some(task => task.busy), { timeout: 20_000 }).toBe(false);
       const finalMessages = await messages();
@@ -282,7 +303,11 @@ it.each(["older ordinary head", "pending policy refusal"] as const)("admits reco
         expect(failovers()).toBe(beforeFailovers);
         expect((await tasks()).find(task => task.threadId === threadId)?.modelSelection).toEqual(primary);
         expect(finalMessages.filter(message => message.tool?.name.startsWith("recovery:"))).toHaveLength(0);
-        expect(finalMessages.some(message => message.tool?.name.includes("Automatic recovery unavailable:"))).toBe(true);
+        const settledBy = scenario === "pending cancellation" ? "Automatic recovery cancelled before the backup started."
+          : scenario === "pending journal fault" ? "Automatic recovery could not start:" : "Automatic recovery unavailable:";
+        expect(finalMessages.filter(message => message.tool?.name.includes(settledBy))).toMatchObject([{ turnSucceeded: false }]);
+        expect(notifications()).toEqual([{ kind: "turn-failed" }]);
+        await expect.poll(incidents, { timeout: 20_000 }).toEqual([expect.stringContaining("could not start")]);
       }
       evidence.push({ scenario, tasks: await tasks(), messages: finalMessages, journal: journal(), backupPrompts: backupPrompts() });
     } finally {

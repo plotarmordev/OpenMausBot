@@ -44,12 +44,13 @@ interface QueueEntry {
   }>;
 }
 
-export type SteerQueueHead = Pick<QueueEntry["items"][number], "recovery" | "trigger" | "sender" | "peerAsk" | "origin" | "capacity"> & { messageId?: string };
+/** `followupIds`: the durable rows this drained group answers for. */
+export type SteerQueueHead = Pick<QueueEntry["items"][number], "recovery" | "trigger" | "sender" | "peerAsk" | "origin" | "capacity"> & { messageId?: string; followupIds?: string[] };
 
 const queues = new Map<string, QueueEntry>();
-const recoveryCancellationListeners = new Set<(id: string, threadId: string, recovery: QueuedAutomaticRecovery) => void>();
+const recoveryCancellationListeners = new Set<(botId: string, id: string, threadId: string, recovery: QueuedAutomaticRecovery) => void>();
 
-export function onSteeredRecoveryCancelled(listener: (id: string, threadId: string, recovery: QueuedAutomaticRecovery) => void): void {
+export function onSteeredRecoveryCancelled(listener: (botId: string, id: string, threadId: string, recovery: QueuedAutomaticRecovery) => void): void {
   recoveryCancellationListeners.add(listener);
 }
 
@@ -109,7 +110,7 @@ export function queueSteeredMessage(
   botId: string,
   threadId: string,
   text: string,
-  options: { recovery?: QueuedAutomaticRecovery; prompt?: string; replyToId?: string; sendId?: string; dataContext?: Message["dataContext"]; reason?: SteerQueueReason; unattended?: boolean; peerAsk?: Message["peerAsk"]; origin?: WorkOrigin; capacity?: "person"; sender?: ResolvedSender; trigger?: UsageTrigger; callId?: string; via?: "call"; reaction?: string; fromApp?: Message["fromApp"]; relay?: Message["relay"] } = {},
+  options: { recovery?: QueuedAutomaticRecovery; prompt?: string; replyToId?: string; sendId?: string; dataContext?: Message["dataContext"]; reason?: SteerQueueReason; unattended?: boolean; peerAsk?: Message["peerAsk"]; origin?: WorkOrigin; capacity?: "person"; sender?: ResolvedSender; trigger?: UsageTrigger; callId?: string; via?: "call"; reaction?: string; fromApp?: Message["fromApp"]; relay?: Message["relay"]; replaces?: readonly string[] } = {},
 ): QueuedSteer {
   const id = newId();
   const entry = queues.get(threadId) ?? { botId, items: [] };
@@ -135,7 +136,7 @@ export function queueSteeredMessage(
     ...(options.reaction ? { reaction: options.reaction } : {}),
     ...(options.relay ? { relay: options.relay } : {}),
   };
-  saveChatFollowup({ id, kind: "bot", ownerId: botId, threadId, payload: item });
+  saveChatFollowup({ id, kind: "bot", ownerId: botId, threadId, payload: item }, options.replaces);
   entry.items.push(item);
   queues.set(threadId, entry);
   changed();
@@ -238,7 +239,7 @@ export function drainSteeredMessages(
       appended.map((message) => message.id),
       // One unattended line makes the turn unattended: a person's words in the group cannot re-attend a bot's own.
       group.some((item) => item.unattended === true),
-      { ...(group[0].recovery ? { messageId: group[0].messageId, recovery: group[0].recovery } : {}),
+      { ...(group[0].recovery ? { messageId: group[0].messageId, recovery: group[0].recovery } : {}), followupIds: ids,
         trigger: group[0].trigger, sender: group[0].sender, peerAsk: group[0].peerAsk, origin: group[0].origin, capacity: group[0].capacity },
     );
     void Promise.resolve(running).then(
@@ -284,7 +285,7 @@ export function cancelSteeredMessage(botId: string, messageId: string, expectedT
     else queues.set(threadId, { botId: entry.botId, items });
     for (const item of entry.items) {
       if (item.messageId === messageId && item.recovery) {
-        for (const listener of recoveryCancellationListeners) listener(messageId, threadId, item.recovery);
+        for (const listener of recoveryCancellationListeners) listener(botId, messageId, threadId, item.recovery);
       }
     }
     changed();

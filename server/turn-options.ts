@@ -44,6 +44,8 @@ export interface TurnOptions extends SerializableTurnOptions {
   onDispatchError?: (message: string) => void;
   recovery?: QueuedAutomaticRecovery;
   onTurnSettled?: () => void;
+  /** The durable queue rows this turn answers for; a queued recovery takes them over. */
+  followupIds?: readonly string[];
   onSettled?: (outcome: HostTurnResult) => void;
   coordination?: { id: string; resumed: boolean; settle: (outcome: HostTurnResult) => void };
 }

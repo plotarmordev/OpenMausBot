@@ -204,6 +204,115 @@ it.each(["missing-order-restart", "equal-ms-before", "equal-ms-restart", "disabl
   }
 }, 90_000);
 
+it("hands a drained line that failed at start to its queued recovery, which a restart runs once", async () => {
+  const server = await launchRestartableServer();
+  const { dataDir } = server;
+  const failure = join(dataDir, "failure.json");
+  const failureGate = join(dataDir, "failure-release");
+  const firstHolderGate = join(dataDir, "holder-release");
+  const secondHolder = join(dataDir, "second-holder");
+  const secondHolderGate = join(dataDir, "second-holder-release");
+  const backupGate = join(dataDir, "backup-release");
+  const prompts = join(dataDir, "backup.jsonl");
+  const rpc = join(dataDir, "primary.jsonl");
+  const text = "DRAINED_LINE_NEEDS_RECOVERY";
+  const api = async (method: string, path: string, body?: unknown) => {
+    const response = await fetch(server.url + path, { method, headers: { "content-type": "application/json", origin: server.url },
+      ...(body === undefined ? {} : { body: JSON.stringify(body) }), signal: AbortSignal.timeout(30_000) });
+    const result = await response.json();
+    expect(response.ok, JSON.stringify(result)).toBe(true);
+    return responseSchema.parse(result);
+  };
+  try {
+    await server.stop();
+    const configPath = join(dataDir, "config.json");
+    const config = JSON.parse(readFileSync(configPath, "utf8"));
+    config.instances.opencodeGo = { driver: "opencodeGo", displayName: "Primary fixture",
+      config: { cli: fileURLToPath(new URL("./testing/fake-acp-cli.ts", import.meta.url)) },
+      environment: { FAKE_ACP_MODELS: primary.model, FAKE_ACP_RPC_APPEND_FILE: rpc,
+        FAKE_ACP_RPC_FAILURE_FILE: failure, FAKE_ACP_RPC_FAILURE_METHOD: "initialize", FAKE_ACP_RPC_FAILURE_GATE: failureGate } };
+    // A CLI new enough to refresh a resumed session's prompt, so the thread keeps a record of what it handed Claude.
+    config.instances.claude.environment = { ...config.instances.claude.environment, FAKE_CLAUDE_VERSION: "2.1.270" };
+    config.automaticRecovery = { enabled: true, backup };
+    config.threads = { maxConcurrentPerBot: 1 };
+    writeFileSync(configPath, JSON.stringify(config));
+    await server.start();
+    const chief = (await api("GET", "/api/bots")).bots.find(bot => bot.chiefOfStaff);
+    if (chief) await api("PATCH", `/api/bots/${chief.id}`, { chiefOfStaff: false });
+    const bot = (await api("POST", "/api/bots", { name: "Drained recovery" })).bot!;
+    const threadId = (await api("POST", `/api/bots/${bot.id}/tasks`, { title: "Drained line" })).task!.threadId;
+    const state = () => api("GET", "/api/bots?messages=0");
+    const messages = async () => (await api("GET", `/api/threads/${threadId}/messages?limit=100`)).messages;
+    const succeeded = async () => (await messages()).filter(message => message.turnSucceeded === true).length;
+    await api("POST", `/api/bots/${bot.id}/messages`, { threadId, text: "WARM_BACKUP_SESSION" });
+    await expect.poll(succeeded, { timeout: 20_000 }).toBeGreaterThan(0);
+    await expect.poll(async () => (await state()).bots.find(entry => entry.id === bot.id)!.tasks.some(entry => entry.busy), { timeout: 20_000 }).toBe(false);
+    const warmed = await succeeded();
+    const wrapper = join(dataDir, "recovery-claude.mjs");
+    writeFileSync(wrapper, ["#!/usr/bin/env node", 'import { existsSync } from "node:fs";', 'import { basename } from "node:path";',
+      'process.env.FAKE_CLAUDE_MODE = "slow";', 'process.env.FAKE_CLAUDE_TOOL_CALLS = "[]";',
+      `if (basename(process.cwd()) === ${JSON.stringify(threadId)}) {`,
+      `process.env.FAKE_CLAUDE_SLOW_FINISH_GATE = ${JSON.stringify(backupGate)};`,
+      `process.env.FAKE_CLAUDE_PROMPTS = ${JSON.stringify(prompts)};`, "} else {",
+      `process.env.FAKE_CLAUDE_SLOW_FINISH_GATE = existsSync(${JSON.stringify(secondHolder)}) ? ${JSON.stringify(secondHolderGate)} : ${JSON.stringify(firstHolderGate)};`,
+      "delete process.env.FAKE_CLAUDE_PROMPTS;", "}",
+      `await import(${JSON.stringify(new URL("./testing/fake-claude-cli.ts", import.meta.url).href)});`].join("\n"), { mode: 0o700 });
+    await api("PATCH", "/api/instances/claude", { cli: wrapper });
+    await api("PATCH", `/api/bots/${bot.id}/tasks/${threadId}`, { modelSelection: primary });
+    const holderBusy = async () => (await state()).bots.find(entry => entry.id === bot.id)!.tasks.some(entry => entry.threadId !== threadId && entry.busy);
+    const queued = async () => (await state()).botQueuedMessages[threadId] ?? [];
+    const journal = () => {
+      const db = new DatabaseSync(join(dataDir, "messages.db"), { readOnly: true });
+      try { return db.prepare("SELECT status, json_extract(payload, '$.recovery') IS NOT NULL AS recovery FROM chat_followups WHERE thread_id = ? ORDER BY rowid").all(threadId); }
+      finally { db.close(); }
+    };
+    const handed = () => {
+      const saved = JSON.parse(readFileSync(join(dataDir, "bots.json"), "utf8"));
+      const bots: Array<{ id: string; tasks?: Array<{ threadId: string; handedMessages?: Record<string, unknown> }> }> = Array.isArray(saved) ? saved : saved.bots;
+      return bots.find(entry => entry.id === bot.id)?.tasks?.find(task => task.threadId === threadId)?.handedMessages;
+    };
+    expect(handed()).toMatchObject({ [backup.instanceId]: { session: expect.any(String) } });
+    writeFileSync(failure, JSON.stringify({ code: -32603, message: "Internal error", data: { details: "Upstream connection timed out" } }));
+    const { routine } = await api("POST", "/api/routines", { name: "Capacity holder", prompt: "Hold the slot.", target: "bot", botId: bot.id, runOn: "maus", enabled: true, schedule: { type: "daily", time: "23:00" } });
+    await api("POST", `/api/routines/${routine!.id}/run`);
+    await expect.poll(holderBusy, { timeout: 20_000 }).toBe(true);
+    await api("POST", `/api/bots/${bot.id}/messages`, { threadId, text });
+    await expect.poll(async () => (await queued()).length, { timeout: 20_000 }).toBe(1);
+    const initializes = () => lines(rpc).filter(call => call.method === "initialize").length;
+    const before = initializes();
+    writeFileSync(firstHolderGate, "");
+    await expect.poll(initializes, { timeout: 20_000 }).toBeGreaterThan(before);
+    expect(journal()).toEqual([{ status: "dispatching", recovery: 0 }]);
+    await api("PATCH", "/api/config", { threads: { maxConcurrentPerBot: 2 } });
+    writeFileSync(secondHolder, "");
+    await api("POST", `/api/routines/${routine!.id}/run`);
+    await expect.poll(holderBusy, { timeout: 20_000 }).toBe(true);
+    await api("PATCH", "/api/config", { threads: { maxConcurrentPerBot: 1 } });
+    writeFileSync(failureGate, "");
+    await expect.poll(() => lines(rpc).some(call => call.method === "initialize.error"), { timeout: 20_000 }).toBe(true);
+    await expect.poll(journal, { timeout: 20_000 }).toEqual([{ status: "pending", recovery: 1 }]);
+    expect(lines(prompts)).toHaveLength(0);
+    const handedBefore = handed();
+    await server.stop();
+    await server.start();
+    expect(handed()).toEqual(handedBefore);
+    await expect.poll(() => lines(prompts).length, { timeout: 20_000 }).toBe(1);
+    writeFileSync(backupGate, "");
+    await expect.poll(journal, { timeout: 20_000 }).toEqual([]);
+    await expect.poll(succeeded, { timeout: 20_000 }).toBeGreaterThan(warmed);
+    const page = await messages();
+    writeFileSync(`${server.logPath}.drained-recovery.json`, JSON.stringify({ page, prompts: lines(prompts), handedBefore, handedAfter: handed() }, null, 2));
+    expect(page.filter(message => message.tool?.name.includes("may have already run"))).toEqual([]);
+    expect(page.filter(message => message.role === "user" && message.text === text)).toHaveLength(1);
+    expect(lines(prompts)).toHaveLength(1);
+    expect(JSON.stringify(lines(prompts)[0])).toContain(text);
+  } finally {
+    writeFileSync(failureGate, ""); writeFileSync(firstHolderGate, ""); writeFileSync(secondHolderGate, ""); writeFileSync(backupGate, "");
+    await server.close();
+    console.info(JSON.stringify({ logPath: server.logPath }));
+  }
+}, 120_000);
+
 it.each(["continues", "stopped after restart", "ended before restart"] as const)("coordinated recovery pending across a restart: %s", async mode => {
   const continues = mode === "continues";
   const server = await launchRestartableServer({ scripted: true });
