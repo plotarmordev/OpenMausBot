@@ -1,8 +1,9 @@
 import type { DatabaseSync } from "node:sqlite";
 
 import type { NotificationLogEntry } from "../shared/notification.ts";
+import type { OpenTransaction } from "./sqlite-transaction.ts";
 
-export const NOTIFICATION_LOG_LIMIT = 500;
+const NOTIFICATION_LOG_LIMIT = 500;
 
 const rowToNotificationLogEntry = (row: {
   id: string; at: number; kind: string; bot_id: string; bot_name: string; thread_id: string;
@@ -22,8 +23,7 @@ const rowToNotificationLogEntry = (row: {
   read: row.read !== 0,
 });
 
-/** Call inside a transaction: the insert and the trim to the newest NOTIFICATION_LOG_LIMIT commit together. */
-export function insertNotificationRow(database: DatabaseSync, entry: NotificationLogEntry): void {
+export function insertNotificationRow(database: OpenTransaction, entry: NotificationLogEntry): void {
   database.prepare(
     "INSERT INTO notification_log(id, at, kind, bot_id, bot_name, thread_id, group_id, title, body, avatar_url, for_person, read) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)",
   ).run(entry.id, entry.at, entry.kind, entry.botId, entry.botName, entry.threadId, entry.groupId ?? null, entry.title, entry.body, entry.avatarUrl ?? null, entry.forPerson ?? null);

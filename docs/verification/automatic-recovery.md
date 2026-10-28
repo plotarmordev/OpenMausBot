@@ -41,13 +41,17 @@ immediate one that could not start: one failed activity, one turn-failed
 notification and one could-not-start incident for a person-facing turn, and its
 durable row leaves the queue. The person's own Stop or cancelling its chip is
 silent, like Stop of an immediate recovery: no failed activity, notification or
-incident. Stop removes the chip and its durable row at once. A queued recovery
-is never steered into a running turn: the steer request is refused with 409
-`recovery_not_steerable`, and steering an ordinary item behind it leaves the
-recovery queued in place.
+incident. Stop removes the chip at once, before it interrupts the turn, and
+then deletes the durable row; a failed delete still stops the turn. A queued
+recovery is never steered into a running turn: the steer request is refused with
+409 `recovery_not_steerable`, and steering an ordinary item behind it steers only
+the ordinary items, leaves the recovery queued in place with its durable row
+pending, and records no second user line for the recovered request.
 
 ```sh
-pnpm exec vitest run --no-file-parallelism server/automatic-recovery.e2e.test.ts -t "admits recovery safely"
+pnpm exec vitest run --no-file-parallelism server/automatic-recovery.e2e.test.ts -t "admits recovery safely|steers it or an ordinary item"
+pnpm exec vitest run --no-file-parallelism server/steer-queue.test.ts -t "sharing recovery"
+pnpm exec vitest run --no-file-parallelism server/host/person-stop.test.ts
 ```
 
 Queued admission rechecks managed policy and the backup's recovery capabilities.

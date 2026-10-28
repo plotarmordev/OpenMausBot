@@ -1,9 +1,9 @@
 import type { DatabaseSync } from "node:sqlite";
 
+import type { OpenTransaction } from "./sqlite-transaction.ts";
 import type { Message } from "./store.ts";
 
-/** Runs inside the caller's migration transaction. */
-export function migrateInputOrder(database: DatabaseSync): void {
+export function migrateInputOrder(database: OpenTransaction): void {
   for (const table of ["messages", "chat_followups"]) {
     const columns = database.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
     if (!columns.some(column => column.name === "input_order")) database.exec(`ALTER TABLE ${table} ADD COLUMN input_order INTEGER`);
@@ -14,8 +14,7 @@ export function migrateInputOrder(database: DatabaseSync): void {
   `);
 }
 
-/** Call inside a transaction: the reserved value and the row it stamps commit together. */
-export function nextInputOrder(database: DatabaseSync): number {
+export function nextInputOrder(database: OpenTransaction): number {
   return Number(database.prepare("UPDATE input_order SET value = value + 1 WHERE id = 1 RETURNING value").get()!.value);
 }
 
@@ -25,7 +24,7 @@ export function isNewInput(database: DatabaseSync, threadId: string, message: Me
     !database.prepare("SELECT 1 FROM messages WHERE thread_id = ? AND id = ?").get(threadId, message.id);
 }
 
-export function stampInputOrder(database: DatabaseSync, threadId: string, messageId: string): void {
+export function stampInputOrder(database: OpenTransaction, threadId: string, messageId: string): void {
   database.prepare("UPDATE messages SET input_order = ? WHERE thread_id = ? AND id = ?").run(nextInputOrder(database), threadId, messageId);
 }
 

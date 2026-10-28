@@ -15525,9 +15525,9 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
       if (snapshot.phase === "settled") throw requestConflict("This request has already settled");
       // No await between comparing the exact lease and revoking it.
       owner.stopped = true;
-      cancelQueuedRecoveries(m[1], threadId);
+      const settleRecoveries = cancelQueuedRecoveries(m[1], threadId);
       handoffs.stoppedByPerson(threadId); personStops.stop(threadId, liveTurns.running(threadId), directTurnDispatchClaims.has(threadId));
-      await interruptDirectThread(m[1], threadId);
+      await interruptDirectThread(m[1], threadId).finally(settleRecoveries);
       return json(res, 200, { ok: true, outcome: "stopped" });
     }
 

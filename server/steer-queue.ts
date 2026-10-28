@@ -301,23 +301,27 @@ export function cancelSteeredMessage(botId: string, messageId: string, expectedT
   return false;
 }
 
-/** A person's Stop ends the thread's queued automatic recovery with it; the row leaves the journal, as nothing can replay it. */
-export function cancelQueuedRecoveries(botId: string, threadId: string): void {
+/** Invariant: a stopped recovery leaves the queue before the Stop reaches its turn, so no drain can start it. */
+export function cancelQueuedRecoveries(botId: string, threadId: string): () => void {
   const entry = queues.get(threadId);
   const cancelled = entry?.botId === botId ? entry.items.filter((item) => item.recovery) : [];
-  if (!entry || !cancelled.length) return;
-  settleChatFollowups(cancelled.map((item) => item.messageId), null);
+  if (!entry || !cancelled.length) return () => {};
   const items = entry.items.filter((item) => !item.recovery);
   if (items.length) queues.set(threadId, { botId, items });
   else queues.delete(threadId);
-  for (const item of cancelled) {
-    for (const listener of recoveryCancellationListeners) listener(botId, item.messageId, threadId, item.recovery!);
-  }
   changed();
+  return () => {
+    try {
+      settleChatFollowups(cancelled.map((item) => item.messageId), null);
+    } finally {
+      for (const item of cancelled) {
+        for (const listener of recoveryCancellationListeners) listener(botId, item.messageId, threadId, item.recovery!);
+      }
+    }
+  };
 }
 
-/** The held items leave first, so a racing settle cannot also dispatch these words; the caller must restore or settle them.
- * An automatic recovery is never steered into a live turn: it stays queued, and holding one returns null. */
+/** Invariant: held words are out of the queue, so a racing drain cannot also dispatch them. Recoveries are never held. */
 export function holdSteeredQueue(botId: string, threadId: string, queueId: string): HeldSteerQueue | null {
   const entry = queues.get(threadId);
   const target = entry?.botId === botId ? entry.items.find((item) => item.messageId === queueId) : undefined;

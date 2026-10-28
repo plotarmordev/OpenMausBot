@@ -15,6 +15,7 @@ import { insertNotificationRow, markNotificationRowsRead, markThreadNotification
 export type { SearchHit } from "./message-search-query.ts";
 import type { QueuedAutomaticRecovery } from "./turn-options.ts";
 import { isNewInput, migrateInputOrder, nextInputOrder, queuedInputAfter, stampInputOrder } from "./input-order.ts";
+import type { OpenTransaction } from "./sqlite-transaction.ts";
 
 const DB_FILE = () => join(DATA_DIR, "messages.db");
 /** The rows the Today page reads, and among them the failed tool calls. JSON.stringify escapes every quote inside a
@@ -96,7 +97,7 @@ function open(): DatabaseSync {
   `);
   db.exec("BEGIN IMMEDIATE");
   try {
-    migrateInputOrder(db);
+    migrateInputOrder(db as OpenTransaction);
     const notificationColumns = db.prepare("PRAGMA table_info(notification_log)").all() as Array<{ name: string }>;
     if (!notificationColumns.some((column) => column.name === "for_person")) db.exec("ALTER TABLE notification_log ADD COLUMN for_person TEXT");
     db.exec("COMMIT");
@@ -190,8 +191,8 @@ function db(): DatabaseSync {
 }
 
 let transactionDepth = 0;
-function transaction<T>(fn: (database: DatabaseSync) => T): T {
-  const database = db();
+function transaction<T>(fn: (database: OpenTransaction) => T): T {
+  const database = db() as OpenTransaction;
   if (transactionDepth > 0) {
     const savepoint = `command_${transactionDepth}`;
     database.exec(`SAVEPOINT ${savepoint}`);
@@ -251,8 +252,8 @@ export interface ChatFollowup {
 }
 
 /** A 202/cancel/dispatch claim must reach disk (FULL sync) before its result is published. */
-function writeFollowups(write: (connection: DatabaseSync) => void): void {
-  const connection = db();
+function writeFollowups(write: (connection: OpenTransaction) => void): void {
+  const connection = db() as OpenTransaction;
   connection.exec("PRAGMA synchronous = FULL");
   try {
     connection.exec("BEGIN IMMEDIATE");

@@ -328,7 +328,7 @@ it.each(["older ordinary head", "pending policy refusal", "pending cancellation"
   });
 }, 90_000);
 
-it("keeps a queued recovery out of a person's running turn when someone tries to steer it", async () => {
+it("keeps a queued recovery out of a person's running turn when someone steers it or an ordinary item behind it", async () => {
   await withRecoveryFixture({ gated: true }, async ({ api, control, calls, backupPrompts, dataDir, gateFile, evidence }) => {
     const { bot } = await control("new-bot", "--name", "Recovery steer");
     const threadId = bot.activeTaskId;
@@ -392,13 +392,28 @@ it("keeps a queued recovery out of a person's running turn when someone tries to
       expect((await state()).botQueuedMessages[threadId].map((item: { queueId: string }) => item.queueId)).toEqual([queued.queueId]);
       expect(journal()).toEqual([{ status: "pending" }]);
 
+      const ordinary = "ORDINARY_ITEM_STEERED_PAST_THE_RECOVERY";
+      await api("POST", `/api/bots/${bot.id}/messages`, { threadId, text: ordinary }, 202);
+      const queuedIds = async () => ((await state()).botQueuedMessages[threadId] ?? []).map((item: { queueId: string }) => item.queueId);
+      const [, behind] = await queuedIds();
+      expect(behind).toBeDefined();
+      expect(await queuedIds()).toEqual([queued.queueId, behind]);
+      const steer = await api("POST", `/api/bots/${bot.id}/queue/${behind}/steer`, { threadId });
+      expect(steer).toMatchObject({ steered: true, queueIds: [behind] });
+      await expect.poll(() => existsSync(steerReceived), { timeout: 20_000 }).toBe(true);
+      expect(await queuedIds()).toEqual([queued.queueId]);
+      expect(journal()).toEqual([{ status: "pending" }]);
+      expect(await originals()).toHaveLength(1);
+      expect((await messages()).filter(message => message.role === "user" && message.text === ordinary)).toHaveLength(1);
+
       writeFileSync(personGate, "");
       writeFileSync(holderGate, "");
       await expect.poll(async () => (await tasks()).some(task => task.busy), { timeout: 20_000 }).toBe(false);
       await expect.poll(journal, { timeout: 20_000 }).toEqual([]);
       expect(await originals()).toHaveLength(1);
       expect(backupPrompts()).toHaveLength(1);
-      expect(existsSync(steerReceived)).toBe(false);
+      const reply = (await messages()).find(message => message.role === "bot" && message.text?.includes("PERSON_KEEPS_THE_THREAD_BUSY"))?.text;
+      expect(reply?.split(" + steered: ")[1]).toBe(ordinary);
       evidence.push({ messages: await messages(), journal: journal(), backupPrompts: backupPrompts() });
     } finally {
       writeFileSync(personGate, "");

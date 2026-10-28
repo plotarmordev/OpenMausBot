@@ -7,7 +7,7 @@ import { DatabaseSync } from "node:sqlite";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
-import { saveChatFollowup } from "./message-db.ts";
+import { chatFollowups, saveChatFollowup } from "./message-db.ts";
 import { killCliTree } from "./procs.ts";
 import {
   cancelSteeredMessage,
@@ -27,6 +27,7 @@ import {
   type SteerStore,
 } from "./steer-queue.ts";
 import type { BotRecord, Message } from "./store.ts";
+import type { QueuedAutomaticRecovery } from "./turn-options.ts";
 import { removeTempDir } from "./testing/cleanup.ts";
 import { freePortBlock } from "./testing/ports.ts";
 
@@ -448,6 +449,35 @@ describe("steer-queue module", () => {
       cancelSteeredMessage("bot-hold-merge", later.id);
     } finally {
       cancelSteeredMessage("bot-hold-merge", queued.id);
+    }
+  });
+
+  it("steering an ordinary item holds only the ordinary items and leaves a sharing recovery queued in place", () => {
+    const botId = "bot-hold-recovery";
+    const threadId = "thread-hold-recovery";
+    const recovery = { generation: "hold-recovery" } as QueuedAutomaticRecovery;
+    const texts = () => queuedSteerSnapshot(() => true)[threadId]?.map((item) => item.text) ?? [];
+    const journalStatus = (id: string) => chatFollowups("bot").find((row) => row.id === id)?.status;
+    const first = queueSteeredMessage(botId, threadId, "O1");
+    const queuedRecovery = queueSteeredMessage(botId, threadId, "R", { reason: "capacity", recovery });
+    const second = queueSteeredMessage(botId, threadId, "O2");
+    let third: { id: string } | undefined;
+    try {
+      const held = holdSteeredQueue(botId, threadId, first.id)!;
+      expect(held.items.map((item) => item.text)).toEqual(["O1", "O2"]);
+      expect(texts()).toEqual(["R"]);
+      third = queueSteeredMessage(botId, threadId, "O3");
+      restoreHeldSteeredQueue(held);
+      expect(texts()).toEqual(["O1", "R", "O2", "O3"]);
+
+      const steered = holdSteeredQueue(botId, threadId, first.id)!;
+      expect(steered.items.map((item) => item.text)).toEqual(["O1", "O2", "O3"]);
+      settleHeldSteeredQueue(steered);
+      expect(texts()).toEqual(["R"]);
+      expect(journalStatus(queuedRecovery.id)).toBe("pending");
+      expect([first.id, second.id, third.id].map(journalStatus)).toEqual([undefined, undefined, undefined]);
+    } finally {
+      for (const id of [first.id, queuedRecovery.id, second.id, third?.id]) if (id) cancelSteeredMessage(botId, id);
     }
   });
 
