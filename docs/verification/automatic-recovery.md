@@ -25,8 +25,10 @@ It compares the persisted recovery plan with the current task fallback or global
 ordered steps, instance, model, effort and variant. Changed, reordered or removed
 plans settle without a prompt, model switch or failover record. Dispatch also
 checks the selected step's index and the source selection.
-It checks the original line's persisted cancellation and newer pending input
-in the durable queue. User-line appends and queue admissions share a transactional
+It checks Stop by the same rule as an immediate recovery: the live request
+decides; after a restart, only the persisted cancellation of the failed request's
+own line refuses it, never an older line under coordinated work. It also checks
+newer pending input in the durable queue. User-line appends and queue admissions share a transactional
 SQLite sequence, so equal millisecond timestamps retain their strict admission
 order across restart. Coordinated work without a user line reserves its sequence
 at admission and carries it in the durable recovery payload. Older queued input
@@ -34,6 +36,15 @@ does not supersede a newer original line. Saved lines or pending input without o
 settles without backup work. Stop remains effective across restart; a newer queued
 message supersedes recovery without being replayed or reordered. Disabling recovery while it waits settles the item
 without selecting the backup or recording a recovery switch.
+A queued recovery that is refused, cancelled or cannot be checked settles like
+an immediate one that could not start: one failed activity, one turn-failed
+notification and one could-not-start incident for a person-facing turn, and its
+durable row leaves the queue.
+
+```sh
+pnpm exec vitest run --no-file-parallelism server/automatic-recovery.e2e.test.ts -t "admits recovery safely"
+```
+
 Queued admission rechecks managed policy and the backup's recovery capabilities.
 A policy refusal settles the durable item without changing the selected model,
 recording a failover or publishing a recovery activity. The same checks run
@@ -56,6 +67,15 @@ another user message.
 A pending recovery owns its failed source across restart; settling that source
 does not publish an interrupted-turn notice. When stale recovery settles, queue
 draining continues so newer input does not wait for an unrelated turn event.
+A queued line that fails at provider start hands its durable row to the queued
+recovery in one transaction, so a restart neither reports it as possibly run nor
+marks it handed to an engine; the backup runs it once.
+
+```sh
+pnpm exec vitest run --no-file-parallelism server/automatic-recovery-restart.e2e.test.ts -t "drained line"
+pnpm exec vitest run server/host/queued-recovery.test.ts
+```
+
 A coordinated node whose recovery is pending at restart is neither failed nor
 rerun: the coordinator's resumed node takes over the durable queue row, the
 backup runs the original prompt once, and its result settles that node. Until
@@ -118,3 +138,17 @@ provider-prompt counts; elapsed time is not evidence of quiescence.
 Settings tests cover the real component's controls, drafts, validation and
 save errors. These are not an Electron visual walkthrough or proof of a real
 provider's availability, model quality, or a general cure for idle timeouts.
+
+## Known gaps
+
+- For coordinated work with a user line, newer input is measured from that line,
+  not from a sequence reserved when the failed turn started, so older ordinary
+  input queued before the turn can suppress recovery.
+- A queued recovery's callbacks stay in memory when its thread's queue is
+  cancelled wholesale or by a caller other than the recovery listener.
+- `mixed-capacity-restart.e2e.test.ts` can observe the journal between two
+  dispatches; `message-db.test.ts` runs sixteen processes under a 30-second
+  budget; `automatic-recovery-restart.e2e.test.ts` runs its seventeen modes in
+  one shard.
+- The queued recovery chip repeats the original line's text, and Stop leaves
+  the chip until a slot frees.
