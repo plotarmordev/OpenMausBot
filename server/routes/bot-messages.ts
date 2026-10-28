@@ -139,9 +139,11 @@ export interface BotMessageRouteDeps {
  * replaces `text` when the person reacted in that app: a 👍 or 👎 (Slack's name for it, or the emoji any platform
  * sends) on the message in `replyToId`, made by `onBehalfOf`.
  *
- * `expectedEnvironmentId`, advertised as capabilities.guardedEnvironment, names the install the sender means: any other
- * install answers 409 `guarded_environment` with its own `environmentId` before it stores, reserves, queues or starts
- * anything, and before it looks the `sendId` up.
+ * `expectedEnvironmentId`, advertised as capabilities.guardedEnvironment, names the install the sender means, in either
+ * case. Any other install answers 409 `guarded_environment` with its own `environmentId` before it stores, reserves,
+ * queues or starts anything, and before it looks the `sendId` up. The comparison runs synchronously once the body is
+ * parsed, against the id loaded at start and never reloaded; acceptance of a matching send may wait on provider
+ * discovery only after it.
  *
  * A retry with the same `sendId`, text and `replyToId` answers with the message first accepted under it. That match
  * reads the stored conversation (messages.db in the data directory), so it survives a restart, and the message keeps

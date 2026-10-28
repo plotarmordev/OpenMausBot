@@ -6,11 +6,9 @@
 // 2026 T3 Tools Inc. (full text in third_party/t3-code/LICENSE); modified: written on ws without Effect, the viewer is
 // the browser service's (it follows the tab in front of the bot's one browser), the socket opens before the browser
 // has started, and OpenMausBot's own messages are added.
-import type { IncomingMessage } from "node:http";
-import type { Socket } from "node:net";
+import type { RawData, WebSocket } from "ws";
 
-import { WebSocketServer, type RawData, type WebSocket } from "ws";
-
+import { createHandshakes, type Handshake } from "../../routes/upgrades.ts";
 import { BrowserHostError, SETUP_COMMAND } from "../chrome/host-setup.ts";
 import type { BrowserService, BrowserTarget } from "../service.ts";
 import { FRAME_CAP_LIMITS, requestedSize, type Viewer, type ViewerOptions, type ViewerOutput } from "./core.ts";
@@ -44,7 +42,7 @@ const PING_MS = 15_000;
 /** Input that arrives while the viewer is still attaching (its control state is already on the wire) waits for it. */
 const EARLY_INPUT_LIMIT = 64;
 
-export interface StreamRequest {
+export interface StreamRequest extends Handshake {
   target: BrowserTarget;
   botId: string;
   /** A session id, or local-owner. */
@@ -52,9 +50,6 @@ export interface StreamRequest {
   /** False for a passive view (picture in picture): it never takes control. */
   canOperate: boolean;
   params: URLSearchParams;
-  req: IncomingMessage;
-  socket: Socket;
-  head: Buffer;
   /** False once this view no longer shows the bot's current browser to a live sign-in. */
   isCurrent(): boolean;
   /** Why a person may not restart this browser now, or null. */
@@ -227,7 +222,7 @@ class StreamSession {
 export class StreamV2 {
   readonly #service: BrowserService;
   readonly #sessions = new Set<StreamSession>();
-  readonly #server = new WebSocketServer({ noServer: true, perMessageDeflate: false, maxPayload: MAX_MESSAGE_BYTES });
+  readonly #answer = createHandshakes({ perMessageDeflate: false, maxPayload: MAX_MESSAGE_BYTES });
 
   constructor({ service }: { service: BrowserService }) {
     this.#service = service;
@@ -237,7 +232,7 @@ export class StreamV2 {
   open(request: StreamRequest): void {
     const perProfile = [...this.#sessions].filter((session) => session.request.target.key === request.target.key).length;
     const busy = this.#sessions.size >= VIEWERS_TOTAL || perProfile >= VIEWERS_PER_PROFILE;
-    this.#server.handleUpgrade(request.req, request.socket, request.head, (ws) => {
+    this.#answer(request, (ws) => {
       const session = new StreamSession(request, ws);
       if (busy) {
         session.closed = true;

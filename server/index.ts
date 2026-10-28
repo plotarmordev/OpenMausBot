@@ -520,7 +520,7 @@ import {
 import { createGracefulShutdown } from "./graceful-shutdown.ts";
 import { acquireDataDirLeaseForProcess } from "./data-dir-lease.ts";
 import { createWorkspaceAccess, describeEdition, editionForSettings, editionStatus, entitled, hostedWorkspaceConfiguration, hostedWorkspaceConfigured, licenseWarning, sharedWorkspaceFullAccessConfigured, loadEnterpriseLayer, workspaceMembership, type WorkspaceAccess } from "./enterprise.ts";
-import { attestsEnvironment, ENVIRONMENT_HEADER, environmentDescriptor, loadEnvironmentId, serverVersion } from "./environment.ts";
+import { environmentAttestation, environmentDescriptor, loadEnvironmentId, serverVersion } from "./environment.ts";
 import { WorkspaceBackupMaintenance } from "./workspace-backup-maintenance.ts";
 import { createWorkspaceBackupRoutes, isWorkspaceBackupSessionControl } from "./workspace-backup-http.ts";
 import { applyPendingWorkspaceRestore, readLastWorkspaceRestore, type WorkspaceRestoreResult } from "./workspace-backup.ts";
@@ -675,6 +675,7 @@ if (existsSync(join(DATA_DIR, ".backups"))) {
 const workspaceMaintenance = new WorkspaceBackupMaintenance(), moveFreeze = createMoveFreeze({ dataDir: DATA_DIR, exportOnly: (process.env.OMB_CLOUD_ROLE === "home" || process.env.OMB_CLOUD_ROLE === "team") && process.env.OMB_CLOUD_EXPORT_ONLY === "1" });
 // Only after ensureDirs(), whose one-time legacy data-dir rename must not find ~/.openmausbot already there.
 const ENVIRONMENT_ID = loadEnvironmentId(DATA_DIR);
+const attestation = environmentAttestation(ENVIRONMENT_ID);
 const signInAllowList = cacheUntilConfigChanges((config) => ({
   admins: parseAllowList(config.signIn?.admins?.join(",")),
   members: parseAllowList(config.signIn?.members?.join(",")),
@@ -4794,7 +4795,7 @@ function audienceChanged(): void {
   }
 }
 // Before any revocation callback: Cloud boot can revoke sessions before routes are registered.
-const upgrades = createUpgrades();
+const upgrades = createUpgrades(attestation);
 const desktopViewer = createDesktopViewer({
   upgrades,
   target: (id) => {
@@ -12941,11 +12942,11 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
   try {
     url = new URL(req.url ?? "/", `http://localhost:${PORT}`);
   } catch {
-    if (attestsEnvironment(req.url ?? "")) res.setHeader(ENVIRONMENT_HEADER, ENVIRONMENT_ID);
+    for (const [name, value] of attestation(req.url ?? "")) res.setHeader(name, value);
     return json(res, 400, { error: "invalid request URL" });
   }
   const path = url.pathname;
-  if (attestsEnvironment(path)) res.setHeader(ENVIRONMENT_HEADER, ENVIRONMENT_ID);
+  for (const [name, value] of attestation(path)) res.setHeader(name, value);
   const method = req.method ?? "GET";
   let m: RegExpMatchArray | null = null;
   let releaseWorkspaceRequest: (() => void) | undefined;

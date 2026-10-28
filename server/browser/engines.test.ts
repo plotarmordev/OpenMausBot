@@ -219,7 +219,7 @@ describe("the live view router", () => {
 
   it("streams, takes uploads for and serves downloads of new-engine sessions only", async () => {
     const { chrome, live } = engines();
-    const request = { botId: "a", owner: "o", canOperate: true, params: new URLSearchParams(), req: {} as never, socket: {} as never, head: Buffer.alloc(0), isCurrent: () => true, restartRefusal: () => null };
+    const request = { botId: "a", owner: "o", canOperate: true, params: new URLSearchParams(), req: {} as never, socket: {} as never, head: Buffer.alloc(0), attestation: [], isCurrent: () => true, restartRefusal: () => null };
     expect(live.stream({ session: "s", spec: AGENT_BROWSER, ...request })).toBe(false);
     expect(chrome.stream.open).not.toHaveBeenCalled();
     expect(live.stream({ session: "s", spec: CHROME, ...request })).toBe(true);

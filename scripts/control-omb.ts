@@ -209,6 +209,8 @@ export function verificationServerEnvironment(parentEnv: NodeJS.ProcessEnv, data
   if (parentEnv.OMB_TEST_APPROVAL_CLOCK === "1") childEnv.OMB_TEST_APPROVAL_CLOCK = "1";
   // The stall watchdog fires on a marker file, not after 20 minutes of silence.
   if (parentEnv.OMB_TEST_STALL_CLOCK === "1") childEnv.OMB_TEST_STALL_CLOCK = "1";
+  // A thread read throws an unexpected fault while a marker file exists.
+  if (parentEnv.OMB_TEST_ROUTE_FAULT === "1") childEnv.OMB_TEST_ROUTE_FAULT = "1";
   // The first-reply rescue's delay in ms, so a check need not sit through 20 s of silence.
   if (/^\d{1,6}$/.test(parentEnv.OMB_FIRST_REPLY_NOTICE_MS ?? "")) childEnv.OMB_FIRST_REPLY_NOTICE_MS = parentEnv.OMB_FIRST_REPLY_NOTICE_MS;
   // The UI checks drive this fixture from a real browser, as `pnpm dev` does; OMB_DEV_TRUST_LOCAL_BROWSER=0 tests the sign-in.
@@ -233,6 +235,7 @@ export function verificationServerArgs(childEnv: NodeJS.ProcessEnv): string[] {
     ...(childEnv.OMB_TEST_DESKTOP_OWNER_TOKEN || childEnv.OMB_TEST_DESKTOP_CUA_CONNECTION ? hook("desktop-parent.mjs") : []),
     ...(childEnv.OMB_TEST_APPROVAL_CLOCK === "1" ? hook("approval-clock-hooks.mjs") : []),
     ...(childEnv.OMB_TEST_STALL_CLOCK === "1" ? hook("stall-clock-hooks.mjs") : []),
+    ...(childEnv.OMB_TEST_ROUTE_FAULT === "1" ? hook("route-fault-hooks.mjs") : []),
     join(ROOT, "server", "index.ts"),
   ];
 }

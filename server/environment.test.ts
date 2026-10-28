@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { environmentDescriptor, loadEnvironmentId, serverVersion } from "./environment.ts";
+import { ENVIRONMENT_HEADER, environmentAttestation, environmentDescriptor, loadEnvironmentId, serverVersion } from "./environment.ts";
 
 const dirs: string[] = [];
 
@@ -92,6 +92,24 @@ describe("environment identity", () => {
     writeFileSync(join(dir, "environment-id"), "garbage\n");
     expect(() => loadEnvironmentId(dir)).toThrow(/not a valid UUID; refusing to replace it/);
     expect(readFileSync(file, "utf8")).toBe("garbage\n");
+  });
+
+  it("keeps an inherited uppercase id byte for byte and attests it as written", () => {
+    const dir = mkdtempSync(join(tmpdir(), "omb-env-"));
+    dirs.push(dir);
+    const file = join(dir, "environment-id");
+    const inherited = "5E0C9A1D-7B2F-4C3E-8D4A-1F2E3D4C5B6A";
+    writeFileSync(file, `${inherited}\n`);
+    const id = loadEnvironmentId(dir);
+    expect(id).toBe(inherited);
+    expect(loadEnvironmentId(dir)).toBe(inherited);
+    expect(readFileSync(file, "utf8")).toBe(`${inherited}\n`);
+    expect(environmentDescriptor({ environmentId: id, desktopManaged: false }).environmentId).toBe(inherited);
+    const attest = environmentAttestation(id);
+    expect(attest("/api/bots")).toEqual([[ENVIRONMENT_HEADER, inherited]]);
+    expect(attest("/.well-known/openmausbot/environment")).toEqual([[ENVIRONMENT_HEADER, inherited]]);
+    expect(attest("/api")).toEqual([]);
+    expect(attest("/.well-known/other")).toEqual([]);
   });
 
   it("rejects UUID-shaped garbage and an unreadable identity path", () => {

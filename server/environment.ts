@@ -70,16 +70,22 @@ function readEnvironmentId(file: string): string | undefined {
   return id;
 }
 
-/** Every response to an `/api/` or `/.well-known/openmausbot/` request, errors included, names the install that
- * answered it in this header: the same `environmentId` the descriptor serves. A response without it comes from an
- * install of unknown identity. */
+/** Every response to an `/api/` or `/.well-known/openmausbot/` request, errors and WebSocket handshakes included,
+ * names the install that answered it in this header: the descriptor's `environmentId`, byte for byte. A response
+ * without it comes from an install of unknown identity. */
 export const ENVIRONMENT_HEADER = "OpenMausBot-Environment";
 
-export function attestsEnvironment(path: string): boolean {
-  return path.startsWith("/api/") || path.startsWith("/.well-known/openmausbot/");
+/** The header name and value pairs a response carries. */
+export type Attestation = readonly (readonly [name: string, value: string])[];
+
+export function environmentAttestation(environmentId: string): (path: string) => Attestation {
+  const attested: Attestation = [[ENVIRONMENT_HEADER, environmentId]];
+  return (path) => path.startsWith("/api/") || path.startsWith("/.well-known/openmausbot/") ? attested : [];
 }
 
-/** Read or create the id. Written once, never rotated by the server itself. */
+/** Read or create the id. Written once, never rotated by the server itself. A created id is lowercase; an existing one
+ * is kept exactly as written, uppercase hex included, because rewriting its case would change the bytes every saved
+ * copy holds. Either case names the same UUID, so compare ids case-insensitively. */
 export function loadEnvironmentId(dataDir: string): string {
   const file = join(dataDir, "environment-id");
   const existing = readEnvironmentId(file);

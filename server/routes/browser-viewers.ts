@@ -147,7 +147,7 @@ export function createBrowserViewerRoutes(deps: BrowserViewerRouteDeps): RouteHa
       const opened = deps.viewers.stream({
         session: browser.session, spec: browser.spec, botId: browser.botId, owner,
         canOperate: url.searchParams.get("interactive") !== "false",
-        params: url.searchParams, req, socket: pending.socket, head: pending.head,
+        params: url.searchParams, req, socket: pending.socket, head: pending.head, attestation: pending.attestation,
         isCurrent, restartRefusal: () => deps.restartRefusal(browser.session),
       });
       if (!opened) return json(res, 409, { error: "This browser shows in the live view only." });
