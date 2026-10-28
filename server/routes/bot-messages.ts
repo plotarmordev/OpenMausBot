@@ -24,7 +24,7 @@ import type { ReplyTarget } from "../replies.ts";
 import type { RequestAuth } from "../request-auth.ts";
 import type { RoutineManager } from "../routines.ts";
 import { acceptedSendMatch, parseSendId } from "../send-idempotency.ts";
-import { cancelSteeredMessage, holdSteeredQueue, queuedSteeredMessage, restoreHeldSteeredQueue, settleHeldSteeredQueue } from "../steer-queue.ts";
+import { cancelSteeredMessage, holdSteeredQueue, isQueuedRecovery, queuedSteeredMessage, restoreHeldSteeredQueue, settleHeldSteeredQueue } from "../steer-queue.ts";
 import type { BotRecord, GroupRecord, Message, Store } from "../store.ts";
 import { extractSteerImages } from "../turn-images.ts";
 import { followupFacts, helperFollowup, helperFollowupBody, mayFollowUp } from "../helper-followup.ts";
@@ -341,7 +341,10 @@ export function createBotMessageRoutes(deps: BotMessageRouteDeps): RouteHandler 
       const body = await readBody(req);
       requirePinnedClientThread(m[1], body?.threadId);
       const bot = requestedTaskBot(m[1], body?.threadId);
-      // Hold the whole queue atomically: a racing settle drains it or this request steers it, never both.
+      if (isQueuedRecovery(bot.id, bot.threadId, m[2])) {
+        return json(res, 409, { error: "An automatic recovery cannot be steered; cancel it instead", code: "recovery_not_steerable" });
+      }
+      // Hold the queue atomically: a racing settle drains it or this request steers it, never both.
       const held = holdSteeredQueue(bot.id, bot.threadId, m[2]);
       if (!held) return json(res, 404, { error: "no such queued message" });
       const currentAtStart = store.projectBotForTask(bot.id, bot.threadId);

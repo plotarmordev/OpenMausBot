@@ -253,17 +253,7 @@ import { personOf, promptWithReply, replyTargetIn, speakerOf, transcriptText, ty
 import type { DataContext } from "./data-context.ts";
 import { promptWithDataContext } from "../shared/data-context.ts";
 import { admit, roomTurnHolds } from "./admission.ts";
-import {
-  drainSteeredMessages,
-  hasQueuedSteeredMessages,
-  isSteeredMessageQueued,
-  onSteeredQueueChange,
-  queuedSteerSnapshot,
-  queuedSteeredMessage,
-  queuedThreadPosition,
-  queueSteeredMessage,
-  restoreSteeredMessages,
-} from "./steer-queue.ts";
+import { cancelQueuedRecoveries, drainSteeredMessages, hasQueuedSteeredMessages, isSteeredMessageQueued, onSteeredQueueChange, queuedSteerSnapshot, queuedSteeredMessage, queuedThreadPosition, queueSteeredMessage, restoreSteeredMessages } from "./steer-queue.ts";
 import type { SerializableTurnOptions, TurnOptions } from "./turn-options.ts";
 import { createQueuedRecovery } from "./host/queued-recovery.ts";
 import {
@@ -15535,6 +15525,7 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
       if (snapshot.phase === "settled") throw requestConflict("This request has already settled");
       // No await between comparing the exact lease and revoking it.
       owner.stopped = true;
+      cancelQueuedRecoveries(m[1], threadId);
       handoffs.stoppedByPerson(threadId); personStops.stop(threadId, liveTurns.running(threadId), directTurnDispatchClaims.has(threadId));
       await interruptDirectThread(m[1], threadId);
       return json(res, 200, { ok: true, outcome: "stopped" });

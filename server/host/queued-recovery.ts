@@ -43,18 +43,19 @@ export function createQueuedRecovery(deps: QueuedRecoveryDeps) {
   const coordinatedAtBoot = new Map<string, string>();
   const pendingRootsAtBoot = new Set<string>();
 
-  function settleUnstarted(botId: string, threadId: string, queueId: string, recovery: QueuedAutomaticRecovery, message: string) {
+  /** `byPerson`: the person's own Stop or cancel, which ends as quietly as a Stop of an immediate recovery. */
+  function settleUnstarted(botId: string, threadId: string, queueId: string, recovery: QueuedAutomaticRecovery, message: string, byPerson: boolean) {
     const callbacks = callbacksByQueueId.get(queueId);
     callbacksByQueueId.delete(queueId);
     deps.settleDirectFollowup(recovery.generation, { ok: false, text: message });
-    store.appendMessage(threadId, { role: "bot", kind: "activity", turnSucceeded: false, tool: failedTurnTool(message) });
-    const bot = store.projectBotForTask(botId, threadId);
+    const bot = byPerson ? null : store.projectBotForTask(botId, threadId);
+    if (!byPerson) store.appendMessage(threadId, { role: "bot", kind: "activity", turnSucceeded: false, tool: failedTurnTool(message) });
     if (bot) deps.reportCouldNotStart(bot, threadId, message, recovery.options);
     callbacks?.onDispatchError?.(message);
   }
 
   onSteeredRecoveryCancelled((botId, id, threadId, recovery) =>
-    settleUnstarted(botId, threadId, id, recovery, "Automatic recovery cancelled before the backup started."));
+    settleUnstarted(botId, threadId, id, recovery, "Automatic recovery cancelled before the backup started.", true));
 
   /** One currency rule for an immediate and a queued recovery: the live request decides; after a restart, only a stopped line that was the request itself. */
   function requestStopped(threadId: string, line: Message | undefined, coordinated: boolean): boolean {
@@ -102,28 +103,32 @@ export function createQueuedRecovery(deps: QueuedRecoveryDeps) {
   /** Throws `recovery_refused` when the recovery is no longer current; otherwise commits the backup selection. */
   function admit(botId: string, threadId: string, recovery: QueuedAutomaticRecovery, ownsOutcome: boolean) {
     const refused = refusal(botId, threadId, recovery);
-    if (refused) throw Object.assign(new Error(refused), { status: 409, code: "recovery_refused" });
+    if (refused) throw Object.assign(new Error(refused.message), { status: 409, code: "recovery_refused", byPerson: refused.byPerson });
     commit(botId, threadId, recovery);
     if (ownsOutcome) deps.directCoordinationSettlers.delete(recovery.generation);
     else deps.settleDirectCoordination(recovery.generation, { ok: false, text: "The failed attempt is being retried on the backup." });
   }
 
-  /** Why a recovery may no longer commit; undefined when it may. */
-  function refusal(botId: string, threadId: string, recovery: QueuedAutomaticRecovery): string | undefined {
+  /** Why a recovery may no longer commit; undefined when it may. `byPerson`: the person stopped the request. */
+  function refusal(botId: string, threadId: string, recovery: QueuedAutomaticRecovery): { message: string; byPerson: boolean } | undefined {
     const current = store.projectBotForTask(botId, threadId);
     const configured = plan(current);
     const step = configured.steps[(recovery.options.automaticRecoveryIndex ?? 0) - 1];
     const checked = current && step && deps.checkedTaskModelSwitch(current, step, false, false, true);
     const latestInput = store.activePath(threadId).findLast(m => m.role === "user" && m.kind === "text");
     const target = registry.get(recovery.selection.instanceId);
+    const stale = "Automatic recovery cancelled: the request or backup selection is no longer current.";
+    if (latestInput?.id === recovery.recoveryUserMessageId && requestStopped(threadId, latestInput, Boolean(recovery.coordination))) {
+      return { message: stale, byPerson: true };
+    }
     if (cfg.automaticRecovery?.enabled !== true || !current || !store.taskByThread(botId, threadId)?.cwd ||
-        latestInput?.id !== recovery.recoveryUserMessageId || requestStopped(threadId, latestInput, Boolean(recovery.coordination)) ||
+        latestInput?.id !== recovery.recoveryUserMessageId ||
         hasQueuedInputAfter("bot", botId, threadId, recovery.recoveryUserMessageId, recovery.coordinatedInputOrder) ||
         JSON.stringify(current.modelSelection) !== JSON.stringify(recovery.from) ||
         JSON.stringify(configured) !== JSON.stringify(recovery.plan) ||
         !checked?.ok || JSON.stringify(checked.selection) !== JSON.stringify(recovery.selection) ||
         !target?.enabled) {
-      return "Automatic recovery cancelled: the request or backup selection is no longer current.";
+      return { message: stale, byPerson: false };
     }
     const source = registry.get(recovery.from.instanceId);
     const why = !source ? "The original AI is no longer configured, so the backup cannot be checked against it."
@@ -133,7 +138,7 @@ export function createQueuedRecovery(deps: QueuedRecoveryDeps) {
       ?? (recovery.limit && !limitBackupAllowed(source, target, instanceConfigs(cfg)[target.instanceId])
         ? "The backup now uses the same subscription whose usage limit was reached." : undefined)
       ?? (hostedModels && !hostedModels.allows(recovery.selection) ? hostedModels.error() : undefined);
-    return why ? `Automatic recovery unavailable: ${why}` : undefined;
+    return why ? { message: `Automatic recovery unavailable: ${why}`, byPerson: false } : undefined;
   }
 
   function coordinationEnded(nodeId: string): boolean {
@@ -149,18 +154,25 @@ export function createQueuedRecovery(deps: QueuedRecoveryDeps) {
   function dispatch(botId: string, threadId: string, prompt: string, queueId: string, recovery: QueuedAutomaticRecovery): Promise<void | "retry"> {
     return new Promise<void | "retry">((resolve) => {
       const callbacks = callbacksByQueueId.get(queueId);
-      let refused: string | undefined;
-      try {
-        refused = recovery.coordination && !callbacks
-          ? "Automatic recovery cancelled: the coordinated work it continued has ended."
-          : refusal(botId, threadId, recovery);
-      } catch (error) {
-        refused = `Automatic recovery could not start: ${error instanceof Error ? error.message : String(error)}`;
-      }
-      if (refused) {
-        settleUnstarted(botId, threadId, queueId, recovery, refused);
+      const settle = (message: string, byPerson: boolean) => {
+        try {
+          settleUnstarted(botId, threadId, queueId, recovery, message, byPerson);
+        } catch (error) {
+          console.error("[recovery] could not settle a queued recovery that never started:", error);
+        }
         resolve();
         deps.drainQueuedSends();
+      };
+      let refused: { message: string; byPerson: boolean } | undefined;
+      try {
+        refused = recovery.coordination && (!callbacks || coordinationEnded(recovery.coordination.id))
+          ? { message: "Automatic recovery cancelled: the coordinated work it continued has ended.", byPerson: false }
+          : refusal(botId, threadId, recovery);
+      } catch (error) {
+        refused = { message: `Automatic recovery could not start: ${error instanceof Error ? error.message : String(error)}`, byPerson: false };
+      }
+      if (refused) {
+        settle(refused.message, refused.byPerson);
         return;
       }
       void deps.startTurn(botId, prompt, {
@@ -174,8 +186,8 @@ export function createQueuedRecovery(deps: QueuedRecoveryDeps) {
         const code = error instanceof Error && "code" in error ? error.code : undefined;
         if (code === "thread_limit") { resolve("retry"); return; }
         const message = error instanceof Error ? error.message : String(error);
-        settleUnstarted(botId, threadId, queueId, recovery, code === "recovery_refused" ? message : `Automatic recovery could not start: ${message}`);
-        resolve();
+        if (code === "recovery_refused") settle(message, "byPerson" in error && error.byPerson === true);
+        else settle(`Automatic recovery could not start: ${message}`, false);
       });
     });
   }

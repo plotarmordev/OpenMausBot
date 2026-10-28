@@ -105,6 +105,18 @@ it.each(["missing-order-restart", "equal-ms-before", "equal-ms-restart", "disabl
     const beforeFailovers = failovers();
     const changedPlan = mode.startsWith("global-") || mode.startsWith("fallback-");
     const cancelled = mode === "missing-order-restart" || equalMs || changedPlan || mode === "disabled" || mode === "superseded" || mode === "stopped" || mode === "stopped-restart";
+    const stopped = mode === "stopped" || mode === "stopped-restart";
+    const reported = () => {
+      const db = new DatabaseSync(join(dataDir, "messages.db"), { readOnly: true });
+      try {
+        return {
+          notifications: db.prepare("SELECT kind FROM notification_log WHERE thread_id = ? AND kind = 'turn-failed'").all(threadId).length,
+          incidents: db.prepare("SELECT 1 FROM messages WHERE thread_id <> ? AND json_extract(json, '$.threadRef.threadId') = ? AND instr(json_extract(json, '$.tool.name'), 'could not start') > 0").all(threadId, threadId).length,
+        };
+      } finally { db.close(); }
+    };
+    // The Chief hears a could-not-start incident; with none, the report has nowhere to land and its absence proves nothing.
+    if (stopped || mode === "disabled") await api("PATCH", `/api/bots/${chief!.id}`, { chiefOfStaff: true });
     if (changedPlan) {
       if (mode.startsWith("global-")) {
         await api("PATCH", "/api/config", { automaticRecovery: { enabled: true, backup: alternate } });
@@ -149,10 +161,11 @@ it.each(["missing-order-restart", "equal-ms-before", "equal-ms-restart", "disabl
         await server.start();
       }
       writeFileSync(holderGate, "");
-    } else if (mode === "stopped" || mode === "stopped-restart") {
+    } else if (stopped) {
       await api("POST", `/api/bots/${bot.id}/interrupt`, { threadId });
       expect((await messages()).find(message => message.text === "RECOVER_ORIGINAL_LINE")?.requestCancelled).toBe(true);
-      expect(journal()).toMatchObject([{ status: "pending" }]);
+      expect(await queued()).toEqual([]);
+      expect(journal()).toEqual([]);
       if (mode === "stopped-restart") {
         await server.stop();
         await server.start();
@@ -187,6 +200,11 @@ it.each(["missing-order-restart", "equal-ms-before", "equal-ms-restart", "disabl
       expect(page.filter(message => message.tool?.name?.startsWith("recovery:"))).toHaveLength(0);
       expect(failovers()).toBe(beforeFailovers);
     }
+    if (stopped) {
+      expect(page.filter(message => message.turnSucceeded === false || message.tool?.name?.includes("Automatic recovery"))).toEqual([]);
+      expect(reported()).toEqual({ notifications: 0, incidents: 0 });
+    }
+    if (mode === "disabled") await expect.poll(reported, { timeout: 20_000 }).toEqual({ notifications: 1, incidents: 1 });
     if (mode === "superseded" || equalMs) {
       await expect.poll(async () => (await messages()).some(message => message.turnSucceeded === true), { timeout: 20_000 }).toBe(true);
       expect((await messages()).filter(message => message.role === "user" && message.text === "NEWER_USER_INTENT")).toHaveLength(1);

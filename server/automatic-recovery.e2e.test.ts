@@ -187,9 +187,10 @@ it("supersedes equal-ms recovery before committing the backup", async () => {
   });
 }, 90_000);
 
-it.each(["older ordinary head", "pending policy refusal", "pending cancellation", "pending journal fault"] as const)("admits recovery safely with %s", async (scenario) => {
+it.each(["older ordinary head", "pending policy refusal", "pending cancellation", "pending stop", "pending journal fault"] as const)("admits recovery safely with %s", async (scenario) => {
   await withRecoveryFixture({ gated: true, parentPort: scenario === "pending policy refusal", ...(scenario === "older ordinary head" ? { frozenNow: Date.now() } : {}) }, async ({ api, control, calls, backupPrompts, applyPolicy, dataDir, gateFile, evidence }) => {
     const marked = scenario === "older ordinary head";
+    const byPerson = scenario === "pending cancellation" || scenario === "pending stop";
     const { bot } = await control("new-bot", "--name", "Recovery admission");
     const threadId = bot.activeTaskId;
     const text = marked ? "PERSON_MAIN_NEEDS_RECOVERY" : "ORDINARY_NEEDS_RECOVERY";
@@ -273,6 +274,11 @@ it.each(["older ordinary head", "pending policy refusal", "pending cancellation"
         await api("PATCH", `/api/bots/${starter.id}`, { chiefOfStaff: true });
         if (scenario === "pending policy refusal") await applyPolicy();
         else if (scenario === "pending cancellation") await api("DELETE", `/api/bots/${bot.id}/queue/${(await state()).botQueuedMessages[threadId][0].queueId}`, { threadId });
+        else if (scenario === "pending stop") {
+          await api("POST", `/api/bots/${bot.id}/interrupt`, { threadId });
+          expect((await state()).botQueuedMessages[threadId] ?? []).toEqual([]);
+          expect(journal()).toEqual([]);
+        }
         else {
           // A row the recovery's newer-input check cannot read makes that check throw.
           const db = new DatabaseSync(join(dataDir, "messages.db"));
@@ -303,14 +309,99 @@ it.each(["older ordinary head", "pending policy refusal", "pending cancellation"
         expect(failovers()).toBe(beforeFailovers);
         expect((await tasks()).find(task => task.threadId === threadId)?.modelSelection).toEqual(primary);
         expect(finalMessages.filter(message => message.tool?.name.startsWith("recovery:"))).toHaveLength(0);
-        const settledBy = scenario === "pending cancellation" ? "Automatic recovery cancelled before the backup started."
-          : scenario === "pending journal fault" ? "Automatic recovery could not start:" : "Automatic recovery unavailable:";
-        expect(finalMessages.filter(message => message.tool?.name.includes(settledBy))).toMatchObject([{ turnSucceeded: false }]);
-        expect(notifications()).toEqual([{ kind: "turn-failed" }]);
-        await expect.poll(incidents, { timeout: 20_000 }).toEqual([expect.stringContaining("could not start")]);
+        if (byPerson) {
+          expect(finalMessages.filter(message => message.turnSucceeded === false || message.tool?.name.includes("Automatic recovery"))).toEqual([]);
+          expect(notifications()).toEqual([]);
+          expect(await incidents()).toEqual([]);
+        } else {
+          const settledBy = scenario === "pending journal fault" ? "Automatic recovery could not start:" : "Automatic recovery unavailable:";
+          expect(finalMessages.filter(message => message.tool?.name.includes(settledBy))).toMatchObject([{ turnSucceeded: false }]);
+          expect(notifications()).toEqual([{ kind: "turn-failed" }]);
+          await expect.poll(incidents, { timeout: 20_000 }).toEqual([expect.stringContaining("could not start")]);
+        }
       }
       evidence.push({ scenario, tasks: await tasks(), messages: finalMessages, journal: journal(), backupPrompts: backupPrompts() });
     } finally {
+      writeFileSync(holderGate, "");
+      await api("DELETE", `/api/routines/${routine.id}`);
+    }
+  });
+}, 90_000);
+
+it("keeps a queued recovery out of a person's running turn when someone tries to steer it", async () => {
+  await withRecoveryFixture({ gated: true }, async ({ api, control, calls, backupPrompts, dataDir, gateFile, evidence }) => {
+    const { bot } = await control("new-bot", "--name", "Recovery steer");
+    const threadId = bot.activeTaskId;
+    const text = "ORDINARY_LINE_NEEDS_RECOVERY";
+    const holderGate = join(dataDir, "steer-holder-release");
+    const personGate = join(dataDir, "steer-person-release");
+    const steerReceived = join(dataDir, "steer-received");
+    const wrapper = join(dataDir, "steer-claude.mjs");
+    writeFileSync(wrapper, [
+      "#!/usr/bin/env node",
+      'import { basename } from "node:path";',
+      'process.env.FAKE_CLAUDE_MODE = "slow";',
+      `if (basename(process.cwd()) === ${JSON.stringify(threadId)}) {`,
+      `process.env.FAKE_CLAUDE_SLOW_FINISH_GATE = ${JSON.stringify(personGate)};`,
+      `process.env.FAKE_CLAUDE_STEER_RECEIVED = ${JSON.stringify(steerReceived)};`,
+      "} else {",
+      `process.env.FAKE_CLAUDE_SLOW_FINISH_GATE = ${JSON.stringify(holderGate)};`,
+      'delete process.env.FAKE_CLAUDE_PROMPTS;',
+      "}",
+      "// The fake CLI reads its environment at module initialization.",
+      `await import(${JSON.stringify(new URL("./testing/fake-claude-cli.ts", import.meta.url).href)});`,
+    ].join("\n"), { mode: 0o700 });
+    await api("PATCH", "/api/instances/claude", { cli: wrapper });
+    await api("PATCH", "/api/config", { threads: { maxConcurrentPerBot: 2 } });
+    await api("PATCH", `/api/bots/${bot.id}/tasks/${threadId}`, { modelSelection: primary });
+    const state = () => api("GET", "/api/bots?messages=0");
+    const tasks = async () => (await state()).bots.find((entry: WireBot) => entry.id === bot.id).tasks as WireTask[];
+    const messages = async () => (await api("GET", `/api/threads/${threadId}/messages?limit=100`)).messages as WireMessage[];
+    const originals = async () => (await messages()).filter(message => message.role === "user" && message.text === text);
+    const journal = () => {
+      const db = new DatabaseSync(join(dataDir, "messages.db"), { readOnly: true });
+      try { return db.prepare("SELECT status FROM chat_followups WHERE thread_id = ? ORDER BY rowid").all(threadId); }
+      finally { db.close(); }
+    };
+    await api("POST", `/api/bots/${bot.id}/messages`, { threadId, text }, 202);
+    await expect.poll(() => calls().some(call => call.method === "initialize"), { timeout: 20_000 }).toBe(true);
+    const { routine } = await api("POST", "/api/routines", {
+      name: "Steer holder", prompt: "Hold the slot.", target: "bot", botId: bot.id, runOn: "maus", enabled: true,
+      schedule: { type: "daily", time: "23:00" },
+    });
+    try {
+      await api("POST", `/api/routines/${routine.id}/run`);
+      await expect.poll(async () => (await tasks()).some(task => task.threadId !== threadId && task.busy), { timeout: 20_000 }).toBe(true);
+      await api("PATCH", "/api/config", { threads: { maxConcurrentPerBot: 1 } });
+      writeFileSync(gateFile, "");
+      await expect.poll(() => calls().some(call => call.method === "initialize.error"), { timeout: 20_000 }).toBe(true);
+      await expect.poll(journal, { timeout: 20_000 }).toEqual([{ status: "pending" }]);
+      const [queued] = (await state()).botQueuedMessages[threadId] as Array<{ queueId: string; text: string }>;
+      expect(queued.text).toBe(text);
+      // The person's own main-chat line runs beside the full bot, on an engine that takes steering mid-turn.
+      await api("PATCH", `/api/bots/${bot.id}/tasks/${threadId}`, { modelSelection: backup });
+      const paired = await api("POST", "/api/auth/pair", { code: (await api("POST", "/api/auth/pairing", {})).code });
+      await api("POST", `/api/bots/${bot.id}/messages`, { threadId, text: "PERSON_KEEPS_THE_THREAD_BUSY" }, 202, paired.token);
+      await expect.poll(backupPrompts, { timeout: 20_000 }).toHaveLength(1);
+      expect((await tasks()).find(task => task.threadId === threadId)?.busy).toBe(true);
+
+      const refused = await api("POST", `/api/bots/${bot.id}/queue/${queued.queueId}/steer`, { threadId }, 409);
+      expect(refused.code).toBe("recovery_not_steerable");
+      expect(existsSync(steerReceived)).toBe(false);
+      expect(await originals()).toHaveLength(1);
+      expect((await state()).botQueuedMessages[threadId].map((item: { queueId: string }) => item.queueId)).toEqual([queued.queueId]);
+      expect(journal()).toEqual([{ status: "pending" }]);
+
+      writeFileSync(personGate, "");
+      writeFileSync(holderGate, "");
+      await expect.poll(async () => (await tasks()).some(task => task.busy), { timeout: 20_000 }).toBe(false);
+      await expect.poll(journal, { timeout: 20_000 }).toEqual([]);
+      expect(await originals()).toHaveLength(1);
+      expect(backupPrompts()).toHaveLength(1);
+      expect(existsSync(steerReceived)).toBe(false);
+      evidence.push({ messages: await messages(), journal: journal(), backupPrompts: backupPrompts() });
+    } finally {
+      writeFileSync(personGate, "");
       writeFileSync(holderGate, "");
       await api("DELETE", `/api/routines/${routine.id}`);
     }

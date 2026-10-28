@@ -54,10 +54,12 @@ export function onSteeredRecoveryCancelled(listener: (botId: string, id: string,
   recoveryCancellationListeners.add(listener);
 }
 
+/** `order`: every queued id as it stood when held, so a restore puts the held words back where they were. */
 export interface HeldSteerQueue {
   botId: string;
   threadId: string;
   items: QueueEntry["items"];
+  order: string[];
 }
 
 export function restoreSteeredMessages(): void {
@@ -163,6 +165,11 @@ export function isSteeredMessageQueued(botId: string, threadId: string, queueId:
   return entry?.botId === botId && entry.items.some((item) => item.messageId === queueId);
 }
 
+export function isQueuedRecovery(botId: string, threadId: string, queueId: string): boolean {
+  const entry = queues.get(threadId);
+  return entry?.botId === botId && entry.items.some((item) => item.messageId === queueId && item.recovery !== undefined);
+}
+
 /** Entries leave the map before running, so racing settles never fire one queue twice; one coalesced group drains per settle. */
 export function drainSteeredMessages(
   store: SteerStore,
@@ -246,7 +253,7 @@ export function drainSteeredMessages(
       (result) => {
         if (result === "retry") {
           settleChatFollowups(ids, "pending");
-          restoreHeldSteeredQueue({ botId: entry.botId, threadId, items: group });
+          restoreHeldSteeredQueue({ botId: entry.botId, threadId, items: group, order: ids });
         } else settleChatFollowups(ids, null);
       },
       () => settleChatFollowups(ids, "interrupted"),
@@ -294,22 +301,42 @@ export function cancelSteeredMessage(botId: string, messageId: string, expectedT
   return false;
 }
 
-/** The entry leaves first, so a racing settle cannot also dispatch these words; the caller must restore or settle it. */
+/** A person's Stop ends the thread's queued automatic recovery with it; the row leaves the journal, as nothing can replay it. */
+export function cancelQueuedRecoveries(botId: string, threadId: string): void {
+  const entry = queues.get(threadId);
+  const cancelled = entry?.botId === botId ? entry.items.filter((item) => item.recovery) : [];
+  if (!entry || !cancelled.length) return;
+  settleChatFollowups(cancelled.map((item) => item.messageId), null);
+  const items = entry.items.filter((item) => !item.recovery);
+  if (items.length) queues.set(threadId, { botId, items });
+  else queues.delete(threadId);
+  for (const item of cancelled) {
+    for (const listener of recoveryCancellationListeners) listener(botId, item.messageId, threadId, item.recovery!);
+  }
+  changed();
+}
+
+/** The held items leave first, so a racing settle cannot also dispatch these words; the caller must restore or settle them.
+ * An automatic recovery is never steered into a live turn: it stays queued, and holding one returns null. */
 export function holdSteeredQueue(botId: string, threadId: string, queueId: string): HeldSteerQueue | null {
   const entry = queues.get(threadId);
-  if (!entry || entry.botId !== botId || !entry.items.some((item) => item.messageId === queueId)) return null;
-  queues.delete(threadId);
+  const target = entry?.botId === botId ? entry.items.find((item) => item.messageId === queueId) : undefined;
+  if (!entry || !target || target.recovery) return null;
+  const kept = entry.items.filter((item) => item.recovery);
+  if (kept.length) queues.set(threadId, { botId, items: kept });
+  else queues.delete(threadId);
   changed();
-  return { botId, threadId, items: entry.items };
+  return { botId, threadId, items: entry.items.filter((item) => !item.recovery), order: entry.items.map((item) => item.messageId) };
 }
 
 export function restoreHeldSteeredQueue(held: HeldSteerQueue): void {
   const existing = queues.get(held.threadId);
   if (existing && existing.botId !== held.botId) throw new Error("queued task belongs to another bot");
-  queues.set(held.threadId, {
-    botId: held.botId,
-    items: existing ? [...held.items, ...existing.items] : held.items,
-  });
+  const rank = new Map(held.order.map((id, index) => [id, index]));
+  const queued = existing?.items ?? [];
+  const earlier = [...held.items, ...queued.filter((item) => rank.has(item.messageId))]
+    .sort((a, b) => rank.get(a.messageId)! - rank.get(b.messageId)!);
+  queues.set(held.threadId, { botId: held.botId, items: [...earlier, ...queued.filter((item) => !rank.has(item.messageId))] });
   changed();
 }
 

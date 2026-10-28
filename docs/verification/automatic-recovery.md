@@ -36,10 +36,15 @@ does not supersede a newer original line. Saved lines or pending input without o
 settles without backup work. Stop remains effective across restart; a newer queued
 message supersedes recovery without being replayed or reordered. Disabling recovery while it waits settles the item
 without selecting the backup or recording a recovery switch.
-A queued recovery that is refused, cancelled or cannot be checked settles like
-an immediate one that could not start: one failed activity, one turn-failed
+A queued recovery that is refused or cannot be checked settles like an
+immediate one that could not start: one failed activity, one turn-failed
 notification and one could-not-start incident for a person-facing turn, and its
-durable row leaves the queue.
+durable row leaves the queue. The person's own Stop or cancelling its chip is
+silent, like Stop of an immediate recovery: no failed activity, notification or
+incident. Stop removes the chip and its durable row at once. A queued recovery
+is never steered into a running turn: the steer request is refused with 409
+`recovery_not_steerable`, and steering an ordinary item behind it leaves the
+recovery queued in place.
 
 ```sh
 pnpm exec vitest run --no-file-parallelism server/automatic-recovery.e2e.test.ts -t "admits recovery safely"
@@ -150,5 +155,9 @@ provider's availability, model quality, or a general cure for idle timeouts.
   dispatches; `message-db.test.ts` runs sixteen processes under a 30-second
   budget; `automatic-recovery-restart.e2e.test.ts` runs its seventeen modes in
   one shard.
-- The queued recovery chip repeats the original line's text, and Stop leaves
-  the chip until a slot frees.
+- The queued recovery chip repeats the original line's text and looks like an
+  ordinary queued message: the Composer still offers steer (refused) and edit
+  (which cancels the recovery and refills the words) for it.
+- A Stop caused by something other than the person (loop guard, a teammate
+  leaving the team) settles a queued recovery whose line it stopped as quietly
+  as the person's own Stop, as it does an immediate one.

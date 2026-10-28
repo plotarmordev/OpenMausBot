@@ -4,6 +4,7 @@ import type { HandoffView } from "../coordinator.ts";
 import type { Handoffs } from "../delta-context.ts";
 import { isStopCommand } from "../room-holds.ts";
 import type { RoutineManager } from "../routines.ts";
+import { cancelQueuedRecoveries } from "../steer-queue.ts";
 import type { Message, Store } from "../store.ts";
 import type { UsageTrigger } from "../usage-ledger.ts";
 
@@ -35,6 +36,7 @@ export function createPersonStop(deps: PersonStopDeps) {
   const { store } = deps;
 
   async function stopThreadForPerson(botId: string, threadId: string): Promise<void> {
+    cancelQueuedRecoveries(botId, threadId);
     const routines = deps.routines();
     const routine = routines?.activeBotRunForBot(botId);
     if (routine?.threadId === threadId) {
