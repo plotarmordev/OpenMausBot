@@ -204,13 +204,16 @@ it.each(["missing-order-restart", "equal-ms-before", "equal-ms-restart", "disabl
   }
 }, 90_000);
 
-it("continues a coordinated recovery pending across a restart exactly once and reports it to the Chief", async () => {
+it.each(["continues", "stopped after restart", "ended before restart"] as const)("coordinated recovery pending across a restart: %s", async mode => {
+  const continues = mode === "continues";
   const server = await launchRestartableServer({ scripted: true });
   const { dataDir } = server;
   const failure = join(dataDir, "failure.json");
   const failureGate = join(dataDir, "failure-release");
   const holderGate = join(dataDir, "holder-release");
   const holderReady = join(dataDir, "holder-ready");
+  const backupGate = join(dataDir, "backup-release");
+  const backupReady = join(dataDir, "backup-ready");
   const rpc = join(dataDir, "primary.jsonl");
   const api = async (method: string, path: string, body?: unknown) => {
     const response = await fetch(server.url + path, { method, headers: { "content-type": "application/json", origin: server.url },
@@ -246,10 +249,11 @@ it("continues a coordinated recovery pending across a restart exactly once and r
     writeFileSync(server.planPath, JSON.stringify({
       [chief.id]: { turns: [
         { steps: [{ arguments: { bot_ids: [specialist.id], request_key: "restart-recovery", message: brief } }], reply: "Assigned" },
-        { expectContextIncludes: [specialistReply], reply: finalReply },
+        continues ? { expectContextIncludes: [specialistReply], reply: finalReply } : { reply: "Chief saw the stopped delegation" },
       ] },
       [specialist.id]: { reply: specialistReply,
-        byPrompt: [{ promptIncludes: "HOLD_SPECIALIST_SLOT", plan: { gateFile: holderGate, readyFile: holderReady, reply: "Held" } }] },
+        byPrompt: [{ promptIncludes: "HOLD_SPECIALIST_SLOT", plan: { gateFile: holderGate, readyFile: holderReady, reply: "Held" } },
+          ...(mode === "stopped after restart" ? [{ promptIncludes: brief, plan: { gateFile: backupGate, readyFile: backupReady, reply: specialistReply } }] : [])] },
     }));
     writeFileSync(failure, JSON.stringify({ code: -32603, message: "Internal error", data: { details: "Upstream connection timed out" } }));
     const primaryTurns = () => lines(rpc).filter(call => call.method === "initialize" && !String(call.cwd ?? "").includes("discovery"));
@@ -267,35 +271,70 @@ it("continues a coordinated recovery pending across a restart exactly once and r
       finally { db.close(); }
     };
     await expect.poll(journal, { timeout: 20_000 }).toEqual([{ status: "pending", node: child.id }]);
+    const failovers = () => existsSync(join(dataDir, "limit-failovers.json")) ? readFileSync(join(dataDir, "limit-failovers.json"), "utf8") : null;
+    const beforeFailovers = failovers();
+    const childTask = async () => (await api("GET", "/api/bots?messages=0")).bots.find(bot => bot.id === specialist.id)!.tasks.find(task => task.threadId === child.threadId);
+    if (mode === "ended before restart") {
+      await api("POST", `/api/bots/${specialist.id}/interrupt`, { threadId: child.threadId });
+      await expect.poll(() => readHandoffs(dataDir).find(node => node.id === child.id)?.status, { timeout: 20_000 }).toMatch(/^(failed|cancelled)$/);
+    }
     await server.stop();
     await server.start();
+    if (mode === "stopped after restart") {
+      // A restart frees every slot, so the restored recovery starts at once: Stop reaches its running backup turn.
+      await expect.poll(() => existsSync(backupReady), { timeout: 30_000 }).toBe(true);
+      await api("POST", `/api/bots/${specialist.id}/interrupt`, { threadId: child.threadId });
+      await expect.poll(() => readHandoffs(dataDir).find(node => node.id === child.id)?.status, { timeout: 20_000 }).toMatch(/^(failed|cancelled)$/);
+      writeFileSync(backupGate, "");
+    }
     writeFileSync(holderGate, "");
     const chiefMessages = async () => (await api("GET", `/api/threads/${chief.activeTaskId}/messages?limit=100`)).messages;
-    await expect.poll(async () => (await chiefMessages()).some(message => message.text === finalReply), { timeout: 40_000 }).toBe(true);
-    await expect.poll(() => readHandoffs(dataDir).find(node => node.id === child.id)?.status, { timeout: 20_000 }).toBe("completed");
-    await expect.poll(journal, { timeout: 20_000 }).toEqual([]);
+    const idle = async () => (await api("GET", "/api/bots?messages=0")).bots.filter(bot => bot.id === chief.id || bot.id === specialist.id)
+      .every(bot => bot.tasks.every(task => !task.busy));
+    if (continues) {
+      await expect.poll(async () => (await chiefMessages()).some(message => message.text === finalReply), { timeout: 40_000 }).toBe(true);
+      await expect.poll(() => readHandoffs(dataDir).find(node => node.id === child.id)?.status, { timeout: 20_000 }).toBe("completed");
+    }
+    await expect.poll(() => readHandoffs(dataDir).filter(node => !["completed", "failed", "cancelled"].includes(node.status)), { timeout: 40_000 }).toEqual([]);
+    await expect.poll(idle, { timeout: 40_000 }).toBe(true);
+    await expect.poll(() => journal().filter(row => row.status === "pending"), { timeout: 20_000 }).toEqual([]);
     const nodes = readHandoffs(dataDir);
     const turns = lines(`${server.planPath}.evidence.jsonl`);
     const specialistMessages = (await api("GET", `/api/threads/${child.threadId}/messages?limit=100`)).messages;
     const final = await chiefMessages();
-    writeFileSync(`${server.logPath}.coordinated-recovery.json`, JSON.stringify({ nodes, turns, final, specialistMessages }, null, 2));
-    expect(nodes.find(node => node.id === child.id)).toMatchObject({ status: "completed", result: specialistReply });
-    expect(nodes.filter(node => node.threadId === child.threadId)).toHaveLength(1);
-    expect(nodes.find(node => node.id === child.parentId)?.status).toBe("completed");
-    expect(primaryTurns()).toHaveLength(1);
+    writeFileSync(`${server.logPath}.coordinated-recovery.json`, JSON.stringify({ mode, nodes, turns, final, specialistMessages, journal: journal() }, null, 2));
     const childTurns = turns.filter(turn => turn.botId === specialist.id && turn.threadId === child.threadId);
-    expect(childTurns).toMatchObject([{ model: backup.model }]);
-    expect(JSON.stringify(childTurns[0]?.prompt)).toContain(brief);
-    expect(JSON.stringify(childTurns[0]?.prompt)).not.toContain("OpenMausBot restarted while your previous turn");
-    expect(final.filter(message => message.text === finalReply)).toHaveLength(1);
-    expect(final.filter(message => message.roomRequest?.id === child.id && message.roomRequest.phase === "result")).toMatchObject([{ tool: { ok: true } }]);
-    expect(final.some(message => message.tool?.name.includes("interrupted"))).toBe(false);
+    expect(nodes.filter(node => node.threadId === child.threadId)).toHaveLength(1);
+    expect(primaryTurns()).toHaveLength(1);
     expect(specialistMessages.filter(message => message.roomRequest?.id === child.id && message.roomRequest.phase === "request")).toHaveLength(1);
     expect(specialistMessages.some(message => message.role === "user")).toBe(false);
-    expect(specialistMessages.filter(message => message.text === specialistReply)).toHaveLength(1);
-    expect(specialistMessages.filter(message => message.tool?.name.startsWith("recovery:"))).toHaveLength(1);
+    expect(final.filter(message => message.roomRequest?.id === child.id && message.roomRequest.phase === "result").length).toBeLessThanOrEqual(1);
+    expect((await api("GET", "/api/bots?messages=0")).botQueuedMessages[child.threadId] ?? []).toEqual([]);
+    if (continues) {
+      expect(nodes.find(node => node.id === child.id)).toMatchObject({ status: "completed", result: specialistReply });
+      expect(nodes.find(node => node.id === child.parentId)?.status).toBe("completed");
+      expect(childTurns).toMatchObject([{ model: backup.model }]);
+      expect(JSON.stringify(childTurns[0]?.prompt)).toContain(brief);
+      expect(JSON.stringify(childTurns[0]?.prompt)).not.toContain("OpenMausBot restarted while your previous turn");
+      expect(final.filter(message => message.text === finalReply)).toHaveLength(1);
+      expect(final.filter(message => message.roomRequest?.id === child.id && message.roomRequest.phase === "result")).toMatchObject([{ tool: { ok: true } }]);
+      expect(final.some(message => message.tool?.name.includes("interrupted"))).toBe(false);
+      expect(specialistMessages.filter(message => message.text === specialistReply)).toHaveLength(1);
+      expect(specialistMessages.filter(message => message.tool?.name.startsWith("recovery:"))).toHaveLength(1);
+    } else {
+      const stoppedRunning = mode === "stopped after restart";
+      expect(nodes.find(node => node.id === child.id)?.status).not.toBe("completed");
+      expect(nodes.find(node => node.id === child.parentId)?.status).toBe("completed");
+      expect(childTurns.length).toBeLessThanOrEqual(stoppedRunning ? 1 : 0);
+      expect(specialistMessages.some(message => message.text === specialistReply)).toBe(false);
+      expect(specialistMessages.filter(message => message.tool?.name.startsWith("recovery:"))).toHaveLength(stoppedRunning ? 1 : 0);
+      expect((await childTask())?.modelSelection ?? primary).toEqual(stoppedRunning ? backup : primary);
+      expect(failovers()).toBe(beforeFailovers);
+      expect(final.filter(message => message.roomRequest?.id === child.id && message.roomRequest.phase === "result")).toHaveLength(1);
+      expect(final.filter(message => message.text === "Chief saw the stopped delegation")).toHaveLength(1);
+    }
   } finally {
-    writeFileSync(failureGate, ""); writeFileSync(holderGate, "");
+    writeFileSync(failureGate, ""); writeFileSync(holderGate, ""); writeFileSync(backupGate, "");
     await server.close();
     console.info(JSON.stringify({ logPath: server.logPath }));
   }
