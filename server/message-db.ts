@@ -11,8 +11,10 @@ import type { UsageTrigger } from "./usage-ledger.ts";
 import { MessageSearchWorker } from "./message-search-worker.ts";
 import { searchMessagesInDatabase, type SearchHit } from "./message-search-query.ts";
 import type { Notification, NotificationLogEntry } from "../shared/notification.ts";
+import { insertNotificationRow, markNotificationRowsRead, markThreadNotificationRowsRead, readNotificationLog } from "./notification-log-query.ts";
 export type { SearchHit } from "./message-search-query.ts";
 import type { QueuedAutomaticRecovery } from "./turn-options.ts";
+import { isNewInput, migrateInputOrder, nextInputOrder, queuedInputAfter, stampInputOrder } from "./input-order.ts";
 
 const DB_FILE = () => join(DATA_DIR, "messages.db");
 /** The rows the Today page reads, and among them the failed tool calls. JSON.stringify escapes every quote inside a
@@ -94,14 +96,7 @@ function open(): DatabaseSync {
   `);
   db.exec("BEGIN IMMEDIATE");
   try {
-    for (const table of ["messages", "chat_followups"]) {
-      const columns = db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
-      if (!columns.some(column => column.name === "input_order")) db.exec(`ALTER TABLE ${table} ADD COLUMN input_order INTEGER`);
-    }
-    db.exec(`
-      CREATE TABLE IF NOT EXISTS input_order (id INTEGER PRIMARY KEY CHECK (id = 1), value INTEGER NOT NULL);
-      INSERT OR IGNORE INTO input_order(id, value) VALUES (1, 0);
-    `);
+    migrateInputOrder(db);
     const notificationColumns = db.prepare("PRAGMA table_info(notification_log)").all() as Array<{ name: string }>;
     if (!notificationColumns.some((column) => column.name === "for_person")) db.exec("ALTER TABLE notification_log ADD COLUMN for_person TEXT");
     db.exec("COMMIT");
@@ -300,36 +295,7 @@ export function withCommandReceipt(
   });
 }
 
-const NOTIFICATION_LOG_LIMIT = 500;
-
-const rowToNotificationLogEntry = (row: {
-  id: string; at: number; kind: string; bot_id: string; bot_name: string; thread_id: string;
-  group_id: string | null; title: string; body: string; avatar_url: string | null; read: number; for_person: string | null;
-}): NotificationLogEntry => ({
-  id: row.id,
-  at: row.at,
-  kind: row.kind as NotificationLogEntry["kind"],
-  botId: row.bot_id,
-  botName: row.bot_name,
-  threadId: row.thread_id,
-  ...(row.group_id ? { groupId: row.group_id } : {}),
-  title: row.title,
-  body: row.body,
-  ...(row.avatar_url ? { avatarUrl: row.avatar_url } : {}),
-  ...(row.for_person ? { forPerson: row.for_person } : {}),
-  read: row.read !== 0,
-});
-
-export function insertNotificationLog(entry: NotificationLogEntry): void {
-  transaction((database) => {
-    database.prepare(
-      "INSERT INTO notification_log(id, at, kind, bot_id, bot_name, thread_id, group_id, title, body, avatar_url, for_person, read) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)",
-    ).run(entry.id, entry.at, entry.kind, entry.botId, entry.botName, entry.threadId, entry.groupId ?? null, entry.title, entry.body, entry.avatarUrl ?? null, entry.forPerson ?? null);
-    database.prepare(
-      "DELETE FROM notification_log WHERE id NOT IN (SELECT id FROM notification_log ORDER BY at DESC, rowid DESC LIMIT ?)",
-    ).run(NOTIFICATION_LOG_LIMIT);
-  });
-}
+export const insertNotificationLog = (entry: NotificationLogEntry): void => transaction((database) => insertNotificationRow(database, entry));
 
 /** A failed write is logged and the entry still returned, so the live frame is never lost to a full disk. */
 export function logNotification(notification: Notification): NotificationLogEntry {
@@ -342,30 +308,18 @@ export function logNotification(notification: Notification): NotificationLogEntr
   return entry;
 }
 
-export function recentNotificationLog(limit = NOTIFICATION_LOG_LIMIT): NotificationLogEntry[] {
-  const rows = db().prepare(
-    "SELECT id, at, kind, bot_id, bot_name, thread_id, group_id, title, body, avatar_url, for_person, read FROM notification_log ORDER BY at DESC, rowid DESC LIMIT ?",
-  ).all(limit) as Array<Parameters<typeof rowToNotificationLogEntry>[0]>;
-  return rows.map(rowToNotificationLogEntry);
-}
-
-export function markNotificationLogRead(ids: readonly string[]): void {
-  db().prepare("UPDATE notification_log SET read = 1 WHERE read = 0 AND id IN (SELECT value FROM json_each(?))").run(JSON.stringify(ids));
-}
-
+export const recentNotificationLog = (limit?: number): NotificationLogEntry[] => readNotificationLog(db(), limit);
+export const markNotificationLogRead = (ids: readonly string[]): void => markNotificationRowsRead(db(), ids);
 /** Opening a conversation reads its notifications, questions and approvals included. Returns the ids it flipped. */
-export function markThreadNotificationLogRead(threadId: string): string[] {
-  const rows = db().prepare("UPDATE notification_log SET read = 1 WHERE thread_id = ? AND read = 0 RETURNING id").all(threadId) as Array<{ id: string }>;
-  return rows.map((row) => row.id);
-}
+export const markThreadNotificationLogRead = (threadId: string): string[] => markThreadNotificationRowsRead(db(), threadId);
 
 /** `replaces` rows leave in the same transaction: the new row takes over their dispatch. */
 export function saveChatFollowup(followup: Omit<ChatFollowup, "status">, replaces: readonly string[] = []): void {
   writeFollowups((connection) => {
-    connection.prepare("UPDATE input_order SET value = value + 1 WHERE id = 1").run();
+    const order = nextInputOrder(connection);
     connection.prepare(
-      "INSERT INTO chat_followups(id, kind, owner_id, thread_id, send_id, status, payload, input_order) VALUES (?, ?, ?, ?, ?, 'pending', ?, (SELECT value FROM input_order WHERE id = 1))",
-    ).run(followup.id, followup.kind, followup.ownerId, followup.threadId, followup.payload.sendId ?? null, JSON.stringify(followup.payload));
+      "INSERT INTO chat_followups(id, kind, owner_id, thread_id, send_id, status, payload, input_order) VALUES (?, ?, ?, ?, ?, 'pending', ?, ?)",
+    ).run(followup.id, followup.kind, followup.ownerId, followup.threadId, followup.payload.sendId ?? null, JSON.stringify(followup.payload), order);
     const retire = connection.prepare("DELETE FROM chat_followups WHERE id = ? AND status = 'dispatching'");
     for (const id of replaces) retire.run(id);
   });
@@ -397,19 +351,10 @@ export function chatFollowups(kind?: ChatFollowup["kind"]): ChatFollowup[] {
     status: row.status, payload: JSON.parse(row.payload) as FollowupPayload }));
 }
 
-export function reserveInputOrder(): number {
-  return transaction(database => Number(database.prepare("UPDATE input_order SET value = value + 1 WHERE id = 1 RETURNING value").get()!.value));
-}
+export const reserveInputOrder = (): number => transaction(nextInputOrder);
 
-export function hasQueuedInputAfter(kind: ChatFollowup["kind"], ownerId: string, threadId: string, messageId: string | undefined, coordinatedInputOrder?: number): boolean {
-  const order = messageId
-    ? db().prepare("SELECT input_order FROM messages WHERE thread_id = ? AND id = ?").get(threadId, messageId)?.input_order
-    : coordinatedInputOrder;
-  if (order == null) return true;
-  return Boolean(db().prepare(
-    "SELECT 1 FROM chat_followups WHERE kind = ? AND owner_id = ? AND thread_id = ? AND status = 'pending' AND (input_order IS NULL OR input_order > ?) AND json_extract(payload, '$.recovery') IS NULL LIMIT 1",
-  ).get(kind, ownerId, threadId, order));
-}
+export const hasQueuedInputAfter = (kind: ChatFollowup["kind"], ownerId: string, threadId: string, messageId: string | undefined, coordinatedInputOrder?: number): boolean =>
+  queuedInputAfter(db(), kind, ownerId, threadId, messageId, coordinatedInputOrder);
 
 export function cancelledChatFollowup(kind: ChatFollowup["kind"], ownerId: string, threadId: string, sendId: string): boolean {
   return Boolean(db().prepare(
@@ -518,13 +463,9 @@ export function importThread(threadId: string, messages: Message[], activeLeafId
 
 export function appendMessage(threadId: string, message: Message): void {
   transaction((database) => {
-    const newInput = message.role === "user" && message.kind === "text" &&
-      !database.prepare("SELECT 1 FROM messages WHERE thread_id = ? AND id = ?").get(threadId, message.id);
+    const newInput = isNewInput(database, threadId, message);
     insertMessage(threadId, message);
-    if (newInput) {
-      database.prepare("UPDATE input_order SET value = value + 1 WHERE id = 1").run();
-      database.prepare("UPDATE messages SET input_order = (SELECT value FROM input_order WHERE id = 1) WHERE thread_id = ? AND id = ?").run(threadId, message.id);
-    }
+    if (newInput) stampInputOrder(database, threadId, message.id);
     setActiveLeaf(threadId, message.id);
   });
 }
