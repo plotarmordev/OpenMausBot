@@ -60,7 +60,9 @@ A coordinated node whose recovery is pending at restart is neither failed nor
 rerun: the coordinator's resumed node takes over the durable queue row, the
 backup runs the original prompt once, and its result settles that node. Until
 the node resumes, the row waits; if the node ended, the row settles without
-backup work.
+backup work. Stopping the delegation before the restart settles it without a
+backup prompt, model switch, recovery line or failover record; stopping the
+restored backup turn settles the node once, and the Chief receives one result.
 
 ```sh
 pnpm exec vitest run --no-file-parallelism server/automatic-recovery-restart.e2e.test.ts -t "coordinated recovery pending"
