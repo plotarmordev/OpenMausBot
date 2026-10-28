@@ -4,11 +4,13 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { fakeCloud, sha } from "./fixtures/cloud-sync-fake-cloud.mjs";
-import { applyStaged } from "./lent-staged.mjs";
+import { applyStaged, renameWithRetry } from "./lent-staged.mjs";
 
 const AT = new Date(2026, 9, 27, 12).getTime();
 function setup(t, write = true) {
-  const dir = realpathSync(mkdtempSync(join(tmpdir(), "omb-lent-staged-")));
+  // A lent folder's path is the native real path lending's own check stores (validateSharedFolders): on Windows the JS
+  // realpathSync keeps a short name such as RUNNER~1 that the native one expands, and the two would never match.
+  const dir = realpathSync.native(mkdtempSync(join(tmpdir(), "omb-lent-staged-")));
   const root = join(dir, "Notes");
   mkdirSync(root);
   writeFileSync(join(root, "plan.md"), "the plan");
@@ -100,4 +102,53 @@ test("a replaced file keeps its own permissions, as a live write in place does",
   await s.apply();
   assert.equal(readFileSync(join(s.root, "run.sh"), "utf8"), "#!/bin/sh\necho two\n");
   assert.equal(statSync(join(s.root, "run.sh")).mode & 0o777, 0o755);
+});
+
+test("a name Windows can't hold waits instead of landing on a PC; the rest still lands", async (t) => {
+  const s = setup(t);
+  for (const name of ["con.txt", "notes.", "a:b.md", "aux/readme.md"]) s.cloud.stage("pc-1", name, "x");
+  s.cloud.stage("pc-1", "fine.md", "fine");
+  const outcome = await s.apply({ platform: "win32" });
+  assert.equal(outcome.applied, 1);
+  assert.match(outcome.problem, /^con\.txt: This computer can't hold that name\.$/);
+  assert.equal(readFileSync(join(s.root, "fine.md"), "utf8"), "fine");
+  assert.deepEqual(s.cloud.lent.staged.map((change) => change.path), ["con.txt", "notes.", "a:b.md", "aux/readme.md"], "none is lost");
+});
+
+test("a read-only file the bot changed stays read-only, and nothing read-only is left half-written", async (t) => {
+  const s = setup(t);
+  const { chmodSync, statSync } = await import("node:fs");
+  chmodSync(join(s.root, "plan.md"), 0o444);
+  t.after(() => { try { chmodSync(join(s.root, "plan.md"), 0o644); } catch {} });
+  s.cloud.stage("pc-1", "plan.md", "v2", sha("the plan"));
+  assert.equal((await s.apply()).applied, 1);
+  assert.equal(readFileSync(join(s.root, "plan.md"), "utf8"), "v2");
+  assert.equal(statSync(join(s.root, "plan.md")).mode & 0o222, 0, "still read-only");
+  assert.deepEqual(readdirSync(s.root).filter((name) => name.includes(".omb-sync-")), []);
+});
+
+test("a rename Windows refuses for a moment is tried again; any other refusal is not", () => {
+  const busy = (code) => Object.assign(new Error(code), { code });
+  let calls = 0;
+  const waits = [];
+  renameWithRetry("a", "b", () => { if (++calls < 3) throw busy(calls === 1 ? "EPERM" : "EBUSY"); }, (ms) => waits.push(ms));
+  assert.equal(calls, 3);
+  assert.deepEqual(waits, [5, 10]);
+  assert.throws(() => renameWithRetry("a", "b", () => { throw busy("ENOENT"); }, () => {}), /ENOENT/);
+  let tries = 0;
+  assert.throws(() => renameWithRetry("a", "b", () => { tries++; throw busy("EACCES"); }, () => {}), /EACCES/);
+  assert.equal(tries, 6, "five more tries, then it gives up");
+});
+
+test("a lent folder spelled other than its real path (a short name on Windows, a link elsewhere) waits; it never writes", async (t) => {
+  const s = setup(t);
+  // Another spelling of the same folder: through a link to its parent, as RUNNER~1 is a short name for the runner's home.
+  const alias = join(s.dir, "alias");
+  symlinkSync(s.dir, alias, "junction");
+  s.cloud.stage("pc-1", "plan.md", "v2", sha("the plan"));
+  const outcome = await s.apply({ folder: { id: "lent-1", path: join(alias, "Notes"), name: "Notes", write: true } });
+  assert.equal(outcome.applied, 0);
+  assert.match(outcome.problem, /Shared folder moved/);
+  assert.equal(readFileSync(join(s.root, "plan.md"), "utf8"), "the plan");
+  assert.equal(s.cloud.lent.staged.length, 1);
 });

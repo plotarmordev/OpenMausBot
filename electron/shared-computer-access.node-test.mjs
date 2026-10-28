@@ -118,6 +118,14 @@ test("a new file's missing folders are made inside the shared folder, never in a
   assert.equal(await readFile(path.join(dir, piece, "notes.md"), "utf8"), "notes");
   await writeFile(path.join(dir, "taken"), "a file");
   await assert.rejects(run({ action: "write_file", path: "taken/inside.md", content: "x" }), /taken is a file, not a folder/);
+  // Windows answers ENOENT, not ENOTDIR, for a path through a file: the same refusal, not a missing-file error.
+  const realLstat = fs.lstat;
+  fs.lstat = async (target, ...rest) => {
+    if (String(target).endsWith(path.join("taken", "inside.md"))) throw Object.assign(new Error("ENOENT: no such file or directory"), { code: "ENOENT" });
+    return realLstat(target, ...rest);
+  };
+  try { await assert.rejects(run({ action: "write_file", path: "taken/inside.md", content: "x" }), /taken is a file, not a folder/); }
+  finally { fs.lstat = realLstat; }
   await assert.rejects(run({ action: "write_file", path: ".git/hooks/pre-commit", content: "x" }), /inside \.git/);
   await assert.rejects(stat(path.join(dir, ".git")), { code: "ENOENT" });
   await mkdir(path.join(dir, "vault"));

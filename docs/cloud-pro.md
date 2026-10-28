@@ -1551,9 +1551,28 @@ wait for the next read, `truncated: true`):
   "connectors": { "checkedAt": 1790000000000, "failed": false, "items": [{ "slug": "gmail", "connected": false }] },
   "browser": { "available": true, "installing": false, "interrupted": 0 },
   "system": { "totalBytes": 4294967296, "availableBytes": 2147483648, "rssBytes": 314572800, "load1": 0.4, "cpus": 2,
-    "disk": { "totalBytes": 10737418240, "freeBytes": 8589934592 }, "eventLogWritable": true }
+    "disk": { "totalBytes": 10737418240, "freeBytes": 8589934592 }, "eventLogWritable": true },
+  "firstHour": { "startedAt": 1790000000000, "apps": ["gmail"], "look": "delivered",
+    "ms": { "seen": 41000, "firstMessage": 52000, "offered": 61000, "firstApp": 118000, "firstLook": 171000, "briefOn": 172000, "phoneOffered": 172000 } },
+  "value": { "sorted": 40, "drafted": 6, "prepped": 4, "routines": 0, "minutes": 110 }
 }
 ```
+
+**`firstHour`** is there on a personal Cloud that began with its first hour
+(`server/host/first-hour.ts`), else `null`: `startedAt` is the first boot,
+and each milestone in `ms` is how long after it that step happened, present
+once it has: the person first opened the app (`seen`), wrote (`firstMessage`),
+was offered Gmail and Google Calendar (`offered`), connected one (`firstApp`)
+or set the offer aside (`declined`), got the first look (`firstLook`), was
+told the 8:00 morning brief is on (`briefOn`), was offered the phone
+(`phoneOffered`), paired it (`phonePaired`), and got the day-two recap
+(`recap`). `apps` names the apps connected when the first look began (whether or not it
+ran), and `look` says whether
+it was `delivered`, `failed`, or left to the person's own task (`own-task`).
+**`value`** is on any personal Cloud: what its Chief really did, counted when
+it happened (`server/host/value-ledger.ts`): emails sorted, reply drafts
+written, meetings prepared, routine results posted since the first hour
+began, and the minutes that adds up to at 1, 5, 10 and 3 minutes each.
 
 **Incidents** come from one tap on the store: every failed-turn row
 (`shared/failed-turn.ts`, the only way a server writes one) is counted in a

@@ -126,6 +126,16 @@ export function partitionSidebarBots<T extends SidebarBot>(
   return { unsectionedChief, pinnedBots, sectionChiefs, sectionedBots, unsectionedBots };
 }
 
+export function withPrimaryTile<T extends SidebarBot>(parts: ReturnType<typeof partitionSidebarBots<T>>, defaultBotId: string | undefined) {
+  const primary = parts.unsectionedChief
+    ?? parts.pinnedBots.find((bot) => bot.chiefOfStaff && !bot.section)
+    ?? [...parts.pinnedBots, ...parts.unsectionedBots].find((bot) => bot.id === defaultBotId)
+    ?? null;
+  if (!primary) return { ...parts, primary };
+  const others = (bots: T[]) => bots.filter((bot) => bot.id !== primary.id);
+  return { ...parts, primary, unsectionedChief: null, pinnedBots: others(parts.pinnedBots), unsectionedBots: others(parts.unsectionedBots) };
+}
+
 export function partitionSidebarGroups<T extends SidebarGroup>(groups: T[]) {
   const botChats = groups.filter((group) => Boolean(group.dm));
   const rooms = groups.filter((group) => !group.dm);
@@ -164,7 +174,7 @@ export function orderedSidebarSections(
   return result;
 }
 
-export const SIMPLE_FIXED_SECTION_IDS: readonly SidebarSectionId[] = [PINNED_SECTION_ID, BOTS_SECTION_ID];
+export const SIMPLE_FIXED_SECTION_IDS: readonly SidebarSectionId[] = [PINNED_SECTION_ID, BOTS_SECTION_ID, CHANNELS_SECTION_ID, BOT_CHATS_SECTION_ID];
 
 export function simpleSidebarSections(ids: SidebarSectionId[]): SidebarSectionId[] {
   return [

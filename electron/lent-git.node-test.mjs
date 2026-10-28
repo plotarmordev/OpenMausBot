@@ -15,10 +15,12 @@ test("only a github.com origin counts, as owner/name, without any user or token 
   }
   assert.equal(originUrl('[core]\n\tbare = false\n[remote "upstream"]\n\turl = https://github.com/other/x\n[remote "origin"]\n\turl = git@github.com:ash/notes.git\n\tfetch = +refs/heads/*:refs/remotes/origin/*\n'), "git@github.com:ash/notes.git");
   assert.equal(originUrl("[core]\n"), null);
+  // A config written on Windows may end its lines with CRLF.
+  assert.equal(originUrl('[core]\r\n\tautocrlf = true\r\n[remote "origin"]\r\n\turl = https://github.com/ash/notes.git\r\n'), "https://github.com/ash/notes.git");
 });
 
 test("reads the repository, its branch and its commit from .git's own files", (t) => {
-  const dir = realpathSync(mkdtempSync(join(tmpdir(), "omb-lent-git-")));
+  const dir = realpathSync.native(mkdtempSync(join(tmpdir(), "omb-lent-git-")));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   const repo = join(dir, "notes");
   mkdirSync(repo);

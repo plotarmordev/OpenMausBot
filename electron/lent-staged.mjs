@@ -15,6 +15,28 @@ export const BESIDE_LABEL = "new from My Cloud";
 
 const same = (a, b) => a && b && a.size === b.size && a.mtimeMs === b.mtimeMs && a.ino === b.ino;
 
+/** Windows refuses a rename for a moment while anything (a virus scanner, the indexer) holds the file, as EPERM, EACCES or
+ * EBUSY that would succeed shortly: those are tried again (about 155 ms at most, as server/atomic.ts does); anything else
+ * throws. */
+const RENAME_RETRY_MS = [5, 10, 20, 40, 80];
+const TRANSIENT = new Set(["EPERM", "EACCES", "EBUSY"]);
+export function renameWithRetry(from, to, rename = fs.renameSync, wait = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms)) {
+  for (let attempt = 0; ; attempt++) {
+    try { return rename(from, to); } catch (error) {
+      if (!TRANSIENT.has(error?.code) || attempt >= RENAME_RETRY_MS.length) throw error;
+      wait(RENAME_RETRY_MS[attempt]);
+    }
+  }
+}
+
+/** The file's own permissions on the bot's version, once it is in place: a script stays runnable, a read-only file stays
+ * read-only. Set after the rename, never on the half-written file, so a read-only one never lingers where Files cleans up
+ * (Windows can't remove a read-only file). Best effort: the change has landed either way. */
+function keepPermissions(file, before) {
+  if (!before?.isFile()) return;
+  try { fs.chmodSync(file, before.mode & 0o777); } catch {}
+}
+
 /**
  * Applies the changes waiting on My Cloud for one lent folder (`folder`: as lent, with its path). A change for a folder
  * no longer lent with editing stays waiting there. `stopper(error)`: an error that stops the whole pass (signed out,
@@ -62,21 +84,21 @@ async function applyOne({ client, folderId, folder, change, protectedRoots, now,
       // Untouched since the bot read it: the bot's version, with the file's own permissions (a script stays runnable, as
       // a live write in place keeps them), and the one it replaces to the Recycle Bin.
       if (same(before, after) && sha256 === change.baseSha256) {
-        fs.chmodSync(temporary, before.mode & 0o777);
         await trashItem(target);
-        fs.renameSync(temporary, target);
+        renameWithRetry(temporary, target);
+        keepPermissions(target, before);
         return { applied: true };
       }
     } else if (!before && change.baseSha256 === null) {
-      fs.renameSync(temporary, target);
+      renameWithRetry(temporary, target);
       return { applied: true };
     }
     // The person changed it, removed it, or something else is there now: theirs stays, the bot's lands beside it.
     const beside = clashPath(change.path, now(), (candidate) => fs.existsSync(path.join(folder.path, ...candidate.split("/"))), BESIDE_LABEL);
     const besideFile = await sharedPath(folder, beside);
     await assertOutsideProtected(protectedRoots, besideFile);
-    if (before?.isFile()) fs.chmodSync(temporary, before.mode & 0o777);
-    fs.renameSync(temporary, besideFile);
+    renameWithRetry(temporary, besideFile);
+    keepPermissions(besideFile, before);
     return { applied: true, beside };
   } finally {
     fs.rmSync(temporary, { force: true });

@@ -28,6 +28,7 @@ import {
 import { ATTACHMENTS_DIR } from "../../attachments.ts";
 import { cloudHomeConfigured } from "../../cloud-home.ts";
 import { DATA_DIR, OPENCODE_PROVIDER_ENV } from "../../config.ts";
+import * as quietStatus from "./quiet-status.ts";
 import { hostedWorkspaceConfigured } from "../../enterprise.ts";
 import { TASK_WORKSPACES_DIR, workspaceDir } from "../../workspace.ts";
 import type { ModelCatalog, ProviderInstance, SendTurnInput } from "../../contracts.ts";
@@ -777,6 +778,33 @@ describe("OpenCode turns without a sign-in gate", () => {
       expect(error).not.toMatchObject({ message: expect.stringContaining("Internal error") });
     }
     expect(f.launches()).toBe(1);
+  });
+
+  it("names a rate limit OpenCode logged for this turn's main request while the turn stays quiet", async () => {
+    vi.spyOn(quietStatus, "sampleProcessTree").mockResolvedValue({ cpuMs: 0, connections: 1 });
+    vi.stubEnv("OMB_ACP_QUIET_NOTICE_MS", "300");
+    vi.stubEnv("OMB_ACP_QUIET_TICK_MS", "50");
+    // The row format of #3143's opencode log, with a synthetic run and model.
+    const row = (session: string, small: boolean, error: string) =>
+      `timestamp=2026-10-01T00:00:03.000Z level=ERROR run=fixture_run message="stream error" providerID=opencode modelID=mimo-v2.6-flash-free session.id=${session} small=${small} agent=build mode=primary error.error="${error}"`;
+    const f = await open("opencode-rate-limit", () => ({
+      FAKE_ACP_MODE: "quiet-then-answer", FAKE_ACP_QUIET_MS: "1200", FAKE_ACP_MODELS: "opencode/big-pickle",
+      FAKE_ACP_OPENCODE_LOG: JSON.stringify([
+        row("ses_someone_else", false, "AI_APICallError: Insufficient balance."),
+        row("{session}", true, "AI_APICallError: The title model is busy."),
+        row("{session}", false, "AI_APICallError: Rate limit exceeded. Please try again later."),
+      ]),
+    }));
+    try {
+      const { done, events } = await f.run("t-rate-limit", "opencode/big-pickle");
+      expect(done).toMatchObject({ ok: true });
+      const notices = events.flatMap((event) => event.type === "runtime.notice" ? [event.message] : []);
+      expect(notices).toContainEqual(expect.stringContaining("Rate limit exceeded. Please try again later."));
+      expect(notices.join("\n")).not.toMatch(/Insufficient balance|title model/);
+    } finally {
+      vi.unstubAllEnvs();
+      vi.restoreAllMocks();
+    }
   });
 });
 

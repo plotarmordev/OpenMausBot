@@ -200,7 +200,7 @@ The step also brings in the person's own skills (`~/.claude/skills`,
 `~/.codex/skills`). Each one is copied once, read-only except on Windows, into
 `<data>/imported-skills` (`server/imported-skills.ts`), and every bot uses
 that copy on every engine that works with files: the bot the tour sets up,
-and any bot made later from the New bot dialog, the API, a template, a Chief
+and any bot made later with New bot, the API, a template, a Chief
 of Staff team or a package. Each turn lists them after the bot's own skills,
 with a budget of their own, links them into the task folder's `.claude`,
 `.agents` and `.grok` skills, and runs them as `/name`. A bot's own or library

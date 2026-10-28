@@ -40,13 +40,12 @@ function render(instances: store.InstanceInfo[]) {
 }
 
 describe("other OpenAI-compatible servers", () => {
-  it("lists only servers added here, by name and base URL, and opens when there are any", () => {
+  it("lists only servers added here, by name and base URL", () => {
     const html = render([
       instance("openaiCompat", "Other (OpenAI-compatible)"),
       instance("openai", "OpenAI", { url: "https://api.openai.com/v1" }),
       instance("openai-compat-1", "Zhipu", { url: "https://open.bigmodel.cn/api/paas/v4" }),
     ]);
-    expect(html).toMatch(/<details[^>]*open=""/);
     expect(html).toContain("Zhipu");
     expect(html).toContain("https://open.bigmodel.cn/api/paas/v4");
     expect(html).toContain('aria-label="Remove Zhipu"');
@@ -54,9 +53,8 @@ describe("other OpenAI-compatible servers", () => {
     expect(html).not.toContain('aria-label="Remove OpenAI"');
   });
 
-  it("stays closed and says so when none are added", () => {
+  it("says so when none are added", () => {
     const html = render([instance("openaiCompat", "Other (OpenAI-compatible)")]);
-    expect(html).not.toMatch(/<details[^>]*open=""/);
     expect(html).toContain("No other servers yet.");
   });
 

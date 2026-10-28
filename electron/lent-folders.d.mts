@@ -1,5 +1,7 @@
 export type LentFolder = { id: string; path: string; name: string; write: boolean };
 export type LentPlan = Map<string, { copy: true } | { copy: false; live: "too-big" | "refused" }>;
+export declare function folderKey(value: string, platform: string): string;
+export declare function sameFolderOn(platform: string): (a: string, b: string) => boolean;
 export declare const COPY_MAX_BYTES: number;
 export declare const RECHECK_MS: number;
 export declare function planLentCopies(input: {

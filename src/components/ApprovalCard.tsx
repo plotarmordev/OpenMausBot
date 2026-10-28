@@ -13,7 +13,9 @@ import { PROFILE_REQUEST_FIELDS, type ProfileRequestField } from "../../shared/p
 import type { RoutineRequestSchedule } from "../../shared/routine-request";
 import type { SkillShareRecord } from "../../shared/skill-request";
 import { cardAutomation } from "@/lib/automations";
+import { yourComputerAsk } from "@/lib/your-computer";
 import { TriggerCard } from "./TriggerCard";
+import { CardHint } from "./CardHint";
 
 interface ToolLabels {
   [tool: string]: LocaleKey;
@@ -437,16 +439,17 @@ export function ApprovalCard({
 
   if (!isRoutineRequest && !isSkillRequest && !isProfileRequest && !isTeamSetup && !card.modelRequest) {
     const waiting = !settled && !expired;
-    const header = outbound
+    const ask = yourComputerAsk(card, bot?.name ?? t("approval.someone"));
+    const header = ask ? ask.line : outbound
       ? waiting ? outbound.headline : outbound.headline.replace(/\s*[?？]$/, "")
       : bot
         ? t("approval.card.namedWantsTo", { name: bot.name, action: toolLabel(displayTool) })
         : t("approval.card.wantsTo", { action: toolLabel(displayTool) });
-    return (
+    const row = (
       <CompactApprovalRow
         header={header}
         summary={outbound?.summary || undefined}
-        detail={card.subtitle}
+        detail={ask?.detail ?? card.subtitle}
         showDetailInline={!outbound}
         outcome={outcome}
         allowed={settled === "allow" && !expired}
@@ -455,6 +458,7 @@ export function ApprovalCard({
         answeredBelow={Boolean(card.requestId && card.tool && !card.dismissed)}
       />
     );
+    return waiting && card.requestId && card.tool ? <div className="flex w-full flex-col gap-1">{row}<CardHint id="spot.approval" /></div> : row;
   }
 
   return (

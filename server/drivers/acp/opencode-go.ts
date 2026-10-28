@@ -11,6 +11,7 @@ import { hostedWorkspaceConfigured } from "../../enterprise.ts";
 import { decodeInjectId, hostApiKey, localHost, mergeLocalInject } from "../local-inject.ts";
 import { createAcpDriver, type AccountErrorCode, type AcpConfig, type AcpSupport } from "./core.ts";
 import { acpModelOption, acpVariantOption, offeredModels } from "./config-options.ts";
+import { parseOpenCodeLogLine } from "./quiet-status.ts";
 import type { ModelCatalog, ModelVariantOption, ProviderDriver, ProviderErrorCode } from "../../contracts.ts";
 import { titleCaseModelId } from "../../contracts.ts";
 import { execCli, killCliTree, spawnCli } from "../../procs.ts";
@@ -573,6 +574,11 @@ export function ensureOpenCodeInjectModel(
   return native;
 }
 
+/** OpenCode 1.18 appends every process's log to one file under its xdg data folder. */
+export function openCodeLogPath(env: Record<string, string | undefined>): string {
+  return join(env.XDG_DATA_HOME || join(env.HOME || env.USERPROFILE || homedir(), ".local", "share"), "opencode", "log", "opencode.log");
+}
+
 /** The CLI is xdg-flavoured on every platform (`opencode auth list` on macOS prints
  * `~/.local/share/opencode/auth.json`), so the xdg path comes first. */
 function storedAuthPaths(env: Record<string, string | undefined>): string[] {
@@ -826,6 +832,7 @@ const support = (loadCatalog: OpenCodeCatalogLoader, ownAccess = new Map<string,
     needsNode: true,
   },
   spawnArgs: () => ["acp"],
+  statusLog: { path: openCodeLogPath, parse: parseOpenCodeLogLine, shared: true },
   // A folder outside git files its session under OpenCode's global project, which every non-git folder of the person's
   // shares: a connection check or memory upkeep would show up in their history there.
   oneShotFolder: discoveryDirectory,

@@ -11,6 +11,9 @@ import { ChatMarkdown } from "./ChatMarkdown";
 import { CHAR_PX, COLUMN_MAX_CHARS, COLUMN_MIN_CHARS, columnMinimums, fitsColumns } from "@/lib/table-fit";
 import { formattedReplyWidth } from "@/lib/formatted-reply";
 
+// Simple mode draws its own plain table; this pins the Advanced table's fitting.
+vi.mock("@/lib/interface-mode", async (original) => ({ ...(await original<typeof import("@/lib/interface-mode")>()), useAdvancedMode: () => true, readAdvancedMode: () => true }));
+
 const header = ["App", "Stars", "License", "Target user", "Strength", "Weakness", "Verdict"];
 const row = ["OpenHands (ex-OpenDevin)", "~85k", "MIT", "Developers who want an autonomous coder",
   "Runs real software tasks end to end", "Needs a strong model and a sandbox", "Best open coding agent today"];

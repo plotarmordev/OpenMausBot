@@ -78,7 +78,7 @@ jobs:
           [ -f "$res/licenses/cloudflared-README.md" ] || {
             echo "::error::missing cloudflared release provenance"; fail=1; }
           if [ -f "$res/cloudflared/cloudflared.exe" ]; then
-            expected=c29eee2b121f5436a642eed69fd9767da7e7b8c510fa50aaa130337f931357b5
+            expected=$(node --input-type=module -e "import { CLOUDFLARED_ASSETS } from './scripts/prepare-cloudflared.mjs'; console.log(Object.values(CLOUDFLARED_ASSETS).find((asset) => asset.name === 'cloudflared-windows-amd64.exe').binarySha256)")
             actual=$(sha256sum "$res/cloudflared/cloudflared.exe" | cut -d' ' -f1)
             [ "$actual" = "$expected" ] || {
               echo "::error::packaged cloudflared hash is $actual"; fail=1; }

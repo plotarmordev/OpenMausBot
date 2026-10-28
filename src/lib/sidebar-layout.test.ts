@@ -21,6 +21,7 @@ import {
   simpleSidebarSections,
   userSectionId,
   userSectionName,
+  withPrimaryTile,
 } from "./sidebar-layout";
 
 describe("sidebar virtual sections", () => {
@@ -255,25 +256,47 @@ describe("Simple-mode section order", () => {
   const work = userSectionId("Work");
   const home = userSectionId("Home");
 
-  it("puts Pinned and the heading-less Bots list first by default and keeps a saved order for the rest", () => {
+  it("puts Pinned, the bots, group chats and bot threads first, then the departments in their saved order", () => {
     const natural = [PINNED_SECTION_ID, CHANNELS_SECTION_ID, BOT_CHATS_SECTION_ID, BOTS_SECTION_ID, work];
     expect(simpleSidebarSections(natural)).toEqual([PINNED_SECTION_ID, BOTS_SECTION_ID, CHANNELS_SECTION_ID, BOT_CHATS_SECTION_ID, work]);
-    expect(simpleSidebarSections([CHANNELS_SECTION_ID, BOTS_SECTION_ID, work])).toEqual([BOTS_SECTION_ID, CHANNELS_SECTION_ID, work]);
+    expect(simpleSidebarSections([work, CHANNELS_SECTION_ID, BOTS_SECTION_ID])).toEqual([BOTS_SECTION_ID, CHANNELS_SECTION_ID, work]);
     const saved = orderedSidebarSections([CHANNELS_SECTION_ID, BOTS_SECTION_ID, work, home], [home, CHANNELS_SECTION_ID, BOTS_SECTION_ID, work]);
-    expect(simpleSidebarSections(saved)).toEqual([BOTS_SECTION_ID, home, CHANNELS_SECTION_ID, work]);
+    expect(simpleSidebarSections(saved)).toEqual([BOTS_SECTION_ID, CHANNELS_SECTION_ID, home, work]);
   });
 
-  it("writes a Simple reorder back without moving Pinned or Bots in the saved order", () => {
+  it("writes a Simple reorder of departments back without moving the fixed lists in the saved order", () => {
     const full = [PINNED_SECTION_ID, CHANNELS_SECTION_ID, BOTS_SECTION_ID, work, home];
     const shown = simpleSidebarSections(full);
-    const moved = simpleSidebarSections(placeSection(shown, home, CHANNELS_SECTION_ID, "before"));
-    expect(moved).toEqual([PINNED_SECTION_ID, BOTS_SECTION_ID, home, CHANNELS_SECTION_ID, work]);
-    expect(keepFixedSectionSlots(full, moved)).toEqual([PINNED_SECTION_ID, home, BOTS_SECTION_ID, CHANNELS_SECTION_ID, work]);
+    const moved = simpleSidebarSections(placeSection(shown, home, work, "before"));
+    expect(moved).toEqual([PINNED_SECTION_ID, BOTS_SECTION_ID, CHANNELS_SECTION_ID, home, work]);
+    expect(keepFixedSectionSlots(full, moved)).toEqual([PINNED_SECTION_ID, CHANNELS_SECTION_ID, BOTS_SECTION_ID, home, work]);
     expect(keepFixedSectionSlots(full, shown)).toEqual(full);
   });
 
-  it("cannot move a section above the heading-less Bots list", () => {
+  it("cannot move a department above the fixed lists", () => {
     const shown = [BOTS_SECTION_ID, CHANNELS_SECTION_ID, work];
-    expect(simpleSidebarSections(moveSection(shown, CHANNELS_SECTION_ID, -1))).toEqual(shown);
+    expect(simpleSidebarSections(moveSection(shown, work, -1))).toEqual(shown);
+  });
+});
+
+describe("the primary tile", () => {
+  const bot = (id: string, extra: Partial<{ chiefOfStaff: boolean; pinned: boolean; section: string }> = {}) => ({ id, ...extra });
+
+  it("is the unsectioned Chief of Staff, pinned or not, taken out of the lists", () => {
+    const parts = partitionSidebarBots([bot("chief", { chiefOfStaff: true, pinned: true }), bot("atlas", { pinned: true }), bot("bea")], { universalPins: true });
+    const tiled = withPrimaryTile(parts, undefined);
+    expect(tiled.primary?.id).toBe("chief");
+    expect(tiled.unsectionedChief).toBeNull();
+    expect(tiled.pinnedBots.map((candidate) => candidate.id)).toEqual(["atlas"]);
+    expect(tiled.unsectionedBots.map((candidate) => candidate.id)).toEqual(["bea"]);
+  });
+
+  it("falls back to the person's MausBot, and leaves a department's Chief in its department", () => {
+    const parts = partitionSidebarBots([bot("lead", { chiefOfStaff: true, section: "Work" }), bot("mausbot"), bot("bea")]);
+    const tiled = withPrimaryTile(parts, "mausbot");
+    expect(tiled.primary?.id).toBe("mausbot");
+    expect(tiled.unsectionedBots.map((candidate) => candidate.id)).toEqual(["bea"]);
+    expect(tiled.sectionChiefs.map((candidate) => candidate.id)).toEqual(["lead"]);
+    expect(withPrimaryTile(parts, undefined).primary).toBeNull();
   });
 });

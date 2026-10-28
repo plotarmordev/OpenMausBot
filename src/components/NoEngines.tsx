@@ -8,6 +8,7 @@ import { WindowDragStrip } from "@/components/DesktopCapabilities";
 import { splitEngineRail } from "@/lib/engine-rail";
 import { t } from "@/lib/i18n";
 import { brand } from "../lib/brand";
+import { openKeySettings } from "./keys/key-focus";
 
 export function NoEngines() {
   const { state, dispatch, refreshInstances } = useStore();
@@ -80,7 +81,7 @@ export function NoEngines() {
                   <button
                     type="button"
                     data-no-engines-api-keys
-                    onClick={() => dispatch({ type: "toggleAppSettings", open: true, section: "connections" })}
+                    onClick={() => dispatch(openKeySettings())}
                     className="flex items-center gap-3 rounded-xl border border-hairline/40 bg-card p-3.5 text-left hover:bg-control/40"
                   >
                     <KeyRound size={16} className="shrink-0 text-ink-secondary" />

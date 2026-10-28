@@ -9,6 +9,7 @@ import { APPROVAL_CODE_CHIP, toolLabel } from "./ApprovalCard";
 import { outboundSummary } from "@/lib/approval-summary";
 import { reviewedSkillSha256 } from "../../shared/skill-request";
 import { useOwnerOrAdmin } from "@/lib/use-owner-or-admin";
+import { yourComputerAsk } from "@/lib/your-computer";
 
 interface ApprovalLabels {
   [tool: string]: LocaleKey;
@@ -57,6 +58,8 @@ export function pendingApprovals(messages: Message[]): Pending[] {
 }
 
 export function spokenApprovalPrompt(pending: Pending, requester: string): string {
+  const ask = yourComputerAsk(pending.message.card, requester);
+  if (ask) return `${requester}: ${ask.line}`;
   if (pending.message.card?.teamSetupRequest) return `${requester}: ${pending.message.card.title} Review the details and choose ${pending.message.card.options[0]} or ${pending.message.card.options[1] ?? "Cancel"}.`;
   const isSkillRequest = isSkillApproval(pending);
   const isProfileRequest = isProfileApproval(pending);
@@ -119,6 +122,8 @@ function rowText(pending: Pending, botName?: string): { line: string; inline?: s
   const card = pending.message.card;
   const outbound = card ? outboundSummary(card) : undefined;
   if (outbound) return { line: outbound.headline };
+  const ask = yourComputerAsk(card, botName ?? t("approval.someone"));
+  if (ask) return { line: ask.line };
   if (isDurable(pending)) return { line: label(pending) };
   const detail = firstLine(pending.commandAllowlist?.command ?? pending.detail);
   if (!botName) return { line: label(pending), inline: detail || undefined };
@@ -221,7 +226,7 @@ export const PendingApprovalPanel = memo(function PendingApprovalPanel({
           }
           className="max-h-40 overflow-auto whitespace-pre-wrap break-words rounded-2xl bg-inset px-4 py-3 font-mono text-[12px] leading-relaxed text-ink"
         >
-          {pending.commandAllowlist?.command ?? pending.detail}
+          {pending.commandAllowlist?.command ?? yourComputerAsk(pending.message.card, botName ?? t("approval.someone"))?.detail ?? pending.detail}
         </pre>
         {pending.message.card?.skillRequest && (
           <SkillRequestPreview request={pending.message.card.skillRequest} />

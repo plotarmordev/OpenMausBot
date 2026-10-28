@@ -66,7 +66,6 @@ test("Files channels answer this computer's own window only, and share only a fo
 
 test("a folder added on the Files page is lent, read only, and Stop sharing takes it back from lending", async (t) => {
   const dir = realpathSync(mkdtempSync(join(tmpdir(), "omb-files-lend-")));
-  t.after(() => rmSync(dir, { recursive: true, force: true }));
   const picked = join(dir, "home", "Clients");
   mkdirSync(picked, { recursive: true });
   const handlers = new Map();
@@ -84,7 +83,8 @@ test("a folder added on the Files page is lent, read only, and Stop sharing take
     cloudAccount: () => ({ openDashboard: async () => {}, state: () => ({}) }), localDataDir: join(dir, "home", ".openmausbot"),
     lending: { environment: () => env, sharing: () => sharing, validate: async ([folder]) => [{ ...folder, name: "Clients" }] },
   });
-  t.after(() => installed.close());
+  // Close before removing: Windows will not delete a folder whose Files database is still open.
+  t.after(() => { installed.close(); rmSync(dir, { recursive: true, force: true }); });
   const checked = await handlers.get("files:pick")({});
   const shared = await handlers.get("files:share")({}, checked.token);
   assert.deepEqual(saves, [{ folders: [{ id: state.folders[0].id, path: picked, write: false, name: "Clients" }] }]);

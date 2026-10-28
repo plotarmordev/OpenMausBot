@@ -1,28 +1,62 @@
 # CI job selection
 
-Every PR still runs the workflow and its static checks: locale validation,
-typecheck, lint, Electron checks, the UI build, CI-selection tests and the
-verification-documentation checks. Selection never skips the entire workflow.
+Every PR still runs the workflow, its `static` job and the `CI` gate: locale
+validation, lint, the CI-selection tests and the verification-documentation
+checks always run. Selection never skips the entire workflow.
 
-- Root Markdown files, Markdown under `docs/`, and `.github/FUNDING.yml` alone
-  do not run the runtime jobs.
-- Any other change runs the runtime suite.
-- A push to main is scoped by its own commits (`before..after`): docs only,
-  or a `package.json` change that only bumps `"version"` (the release bump),
-  skips the runtime jobs. It does so only when the commit before the push has
-  a green CI run of its own. Main's waiting run is replaced by each push, so
-  without that check a replaced run's code would never be tested.
+`scripts/ci-scope.mjs` sorts a pull request's changed files (a local
+merge-base diff, rename detection off, so a moved file selects its old path
+too) into areas, and runs only the jobs some area can affect:
+
+| Area | Paths | What runs |
+| --- | --- | --- |
+| docs | `*.md` at the root, everything under `docs/` and `apps/docs/`, `.github/FUNDING.yml` | lint, the docs tests (the three vitest files that read the docs) on Linux |
+| locales | `src/locales/*.json` except `en.json`, `src/locales/*.test.ts` | the build, the locale tests: every `src/` test and `scripts/generate-locale.test.mjs` in two Linux shards, with the Electron node tests |
+| web | the rest of `src/`, `public/`, the root `*-preview.html` pages | the build, the eight Linux shards, the renderer smoke |
+| script tests | `scripts/**/*.test.*` | the Linux and Windows shards, the renderer smoke, browser identity |
+| server | `server/`, `shared/`, `enterprise/`, `companion/`, `evals/`, `skills/`, `deploy/`, the composio broker, the Dockerfile, and the renderer files the server or a smoke loads | the build, Linux and Windows shards, behavior evals, packaged server, open-source edition, the macOS smokes, renderer smoke, browser identity, browser driver, Linux package |
+| desktop | `electron/`, `build/`, `electron-builder.yml`, `index.html` | the same as server |
+| control plane | `cloudflare/control-plane/` | the control-plane job |
+| everything | anything else: `.github/` workflows, `package.json`, the lockfile and workspace, tsconfig, vite and vitest config, `third_party/`, `scripts/` code, unknown paths | every job |
+
+The build is static's typecheck, Electron syntax check and UI build. Several
+areas run the union of their jobs. Why the mapping is what it is:
+
+- The server imports a few renderer files (`SRC_OUTSIDE_RENDERER`), and the
+  renderer imports Electron modules, so a server or desktop change can affect
+  the renderer smoke, and those renderer files count as server.
+  `scripts/ci-scope.test.ts` holds the list equal to the import graph.
+- The macOS smokes run the packaged server inside Electron (approval modes,
+  app frames, phone relay, login handoff), so a server change runs them.
+- A renderer change runs no Windows or macOS shard: the renderer's tests read
+  the platform from the desktop bridge, never the host. Main still runs both.
+- English (`en.json`) is the text every test reads, so it is web. Other
+  catalogs are read only by `src/` tests, the locale generator's test and an
+  Electron node test; `scripts/ci-scope.test.ts` fails if another test starts
+  reading them, or the docs, without being listed.
+- Windows CUA and the Linux ARM64 cloudflared installer test only their own
+  scripts and pinned downloads, so only `scripts/` and dependency changes run
+  them.
+
+Pushes to main, merge groups, manual runs (the release branch's CI, which
+`prepare-release.yml` starts, and the release lane) never use the areas:
+
+- A push to main is scoped by its own commits (`before..after`): docs only
+  (root Markdown, Markdown under `docs/`, `.github/FUNDING.yml`), or a
+  `package.json` change that only bumps `"version"` (the release bump), skips
+  the runtime jobs. It does so only when the commit before the push has a green
+  CI run of its own. Main's waiting run is replaced by each push, so without
+  that check a replaced run's code would never be tested. Every other push runs
+  everything.
 - Merge groups and manual runs always run all jobs. Empty or unreadable diffs,
   and a previous commit whose CI cannot be read, also fall back to all jobs.
 
-PR selection uses a local merge-base diff with rename detection disabled, so
-moving a source file into documentation still selects its original runtime
-path. There is no changed-files API truncation or new action dependency.
-
-The single `CI` gate keeps the existing required dependencies. It accepts a
-skipped runtime job only when static validation passed and explicitly selected
-the docs-only path. Failures, cancellations, missing selection and unexpected
-skips fail the gate. Existing advisory jobs remain advisory.
+The single `CI` gate keeps the existing required dependencies. `static`
+outputs the selected job ids; the gate wants each required job to have passed
+when it was selected and to have been skipped when it was not. Failures,
+cancellations, a missing or malformed selection and unexpected runs or skips
+fail the gate. Advisory jobs remain advisory. A new push to a PR cancels that
+PR's older run; main's concurrency is unchanged (see Main and releases).
 
 The separate shared-terminal smoke workflow is manual-only: its tests already
 run in the Windows Vitest/Electron jobs.
@@ -69,6 +103,10 @@ node scripts/testing/update-shard-weights.mjs --run <run id> --run <run id> --ru
 To run one CI shard locally, use the same OS, `--shard` and `OMB_VITEST_E2E`:
 `OMB_VITEST_E2E=host pnpm exec vitest run --shard=3/8` is Windows shard 3 on a
 Windows machine.
+The locale and docs tests are the same command with their files first:
+`pnpm exec vitest run src/ scripts/generate-locale.test.mjs --shard=1/2` is
+locale tests 1/2 (those jobs set `OMB_VITEST_SUBSET`, so the sequencer does not
+warn that most weighted files are missing).
 
 Deleting or renaming a test file in the weights fails
 `scripts/testing/duration-sequencer.test.ts` until its entry is removed or

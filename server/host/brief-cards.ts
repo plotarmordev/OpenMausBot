@@ -127,6 +127,8 @@ export interface BriefFacts {
   routines: BriefRow[];
   /** From the nightly dream: suggestions, never news, so they are left out of what notifies. */
   ideas?: BriefRow[];
+  /** The morning brief's first line: what was done while the person was away, already in their words. */
+  overnight?: string;
 }
 
 const BRIEF_TEXT = { line: 120, note: 160, sender: 40, label: 32, link: 600 } as const;
@@ -179,6 +181,7 @@ export function briefCard(facts: BriefFacts): BuiltCard {
   const routineRows = facts.routines.map((row) => rowBeside(row.text, row.note, [...pageButton(row.page, w), ...openButton(row.open, w)]));
   const ideaRows = (facts.ideas ?? []).map((row) => rowBeside(row.text, row.note, []));
   const children: Node[] = [
+    ...(facts.overnight ? [{ type: "Text", value: clip(facts.overnight, BRIEF_TEXT.note * 2), weight: "medium" }] : []),
     ...(facts.intro ? [caption(w.intro)] : []),
     ...section(w.needsYou, needRows, w, w.nothingNeedsYou),
     ...(facts.meetings === null ? [] : section(w.yourDay, meetingRows, w, w.noMoreMeetings)),

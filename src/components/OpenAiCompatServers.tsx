@@ -4,28 +4,19 @@ import { api, useStore, type InstanceInfo } from "@/state/store";
 import { t } from "@/lib/i18n";
 import { keySaved } from "@/lib/product-events";
 import { addedServers } from "@/lib/openai-compat-endpoints";
-import { ApiKeyRow, OpenAiCompatUrl } from "./ApiKeys";
+import { cn } from "@/lib/cn";
+import { KEY_FIELD } from "./keys/KeyRow";
 
 export function modelIds(text: string): string[] {
   return [...new Set(text.split(/[,，、\s]+/).map((id) => id.trim()).filter(Boolean))];
 }
 
-const INPUT = "w-full rounded-lg border border-hairline/40 bg-inset px-3 py-2 text-[12px] text-ink placeholder:text-ink-secondary focus:outline-none";
-const ICON_BUTTON = "shrink-0 rounded-md px-2 py-1 text-ink-secondary hover:bg-inset hover:text-ink disabled:opacity-50";
+const INPUT = cn(KEY_FIELD, "font-sans");
+const ICON_BUTTON = "ui-icon-button shrink-0 hover:text-ink";
 
 export function OtherOpenAiCompatServers() {
   const { state } = useStore();
-  const added = addedServers(state.instances);
-  return (
-    <details data-api-keys-other className="rounded-lg border border-hairline/40 bg-inset px-3 py-2" open={Boolean(state.config?.openaiCompat?.configured) || added.length > 0}>
-      <summary className="cursor-pointer text-[13px] text-ink-secondary">{t("keys.other.title")}</summary>
-      <div className="mt-3 flex flex-col gap-4">
-        <ApiKeyRow section="openaiCompat" testProvider="openaiCompat" />
-        <OpenAiCompatUrl />
-        <AddedServers servers={added} />
-      </div>
-    </details>
-  );
+  return <AddedServers servers={addedServers(state.instances)} />;
 }
 
 function AddedServers({ servers }: { servers: Array<InstanceInfo & { url?: string }> }) {
@@ -65,12 +56,12 @@ function AddedServers({ servers }: { servers: Array<InstanceInfo & { url?: strin
   );
 
   return (
-    <div>
-      <div className="mb-1.5 text-[13px] text-ink-secondary">{t("apiInstances.title")}</div>
-      <p className="mb-2 text-[12px] leading-relaxed text-ink-secondary">{t("apiInstances.subtitle")}</p>
-      {servers.length === 0 && <p className="text-[12px] text-ink-secondary">{t("apiInstances.empty")}</p>}
+    <div data-api-keys-other>
+      <div className="mb-0.5 text-[13px] leading-[18px] text-ink">{t("apiInstances.title")}</div>
+      <p className="mb-2 text-[12px] leading-4 text-ink-secondary">{t("apiInstances.subtitle")}</p>
+      {servers.length === 0 && <p className="text-[12px] leading-4 text-ink-secondary">{t("apiInstances.empty")}</p>}
       {servers.map((server) => (
-        <div key={server.instanceId} className="mb-1.5 flex items-center justify-between gap-2 rounded-lg border border-hairline/40 bg-inset px-3 py-2">
+        <div key={server.instanceId} className="mb-1.5 flex items-center justify-between gap-2 rounded-lg border border-hairline/60 bg-inset px-3 py-1.5">
           <div className="min-w-0">
             <div className="truncate text-[12px] text-ink">{server.displayName}</div>
             {server.url && <div className="truncate font-mono text-[11px] text-ink-secondary">{server.url}</div>}
@@ -101,17 +92,17 @@ function AddedServers({ servers }: { servers: Array<InstanceInfo & { url?: strin
         <input value={name} onChange={(e) => setName(e.target.value)} placeholder={t("apiInstances.name")} aria-label={t("apiInstances.name")}
           spellCheck={false} disabled={busy !== null} className={INPUT} />
         <input type="url" value={url} onChange={(e) => setUrl(e.target.value)} placeholder="https://api.example.com/v1" aria-label={t("apiInstances.url")}
-          spellCheck={false} disabled={busy !== null} className={`${INPUT} font-mono`} />
+          spellCheck={false} disabled={busy !== null} className={cn(INPUT, "font-mono")} />
         <input type="password" value={key} onChange={(e) => setKey(e.target.value)} placeholder={t("apiInstances.key")} aria-label={t("apiInstances.key")}
-          autoComplete="off" disabled={busy !== null} className={`${INPUT} font-mono`} />
+          autoComplete="off" disabled={busy !== null} className={cn(INPUT, "font-mono")} />
         <input value={models} onChange={(e) => setModels(e.target.value)} placeholder={t("apiInstances.models")} aria-label={t("apiInstances.models")}
-          spellCheck={false} disabled={busy !== null} className={`${INPUT} font-mono`} />
-        <p className="text-[11px] leading-relaxed text-ink-secondary">{t("apiInstances.modelsHint")}</p>
+          spellCheck={false} disabled={busy !== null} className={cn(INPUT, "font-mono")} />
+        <p className="text-[12px] leading-4 text-ink-secondary">{t("apiInstances.modelsHint")}</p>
         <button
           type="button"
           onClick={add}
           disabled={busy !== null || !ready}
-          className="inline-flex items-center gap-1.5 self-start rounded-lg border border-hairline/40 px-2.5 py-1.5 text-[12px] text-ink hover:bg-inset disabled:opacity-50"
+          className="ui-button self-start"
         >
           {busy === "add" ? <Loader2 size={12} aria-hidden="true" className="animate-spin" /> : <Plus size={12} aria-hidden="true" />}
           {busy === "add" ? t("apiInstances.adding") : t("apiInstances.add")}
@@ -132,7 +123,7 @@ export function lmStudioBaseUrl(port: string): string | null {
   return `http://127.0.0.1:${value}/v1`;
 }
 
-export function LmStudioServer() {
+export function LmStudioServer({ heading = true }: { heading?: boolean } = {}) {
   const { state, dispatch, refreshInstances } = useStore();
   const added = addedServers(state.instances);
   const [port, setPort] = useState("1234");
@@ -169,11 +160,11 @@ export function LmStudioServer() {
   };
 
   return (
-    <div className="rounded-lg border border-hairline/40 bg-inset px-3 py-2">
-      <div className="text-[13px] text-ink">{t("lmStudio.title")}</div>
-      <p className="mt-1 text-[12px] leading-relaxed text-ink-secondary">{t("lmStudio.desc")}</p>
+    <div className={cn(heading && "rounded-lg border border-hairline/40 bg-inset px-3 py-2")}>
+      {heading && <div className="text-[13px] text-ink">{t("lmStudio.title")}</div>}
+      <p className={cn("text-[12px] leading-4 text-ink-secondary", heading && "mt-1")}>{t("lmStudio.desc")}</p>
       <div className="mt-2 flex flex-col gap-1.5">
-        <label className="text-[12px] text-ink-secondary">
+        <label className="flex flex-col gap-1 text-[12px] leading-4 text-ink-secondary">
           {t("lmStudio.port")}
           <input
             inputMode="numeric"
@@ -182,7 +173,7 @@ export function LmStudioServer() {
             aria-label={t("lmStudio.port")}
             spellCheck={false}
             disabled={busy}
-            className={`${INPUT} mt-1 font-mono`}
+            className={cn(INPUT, "font-mono")}
           />
         </label>
         <input
@@ -193,15 +184,15 @@ export function LmStudioServer() {
           aria-label={t("lmStudio.token")}
           autoComplete="off"
           disabled={busy}
-          className={`${INPUT} font-mono`}
+          className={cn(INPUT, "font-mono")}
         />
-        <p className="text-[11px] leading-relaxed text-ink-secondary">{t("lmStudio.tokenHint")}</p>
-        {url && <p className="truncate font-mono text-[11px] text-ink-secondary">{url}</p>}
+        <p className="text-[12px] leading-4 text-ink-secondary">{t("lmStudio.tokenHint")}</p>
+        {url && <p className="truncate font-mono text-[12px] leading-4 text-ink-secondary">{url}</p>}
         <button
           type="button"
           onClick={add}
           disabled={busy || !url || present}
-          className="inline-flex items-center gap-1.5 self-start rounded-lg border border-hairline/40 px-2.5 py-1.5 text-[12px] text-ink hover:bg-inset disabled:opacity-50"
+          className="ui-button self-start"
         >
           {busy ? <Loader2 size={12} aria-hidden="true" className="animate-spin" /> : <Plus size={12} aria-hidden="true" />}
           {busy ? t("lmStudio.adding") : t("lmStudio.add")}

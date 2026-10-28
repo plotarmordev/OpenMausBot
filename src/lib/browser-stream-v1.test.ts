@@ -116,6 +116,45 @@ describe("the v1 live client", () => {
     expect(handlers.onMessage).toHaveBeenCalledWith({ type: "url", url: "https://a.test/next" });
   });
 
+  it("opens at the panel's size and sends each new size to its view while it only watches, the newest once the last is answered", async () => {
+    const post = vi.fn<(body: Record<string, unknown>, viewerId: string) => Promise<unknown>>().mockResolvedValue({ ok: true });
+    const client = createLiveStreamClient("pepper", events(), post, { viewer: "" }, {}, { width: 365.4, height: 686 });
+    const source = FixtureEventSource.instances.at(-1)!;
+    expect(source.url).toBe("/api/bots/pepper/browser/live?width=365&height=686");
+    expect(client.send({ type: "resize", width: 400, height: 700 })).toBe(true);
+    expect(post).not.toHaveBeenCalled();
+    source.emit("ready", { viewerId: "v1" });
+    expect(post).toHaveBeenLastCalledWith({ type: "resize", width: 400, height: 700 }, "v1");
+    source.emit("control", { held: false, owned: false, controlling: false });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const answer = deferred();
+    post.mockReturnValueOnce(answer.promise.then(() => ({ ok: true })));
+    client.send({ type: "resize", width: 420, height: 700 });
+    client.send({ type: "resize", width: 440, height: 700 });
+    client.send({ type: "resize", width: 460, height: 720 });
+    expect(post.mock.calls.filter(([body]) => body.type === "resize")).toHaveLength(2);
+    answer.resolve();
+    await vi.waitFor(() => expect(post).toHaveBeenLastCalledWith({ type: "resize", width: 460, height: 720 }, "v1"));
+    expect(post.mock.calls.filter(([body]) => body.type === "resize")).toHaveLength(3);
+  });
+
+  it("keeps going when a server without resizing refuses a size", async () => {
+    const post = vi.fn<(body: Record<string, unknown>, viewerId: string) => Promise<unknown>>()
+      .mockImplementation(async (body) => { if (body.type === "resize") throw Object.assign(new Error("Invalid browser action."), { status: 400 }); return { ok: true }; });
+    const handlers = events({ onMessage: vi.fn(), onGone: vi.fn() });
+    const client = createLiveStreamClient("pepper", handlers, post, { viewer: "" }, {}, { width: 365, height: 686 });
+    const source = FixtureEventSource.instances.at(-1)!;
+    source.emit("ready", { viewerId: "v1" });
+    source.emit("control", { held: true, owned: true, controlling: true });
+    client.send({ type: "resize", width: 500, height: 700 });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    client.transport.send({ type: "text", text: "hi" });
+    await client.transport.settle();
+    expect(post).toHaveBeenLastCalledWith({ type: "input_keyboard", eventType: "char", text: "hi" }, "v1");
+    expect(handlers.onMessage).not.toHaveBeenCalledWith(expect.objectContaining({ type: "notice" }));
+    expect(handlers.onGone).not.toHaveBeenCalled();
+  });
+
   it("takes control with a POST, then sends input in order while it controls", async () => {
     const { client, post, handlers, source } = open();
     source.emit("ready", { viewerId: "v1" });

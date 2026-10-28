@@ -169,8 +169,8 @@ export function useSidebarToolsLayout(): SidebarToolsLayout {
   return useSyncExternalStore(subscribeSidebarToolsLayout, currentSidebarToolsLayout, () => "rows");
 }
 
-export function clampSidebarWidth(width: number, viewportWidth: number): number {
-  return Math.max(240, Math.min(480, viewportWidth - 320, Math.round(width)));
+export function clampSidebarWidth(width: number, viewportWidth: number, max = 480): number {
+  return Math.max(240, Math.min(max, viewportWidth - 320, Math.round(width)));
 }
 
 export function loadSidebarWidth(storage?: Pick<Storage, "getItem"> | null, key = SIDEBAR_WIDTH_KEY): number | null {

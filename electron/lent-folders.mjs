@@ -6,6 +6,16 @@ import { randomUUID } from "node:crypto";
 import { existingFolders } from "./cloud-lending-ipc.mjs";
 import { cloudReserveBytes } from "./cloud-sync-rules.mjs";
 
+/** A folder's path as its file system compares it: "/" between parts, no trailing one, and on Windows and macOS (whose
+ * usual disks ignore case) one case, so "C:\Users\Ash\Notes\" and "c:/users/ash/notes" are one folder there. */
+export function folderKey(value, platform) {
+  const slashed = String(value).replaceAll("\\", "/").replace(/\/+$/, "");
+  return platform === "win32" || platform === "darwin" ? slashed.toLowerCase() : slashed;
+}
+
+/** Whether two paths are one folder on `platform`. */
+export const sameFolderOn = (platform) => (a, b) => folderKey(a, platform) === folderKey(b, platform);
+
 /** A lent folder bigger than this keeps no copy on My Cloud: bots use it live, while this computer is on. */
 export const COPY_MAX_BYTES = 3 * 1024 ** 3;
 /** A folder lent without a copy is counted again after this long, in case it shrank. */

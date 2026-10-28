@@ -19,7 +19,8 @@ import { useBotApps, type BotApp } from "../bot-settings/useBotApps";
 import type { useBotSettingsDerived } from "../bot-settings/useBotSettingsDerived";
 import { RoutineList } from "../routines/RoutineList";
 import { BrowserLogins } from "./browser-logins";
-import { useOpenComputer } from "./ComputerTab";
+import { useOpenComputer, WherePage } from "./ComputerTab";
+import { SettingsPage } from "./SettingsPage";
 import { memoryNotes, withMemoryNote, withoutMemoryNote } from "./memory-notes";
 import type { SimplePageId } from "./page-registry";
 import { BotSwitch, buttonCls, Card, LinkRow, NoteRow, RadioRow, rowCls, SwitchRow, TextRow, TrashButton } from "./rows";
@@ -379,8 +380,17 @@ export function BrowserPage({ bot, derived }: PageContext) {
   return <BrowserLogins bot={bot} browserEnabled={derived.browserEnabled} onOpenBrowser={() => openComputer("browser")} />;
 }
 
-export function PageBody({ page, ...context }: PageContext & { page: SimplePageId }): ReactNode {
+export function PageBody({ page, onOpen, editingInstructions, onEditInstructions, ...context }: PageContext & {
+  page: SimplePageId;
+  onOpen?: (page: SimplePageId) => void;
+  editingInstructions?: boolean;
+  onEditInstructions?: (open: boolean) => void;
+}): ReactNode {
   switch (page) {
+    case "settings":
+      return <SettingsPage {...context} onOpen={onOpen} editingInstructions={editingInstructions} onEditInstructions={onEditInstructions} />;
+    case "where":
+      return <WherePage {...context} />;
     case "apps":
       return <AppsPage {...context} />;
     case "routines":

@@ -14,6 +14,7 @@ import { t } from "@/lib/i18n";
 import type { MausMotion, MausState } from "@/lib/mascot";
 import { withViewTransition } from "@/components/onboarding/view-transition";
 import { useStore, type InstanceInfo } from "@/state/store";
+import { openKeySettings } from "./keys/key-focus";
 
 type Choice = "claude" | "codex" | "grok";
 type ChoiceKind = "claudeAgent" | "codex" | "grokAgent";
@@ -126,7 +127,7 @@ export function cloudEngineChoices(engines: CloudEngineChoices, { handing = fals
     <div data-cloud-choice="api-key" className="animate-rise mt-4 flex flex-col items-center text-center" style={staggerIndex(4 + choices.length)}>
       <button
         type="button"
-        onClick={() => dispatch({ type: "toggleAppSettings", open: true, section: "connections" })}
+        onClick={() => dispatch(openKeySettings())}
         className="group inline-flex items-center gap-2 rounded-lg px-3 py-1.5 text-[14px] font-medium text-ink transition-[background-color,transform] duration-150 ease-out hover:bg-raised/60 active:scale-[0.97]"
       >
         <KeyRound size={15} aria-hidden="true" className="text-ink-secondary" />

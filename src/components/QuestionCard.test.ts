@@ -11,8 +11,9 @@ import { formatQuestionAnswers } from "../../shared/ask-question";
 const fixture = vi.hoisted(() => {
   vi.stubGlobal("window", {});
   vi.stubGlobal("localStorage", { getItem: () => null, setItem: () => {} });
-  return { dispatch: vi.fn() };
+  return { dispatch: vi.fn(), advanced: true };
 });
+vi.mock("@/lib/interface-mode", () => ({ useAdvancedMode: () => fixture.advanced }));
 vi.mock("@/state/store", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/state/store")>()),
   useStore: () => ({ state: {}, dispatch: fixture.dispatch }),
@@ -149,6 +150,41 @@ describe("QuestionCard", () => {
     expect(markup).toMatch(/break-words text-\[15px\] leading-6 text-ink \[unicode-bidi:plaintext\]">A new analytical piece/);
     expect(markup).not.toContain("rounded-full border-");
     expect(markup).toContain('placeholder="Type your own answer"');
+  });
+
+  it("in Simple mode, lists the options as plain 40px rows, each with a 24px key-cap and a 14px label, then Something else", () => {
+    fixture.advanced = false;
+    try {
+      const question = { question: "Which article?", options: [{ label: "Chip race" }, { label: "Blackwell" }] };
+      const markup = render(message({ questionRequest: { version: 1, questions: [question] } }));
+      expect(markup).not.toContain("divide-y");
+      expect(markup).toContain('class="-mx-2 flex flex-col"');
+      expect(markup).toMatch(/aria-keyshortcuts="A" class="flex min-h-10[^"]*rounded-\[10px\]/);
+      expect(markup).toMatch(/size-6[^"]*rounded-\[7px\][^"]*">A</);
+      expect(markup).toMatch(/text-\[14px\] leading-5[^"]* text-ink">Chip race</);
+      expect(markup).toMatch(/text-\[16px\] font-semibold leading-\[22px\] text-ink-secondary"><bdi dir="auto">Which article\?</);
+      expect(markup).toContain('placeholder="Something else…"');
+      expect(markup).toContain("data-ask-something-else");
+    } finally {
+      fixture.advanced = true;
+    }
+  });
+
+  it("quiets its choices in Simple mode once the person writes instead, and they still answer", () => {
+    fixture.advanced = false;
+    try {
+      const question = { question: "Which article?", options: [{ label: "Chip race" }, { label: "Blackwell" }] };
+      const card = message({ questionRequest: { version: 1, questions: [question] } });
+      const quiet = renderToStaticMarkup(createElement(QuestionCard, { threadId: "t", bot: { name: "Hazelnut" }, message: card, typedPast: true }));
+      expect(quiet).toContain('data-quiet="true"');
+      expect(quiet).toMatch(/text-ink-tertiary">Chip race</);
+
+      expect(quiet).not.toMatch(/<button[^>]*data-ask-choice[^>]* disabled=""/);
+      fixture.advanced = true;
+      expect(renderToStaticMarkup(createElement(QuestionCard, { threadId: "t", bot: { name: "Hazelnut" }, message: card, typedPast: true }))).not.toContain("data-quiet");
+    } finally {
+      fixture.advanced = true;
+    }
   });
 
   it("maps letter keys to options and ignores anything else", () => {

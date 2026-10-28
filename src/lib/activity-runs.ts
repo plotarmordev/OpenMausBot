@@ -45,6 +45,30 @@ type TurnFold = Extract<TranscriptItem, { kind: "turn" }>;
 const isNarration = (message: Message, turnId: string) =>
   message.role === "bot" && message.kind === "text" && message.turnId === turnId && !message.turnTerminal;
 
+/** A turn starts with the person's last message before its first row, or with that row when nobody wrote first. */
+function turnStartedAt(messages: readonly Message[], firstIndex: number, fallback: number): number {
+  for (let i = firstIndex - 1; i >= 0; i -= 1) if (messages[i]!.role === "user") return messages[i]!.at;
+  return messages[firstIndex]?.at ?? fallback;
+}
+
+/** "Worked for 29s", or plain "Worked" for a turn under a second. */
+export function workedLabel(elapsed: number): string {
+  return elapsed >= 1_000 ? t("chat.run.workedFor", { elapsed: formatElapsed(elapsed) }) : t("chat.run.worked");
+}
+
+/** How long each finished turn took, keyed by its answer's id: from its start to the answer. */
+export function turnDurations(messages: readonly Message[]): Map<string, number> {
+  const firstIndex = new Map<string, number>();
+  const durations = new Map<string, number>();
+  messages.forEach((message, index) => {
+    if (!message.turnId) return;
+    if (!firstIndex.has(message.turnId)) firstIndex.set(message.turnId, index);
+    if (message.role !== "bot" || message.kind !== "text" || !message.turnTerminal) return;
+    durations.set(message.id, Math.max(0, message.at - turnStartedAt(messages, firstIndex.get(message.turnId)!, message.at)));
+  });
+  return durations;
+}
+
 /** Once a turn has its answer, the rows `folded` picks go behind one "Worked for 29s" chip at the first of them. */
 function settledTurnFolds(messages: Message[], folded: (message: Message, turnId: string) => boolean): {
   byAnchorId: Map<string, TurnFold>;
@@ -66,18 +90,8 @@ function settledTurnFolds(messages: Message[], folded: (message: Message, turnId
     if (!rows.length) return;
 
     const firstIndex = before.findIndex((message) => message.turnId === turnId);
-    let startedAt = before[firstIndex]?.at ?? rows[0].at;
-    for (let i = firstIndex - 1; i >= 0; i -= 1) {
-      if (messages[i].role === "user") {
-        startedAt = messages[i].at;
-        break;
-      }
-    }
-    const elapsed = Math.max(0, terminal.at - startedAt);
-    const label =
-      elapsed >= 1_000
-        ? t("chat.run.workedFor", { elapsed: formatElapsed(elapsed) })
-        : t("chat.run.worked");
+    const startedAt = turnStartedAt(messages, firstIndex, rows[0].at);
+    const label = workedLabel(Math.max(0, terminal.at - startedAt));
     byAnchorId.set(rows[0].id, { kind: "turn", id: `turn:${turnId}`, turnId, label, messages: rows });
     for (const message of rows) hiddenIds.add(message.id);
   });

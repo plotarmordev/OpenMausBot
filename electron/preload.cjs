@@ -466,6 +466,9 @@ const bridge = {
       ...(typeof choice?.email === "string" ? { email: choice.email } : {}),
     }),
   },
+  desktopProfile: {
+    systemName: () => ipcRenderer.invoke("desktop-profile:system-name"),
+  },
   desktopNotices: {
     state: () => ipcRenderer.invoke("desktop-notices:state"),
     seen: id => ipcRenderer.invoke("desktop-notices:seen", String(id)),

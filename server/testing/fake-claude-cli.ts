@@ -385,6 +385,15 @@ if (["text", "json"].includes(argAfter("--output-format") ?? "")) {
     }
     replyText("OK", 0, null);
   }
+  // Every new bot asks for its setup card's answers (server/setup-suggestions.ts), so that call stays out of the captures
+  // below too: FAKE_CLAUDE_SETUP_DUMP records it, FAKE_CLAUDE_SETUP_FILE holds its reply, and without one it fails at once.
+  if (prompt.startsWith("You write the answer options for the first message of a new bot")) {
+    if (process.env.FAKE_CLAUDE_SETUP_DUMP) writeDumpAtomic(process.env.FAKE_CLAUDE_SETUP_DUMP, JSON.stringify({ argv, env: process.env, prompt }, null, 2));
+    const file = process.env.FAKE_CLAUDE_SETUP_FILE;
+    if (file && existsSync(file)) replyText(readFileSync(file, "utf8"));
+    process.stderr.write("fake setup answers failed\n");
+    process.exit(1);
+  }
   // Background one-shots never overwrite the shared turn dump; FAKE_CLAUDE_TEXT_DUMP records them.
   const upkeepCall = /You are the (?:CAPTURE|TIDY|ORGANIZE) step of a memory system|You are the SKILL REVIEW step/.test(prompt);
   const oneShotDump = process.env.FAKE_CLAUDE_TEXT_DUMP ?? (upkeepCall ? undefined : process.env.FAKE_CLAUDE_DUMP);

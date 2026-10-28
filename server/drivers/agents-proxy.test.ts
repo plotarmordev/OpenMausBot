@@ -1328,7 +1328,7 @@ describe("agents-proxy MCP surface", () => {
       expect(full.result.isError).toBe(false);
       expect(full.result.content[0].text).toBe(
         'Memory updated. Entry: - 2026-09-10 · from chat "Setup" · fact 201\n' +
-        'To stay within what loads each session, moved 1 older entry to memory/archive.md (session_search finds them):\n- 2026-08-01 · from chat "A" · fact 1',
+        'To stay within what loads each session, moved 1 older entry to your archive (session_search finds them):\n- 2026-08-01 · from chat "A" · fact 1',
       );
       expect(lastMemoryBody).toMatchObject({ action: "append", text: "fact 201" });
     }

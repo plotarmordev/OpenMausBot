@@ -1,6 +1,6 @@
 // People watching and driving a bot's browser. Every viewer gets its own CDP session on the tab in front, with its own
-// screencast sized to it, and the page fills the panel: in fill mode the window is resized to the size the latest
-// viewer asked for, 1280x800 with nobody watching. Frames come at the screen's real device scale, so they stay sharp.
+// screencast sized to it, and the page fills the panel: in fill mode it takes the shape of the latest viewer's panel at
+// a desktop's width, 1280x800 with nobody watching. Frames come at the screen's real device scale, so they stay sharp.
 //
 // Adapted from pingdotgg/t3code@00cdceb1 apps/server/src/preview/ServerBrowser.ts (attachViewer,
 // dispatchViewerInput, releaseViewerInput, applySetting, withScreencastsPaused), MIT License, Copyright (c) 2026 T3
@@ -21,7 +21,7 @@ import type { ProfileControl, TakeResult } from "../control.ts";
 import { personUrl } from "../dispatch.ts";
 import type { Tab } from "../tabs.ts";
 import { ACCEPT_OF, chooseOption, cursorAt, editableAt, selectAt, type SelectPopup } from "./popups.ts";
-import { MIN_WINDOW_WIDTH, VIEWPORT_LIMITS, VIEWPORT_PRESETS, viewportFor, ZOOM_LIMITS, zoomedLayout, type ViewportSetting } from "./viewport.ts";
+import { fitsScreen, MIN_WINDOW_WIDTH, requestedSize, VIEWPORT_PRESETS, viewportFor, ZOOM_LIMITS, zoomedLayout, type ViewportSetting } from "./viewport.ts";
 
 /** Chromium keeps three frames unacknowledged, so acking 100 ms after arrival caps a viewer near 30 fps. */
 export const ACK_PACE_MS = { hi: 100, lo: 200 } as const;
@@ -122,13 +122,6 @@ const modifiersOf = (message: Record<string, unknown>) => {
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 const appliedKey = (size: { width: number; height: number }, zoom: number) => `${size.width}x${size.height}@${zoom}`;
-
-/** A viewer's resize request, or null when it is out of range (a collapsed panel, say) and the page keeps its size. */
-export function requestedSize(width: unknown, height: unknown): { width: number; height: number } | null {
-  const w = Math.min(Math.round(num(width)), VIEWPORT_LIMITS.maxWidth);
-  const h = Math.min(Math.round(num(height)), VIEWPORT_LIMITS.maxHeight);
-  return w >= VIEWPORT_LIMITS.minWidth && h >= VIEWPORT_LIMITS.minHeight ? { width: w, height: h } : null;
-}
 
 export class Viewer {
   readonly id = randomUUID();
@@ -458,7 +451,7 @@ export class ViewerHub {
     return viewportFor(this.setting, latest ? { width: latest.width, height: latest.height } : null, this.host.pageLimit());
   }
 
-  /** Resizes the real window; a zoom, or a preset narrower than any Chrome window, is emulated, as DevTools' device mode does. */
+  /** Resizes the real window; a zoom, or a page narrower than any Chrome window or larger than the screen, is emulated, as DevTools' device mode does. */
   applyViewport(): Promise<void> {
     this.#applying = this.#applying.then(() => this.#apply(), () => this.#apply());
     return this.#applying;
@@ -469,7 +462,7 @@ export class ViewerHub {
     if (!browser) return;
     const size = this.viewport();
     const zoom = this.zoom;
-    const emulated = size.width < MIN_WINDOW_WIDTH || zoom !== 1;
+    const emulated = size.width < MIN_WINDOW_WIDTH || zoom !== 1 || !fitsScreen(size, this.host.pageLimit());
     const key = appliedKey(size, zoom);
     const active = this.host.active();
     if (this.#applied === key && browser.viewport?.width === Math.max(size.width, MIN_WINDOW_WIDTH)) return;

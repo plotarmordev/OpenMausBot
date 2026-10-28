@@ -2,7 +2,9 @@ import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import type { ServerResponse } from "node:http";
 import { promisify } from "node:util";
-import { BROWSER_VIEWPORT_ARGS, attachesToChrome, browserRuntimeEnv, ownsBrowserViewport, type BrowserRuntime } from "./browser-runtime.ts";
+import type { PageSize } from "./browser-page-size.ts";
+import { attachesToChrome, browserRuntimeEnv, type BrowserRuntime } from "./browser-runtime.ts";
+import { requestedSize } from "./browser/viewers/viewport.ts";
 import { closeBrowserSession } from "./browser-engine.ts";
 import { DialogWatch, localDevToolsUrl } from "./browser-dialogs.ts";
 import type { Cdp, CdpListeners } from "./browser-sites.ts";
@@ -10,11 +12,12 @@ import { relay } from "./browser-relay.ts";
 import { BROWSER_HELD_ELSEWHERE } from "../shared/browser-held.ts";
 
 const execute = promisify(execFile);
-const MAX_FRAME = 3 * 1024 * 1024;
-const MAX_BUFFER = 4 * 1024 * 1024;
+/** A frame of the largest page the view sizes (MAX_PAGE_PIXELS) is up to about 2.8 MB of base64 for a page of noise, and two
+ * may be on their way to a view at once. */
+const MAX_FRAME = 4 * 1024 * 1024;
+const MAX_BUFFER = 8 * 1024 * 1024;
 const HEARTBEAT_MS = 10_000;
 const COMMAND_TIMEOUT_MS = 30_000;
-const VIEWPORT_TIMEOUT_MS = 5_000;
 const STATUS_PROBE_MS = 10_000;
 const BUSY_RETRY_MS = [1_000, 2_000, 5_000];
 const BUSY_LIMIT_MS = 10 * 60_000;
@@ -165,7 +168,9 @@ export function browserRestartRefusal(interrupted: boolean, busyBots: ReadonlyAr
 
 type Action = { type: "take" | "release" | "restart" } | { type: "ack"; seq: number }
   | { type: "command"; args: string[] } | { type: "input"; message: ObjectValue } | { type: "inputs"; messages: ObjectValue[] }
-  | { type: "dialog"; accept: boolean; promptText?: string };
+  | { type: "dialog"; accept: boolean; promptText?: string }
+  /** The panel's size in CSS pixels, which the page fills; null for a collapsed panel, which leaves the page as it is. */
+  | { type: "resize"; size: PageSize | null };
 
 /** A move the next one replaces changes nothing the page keeps. */
 function withoutReplacedMoves(messages: ObjectValue[]): ObjectValue[] {
@@ -182,6 +187,10 @@ export function parseBrowserLiveAction(value: unknown): Action {
   if (!body) throw invalid();
   if (body.type === "take" || body.type === "release" || body.type === "restart") return { type: body.type };
   if (body.type === "ack" && integer(body.seq, 1, Number.MAX_SAFE_INTEGER)) return { type: "ack", seq: body.seq };
+  if (body.type === "resize") {
+    if (!number(body.width, 0, 100_000) || !number(body.height, 0, 100_000)) throw invalid();
+    return { type: "resize", size: requestedSize(body.width, body.height) };
+  }
   if (body.type === "dialog") {
     if (typeof body.accept !== "boolean" || (body.promptText !== undefined && !text(body.promptText, 4096))) throw invalid();
     return { type: "dialog", accept: body.accept, ...(body.promptText === undefined ? {} : { promptText: body.promptText }) };
@@ -243,6 +252,8 @@ interface OpenOptions {
   res: ServerResponse;
   /** The id of the view this panel had before its stream dropped: the one view that may carry on with its hold. */
   resume?: string | null;
+  /** The panel's size in CSS pixels, which the page fills from the start. */
+  size?: PageSize | null;
 }
 interface Viewer extends OpenOptions {
   id: string;
@@ -269,6 +280,8 @@ interface Viewer extends OpenOptions {
   unwatch: () => void;
   /** Set once its stream dropped: runs when its last in-flight action has finished. */
   idle?: () => void;
+  /** The panel size this view asked for last, and when, among all views. */
+  requested?: PageSize & { order: number };
 }
 /** A person's hold whose view's stream dropped. Agents stay paused until that panel reconnects, the person hands back, or it expires. */
 interface Parked {
@@ -294,6 +307,7 @@ export class BrowserLive {
   /** Each watched browser's page dialogs, and the views that watch them. */
   private readonly dialogs = new Map<string, { watch: DialogWatch; views: Set<string> }>();
   private readonly devTools?: BrowserLiveDevTools;
+  private order = 0;
   constructor({ runtime, devTools }: { runtime: BrowserRuntime; devTools?: BrowserLiveDevTools }) {
     this.runtime = runtime;
     this.devTools = devTools;
@@ -399,6 +413,7 @@ export class BrowserLive {
     viewer.abort.abort();
     viewer.unwatch();
     this.viewers.delete(viewer.id);
+    if (viewer.requested) this.fit(viewer.session);
     clearTimeout(viewer.heartbeat); clearTimeout(viewer.drainTimer);
     viewer.socket?.close();
     viewer.hiddenFrame = undefined; viewer.pendingFrame = undefined; viewer.unacked.clear();
@@ -415,6 +430,13 @@ export class BrowserLive {
       else viewer.res.end();
     }
     this.control(viewer.session);
+  }
+
+  /** The page fills the panel of the view that asked last, once the bot's running call ends; with no view left, the bot's next call gives it the standard size. */
+  private fit(session: string, fresh = false): void {
+    const latest = [...this.viewers.values()].filter((viewer) => viewer.session === session && viewer.requested)
+      .sort((a, b) => b.requested!.order - a.requested!.order)[0]?.requested;
+    void this.runtime.pageSizes.resize(session, latest ? { width: latest.width, height: latest.height } : null, fresh).catch(() => undefined);
   }
 
   /** It holds the browser and is still this person's view of this bot's session (not signed out or switched away). */
@@ -549,9 +571,6 @@ export class BrowserLive {
     const port = browserStreamPort(status);
     // `open` without a URL is an idempotent launch, never navigation away from the bot's page.
     if (status.connected !== true) await this.command(viewer, ["open"]);
-    if (ownsBrowserViewport(viewer.spec.env ?? {})) {
-      await this.command(viewer, [...BROWSER_VIEWPORT_ARGS], VIEWPORT_TIMEOUT_MS).catch(() => undefined);
-    }
     await this.runtime.launched(viewer.session, viewer.spec);
     return port;
   }
@@ -700,6 +719,8 @@ export class BrowserLive {
     }
     const viewer: Viewer = { ...options, id: randomUUID(), closed: false, blocked: false, pendingActions: 0, restarting: false, pressedKeys: new Map(), pressedButtons: new Set(), pointer: { x: 0, y: 0 }, unacked: new Map(), waiting: false, abort: new AbortController(), unwatch: () => {} };
     if (!this.current(viewer)) throw new BrowserLiveError("This browser view is no longer available.", 409);
+    // A view that opens while another holds the browser leaves the holder's page as it is.
+    if (options.size && !this.runtime.heldBy(options.session)) viewer.requested = { ...options.size, order: ++this.order };
     viewer.unwatch = this.runtime.watch(viewer.session, viewer.spec);
     this.viewers.set(viewer.id, viewer);
     options.res.once("close", () => this.close(viewer, true, true));
@@ -712,6 +733,7 @@ export class BrowserLive {
       if (parked && viewer.resume === parked.viewer.id) await this.claim(viewer, parked);
       if (!this.current(viewer)) throw new BrowserLiveError("This browser view is no longer available.", 409);
       viewer.port = port;
+      this.fit(viewer.session, true);
       await this.watchDialogs(viewer);
       if (!this.current(viewer)) throw new BrowserLiveError("This browser view is no longer available.", 409);
       const socket = new WebSocket(`ws://127.0.0.1:${port}/?pacing=ack&maxFps=15`);
@@ -796,6 +818,14 @@ export class BrowserLive {
     }
     if (action.type === "ack") {
       this.rendered(viewer, action.seq);
+      return { ok: true };
+    }
+    if (action.type === "resize") {
+      const holder = this.runtime.heldBy(viewer.session);
+      if (action.size && (!holder || holder === viewer.id)) {
+        viewer.requested = { ...action.size, order: ++this.order };
+        this.fit(viewer.session);
+      }
       return { ok: true };
     }
     if (action.type === "release") {

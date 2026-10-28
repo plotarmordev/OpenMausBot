@@ -113,11 +113,15 @@ export async function sharedPath(folder, relative = "") {
   const parts = relative.split("/").filter(part => part && part !== ".");
   for (const [index, part] of parts.entries()) {
     target = path.join(target, part);
-    try { if ((await fs.lstat(target)).isSymbolicLink()) throw new Error("Symbolic links cannot be followed in shared folders"); }
+    let stat = null;
+    try { stat = await fs.lstat(target); }
     catch (error) {
       if (error.code === "ENOTDIR") throw new Error(`${parts.slice(0, index).join("/")} is a file, not a folder`);
       if (error.code !== "ENOENT") throw error;
     }
+    if (stat?.isSymbolicLink()) throw new Error("Symbolic links cannot be followed in shared folders");
+    // Windows answers ENOENT, not ENOTDIR, past a file, so a file with more of the path after it is refused here.
+    if (stat && !stat.isDirectory() && index < parts.length - 1) throw new Error(`${parts.slice(0, index + 1).join("/")} is a file, not a folder`);
   }
   return target;
 }

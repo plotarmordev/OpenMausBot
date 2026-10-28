@@ -361,7 +361,7 @@ jobs:
           [ -f "$res/cloudflared/cloudflared.exe" ] || { echo "::error::missing cloudflared.exe"; exit 1; }
           [ -f "$res/licenses/cloudflared-LICENSE.txt" ] || { echo "::error::missing cloudflared license"; exit 1; }
           [ -f "$res/licenses/cloudflared-README.md" ] || { echo "::error::missing cloudflared provenance"; exit 1; }
-          expected=c29eee2b121f5436a642eed69fd9767da7e7b8c510fa50aaa130337f931357b5
+          expected=$(node --input-type=module -e "import { CLOUDFLARED_ASSETS } from './scripts/prepare-cloudflared.mjs'; console.log(Object.values(CLOUDFLARED_ASSETS).find((asset) => asset.name === 'cloudflared-windows-amd64.exe').binarySha256)")
           actual=$(sha256sum "$res/cloudflared/cloudflared.exe" | cut -d' ' -f1)
           [ "$actual" = "$expected" ] || { echo "::error::cloudflared hash is $actual"; exit 1; }
           "$res/cloudflared/cloudflared.exe" version | grep -Fq "cloudflared version 2026.10.3 " || {

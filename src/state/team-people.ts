@@ -21,6 +21,10 @@ export function setTeamPeople(next: TeamPeople | null): void {
 }
 const publish = setTeamPeople;
 
+export function currentTeamPeople(): TeamPeople | null {
+  return snapshot;
+}
+
 export function useTeamPeople(): TeamPeople | null {
   return useSyncExternalStore((listener) => {
     listeners.add(listener);
@@ -50,6 +54,14 @@ export function ownerOf(bot: { createdBy?: string; reportsTo?: string }, team: P
   const email = botOwner(bot);
   if (!email) return null;
   return team?.people.find((person) => person.email === email) ?? { email, name: nameFromEmail(email), role: "member" };
+}
+
+/** The person every bot in a department reports to, when they all report to one person. */
+export function departmentOwner(bots: ReadonlyArray<{ createdBy?: string; reportsTo?: string }>, team: TeamPeople | null): TeamPerson | null {
+  if (!team || bots.length === 0) return null;
+  const owners = bots.map((bot) => ownerOf(bot, team));
+  const first = owners[0];
+  return first && owners.every((owner) => owner?.email === first.email) ? first : null;
 }
 
 export function mayChangeOwner(bot: { createdBy?: string; reportsTo?: string; defaultBot?: { person?: string } }, team: TeamPeople | null): boolean {

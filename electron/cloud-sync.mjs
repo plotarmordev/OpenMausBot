@@ -11,7 +11,7 @@ import { CloudAsleepError, createCloudPowerGate } from "./cloud-power.mjs";
 import { fetchOutputs, newReport, passStopper, shareFolder } from "./cloud-sync-engine.mjs";
 import { openSyncState } from "./cloud-sync-state.mjs";
 import { watchFolder } from "./cloud-sync-scan.mjs";
-import { RECHECK_MS, copiedLent, lentReport, planLentCopies, reconcileLent } from "./lent-folders.mjs";
+import { RECHECK_MS, copiedLent, folderKey as pathKey, lentReport, planLentCopies, reconcileLent, sameFolderOn } from "./lent-folders.mjs";
 import { applyStaged } from "./lent-staged.mjs";
 import { lentGit } from "./lent-git.mjs";
 
@@ -23,10 +23,6 @@ const CHECK_FILES_MAX = 100_000, CHECK_MS = 3_000;
 // Folders that hold keys or sign-ins, including the AI CLIs' own homes (their login files live there).
 const PRIVATE = [".ssh", ".aws", ".gnupg", ".kube", ".docker", ".config", ".local", ".npm", "Library", "AppData", ".openmausbot", ".claude", ".codex", ".gemini", ".grok"];
 
-const pathKey = (value, platform) => {
-  const slashed = value.replaceAll("\\", "/").replace(/\/+$/, "");
-  return platform === "win32" || platform === "darwin" ? slashed.toLowerCase() : slashed;
-};
 const within = (child, parent, platform) => pathKey(child, platform) === pathKey(parent, platform) || pathKey(child, platform).startsWith(`${pathKey(parent, platform)}/`);
 
 function readSettings(file) {
@@ -303,7 +299,7 @@ export function createCloudFilesService({
       return reconcileLending(cloud, summary);
     }
     const folders = lendingNow.off ? [] : lendingNow.folders;
-    const same = (a, b) => pathKey(a, platform) === pathKey(b, platform);
+    const same = sameFolderOn(platform);
     const copied = copiedLent(settings.shared, folders, same);
     const checks = new Map();
     for (const folder of folders) {

@@ -133,6 +133,23 @@ describe("surfacePrompt", () => {
     expect(surfacePrompt({ computer: "local", browser: false })).toMatch(/tell them it is on this computer/);
   });
 
+  it("on the person's own computer, sends web work to the bot's own browser first and their screen last", () => {
+    const beside = surfacePrompt({ computer: "local", browser: true });
+    expect(beside).toMatch(/Web tasks → the built-in browser/);
+    expect(beside).toContain("This computer is the person's own: their screen, their apps and the browsers they are signed in to.");
+    expect(beside).toContain("use, in this order: your built-in browser, a cloud computer if select_computer offers one, a connected app.");
+    expect(beside).toContain("Use their own browser or screen only when the task needs their own signed-in session and nothing else works.");
+    expect(beside).toContain("OpenMausBot asks them once whether you may, at every approval level");
+    expect(beside).toContain("never mention DevTools, CDP, debugging ports, profiles, grants, binding, attaching, endpoints or drivers");
+    const alone = surfacePrompt({ computer: "local", browser: false });
+    expect(alone).not.toMatch(/web pages included/);
+    expect(alone).toContain("use, in this order: web search and fetching pages, a cloud computer if select_computer offers one, a connected app.");
+    expect(alone).toContain("Use their own browser or screen only when the task needs their own signed-in session");
+    // Other computers are the bot's own: their wording is unchanged.
+    expect(surfacePrompt({ computer: "vm", browser: false })).not.toContain("the person's own");
+    expect(surfacePrompt({ computer: "cloud", browser: true })).not.toContain("the person's own");
+  });
+
   it("names only the browser tab when it is the only surface", () => {
     const text = surfacePrompt({ computer: null, browser: true });
     expect(text).toMatch(/happens in the built-in browser tab/);

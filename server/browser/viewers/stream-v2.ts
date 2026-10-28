@@ -13,7 +13,8 @@ import { WebSocketServer, type RawData, type WebSocket } from "ws";
 
 import { BrowserHostError, SETUP_COMMAND } from "../chrome/host-setup.ts";
 import type { BrowserService, BrowserTarget } from "../service.ts";
-import { FRAME_CAP_LIMITS, requestedSize, type Viewer, type ViewerOptions, type ViewerOutput } from "./core.ts";
+import { FRAME_CAP_LIMITS, type Viewer, type ViewerOptions, type ViewerOutput } from "./core.ts";
+import { requestedSize } from "./viewport.ts";
 import { displayUrl } from "./live-v1.ts";
 
 /** Close codes the stream client acts on. */

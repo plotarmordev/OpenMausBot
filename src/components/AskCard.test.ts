@@ -2,12 +2,18 @@ import { createElement, type KeyboardEvent } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { AskCard, AskSettledLine, moveChoiceFocus } from "./AskCard";
+const mode = vi.hoisted(() => ({ advanced: true }));
+vi.mock("@/lib/interface-mode", () => ({ useAdvancedMode: () => mode.advanced }));
 
-afterEach(() => vi.unstubAllGlobals());
+import { AskCard, AskChoiceLetter, AskSettledLine, moveChoiceFocus } from "./AskCard";
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+  mode.advanced = true;
+});
 
 describe("AskCard", () => {
-  it("leads with an accent title and an optional line on why", () => {
+  it("leads with an accent title and an optional line on why in Advanced mode", () => {
     const html = renderToStaticMarkup(createElement(AskCard, {
       ariaLabel: "Plan",
       icon: null,
@@ -24,6 +30,23 @@ describe("AskCard", () => {
     expect(html).toContain("ring-1 ring-composer-ring");
     expect(html).not.toContain("border-accent");
     expect(html).not.toContain("shadow");
+  });
+
+  it("is Simple mode's question card: the composer's surface, 560 wide, rounded 20, a 16/22 semibold title in secondary ink", () => {
+    mode.advanced = false;
+    const html = renderToStaticMarkup(createElement(AskCard, { ariaLabel: "Plan", icon: null, title: "Choose a plan", explanation: "Why it asks." }));
+    const card = html.match(/^<div[^>]*class="([^"]*)"/)![1]!.split(" ");
+    expect(card).toEqual(expect.arrayContaining(["bg-composer", "ring-[0.5px]", "ring-ink/10", "max-w-[560px]", "rounded-[24px]", "w-full"]));
+    expect(card).not.toContain("rounded-2xl");
+    expect(html).toMatch(/text-\[16px\] font-semibold leading-\[22px\] text-ink-secondary"><bdi dir="auto">Choose a plan</);
+    expect(html).not.toContain("text-accent-text\"><bdi");
+  });
+
+  it("letters each Simple choice in a 24px rounded box, greyed when quiet", () => {
+    const box = (props: Parameters<typeof AskChoiceLetter>[0]) => renderToStaticMarkup(createElement(AskChoiceLetter, props)).match(/class="([^"]*)"/)![1]!.split(" ");
+    expect(box({ letter: "A" })).toEqual(expect.arrayContaining(["size-6", "rounded-[7px]", "bg-ink/[0.06]", "text-[12px]", "text-ink-secondary"]));
+    expect(box({ letter: "A", quiet: true })).toContain("text-ink-tertiary");
+    expect(box({ letter: "A", picked: true })).toContain("text-ink");
   });
 
   it("offers a dismiss button only with a name for it", () => {

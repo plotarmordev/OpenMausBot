@@ -6,7 +6,7 @@ import { join } from "node:path";
 import test from "node:test";
 import { createCloudFilesService } from "./cloud-sync.mjs";
 import { fakeCloud, sha } from "./fixtures/cloud-sync-fake-cloud.mjs";
-import { COPY_MAX_BYTES, lendingForFiles, lentReport, planLentCopies, reconcileLent } from "./lent-folders.mjs";
+import { COPY_MAX_BYTES, folderKey, lendingForFiles, lentReport, planLentCopies, reconcileLent, sameFolderOn } from "./lent-folders.mjs";
 
 const GB = 1024 ** 3;
 const AT = new Date(2026, 9, 27, 12).getTime();
@@ -78,7 +78,8 @@ test("lending for Files lends a folder read only on top of what is lent, and sto
 });
 
 function setup(t) {
-  const dir = realpathSync(mkdtempSync(join(tmpdir(), "omb-lent-folders-")));
+  // The native real path, as lending stores a lent folder's (see lent-staged.node-test.mjs).
+  const dir = realpathSync.native(mkdtempSync(join(tmpdir(), "omb-lent-folders-")));
   const home = join(dir, "home");
   const notes = join(home, "Notes");
   mkdirSync(notes, { recursive: true });
@@ -229,4 +230,20 @@ test("a lent GitHub repository's copy starts as My Cloud's clone: Files waits fo
   await s.service.pass();
   assert.deepEqual(sent(), [".env"], "only what GitHub doesn't have: the ignored config file");
   assert.equal(s.service.state().shared[0].status, "synced");
+});
+
+test("on Windows a folder is one folder whatever its slashes, trailing separator or case", () => {
+  assert.equal(folderKey("C:\\Users\\Ash\\Clients\\", "win32"), "c:/users/ash/clients");
+  assert.equal(folderKey("\\\\server\\share\\Docs", "win32"), "//server/share/docs");
+  assert.equal(sameFolderOn("win32")("C:\\Users\\Ash\\Clients", "c:/users/ash/CLIENTS/"), true);
+  assert.equal(sameFolderOn("darwin")("/Users/Ash/Clients", "/users/ash/clients"), true);
+  assert.equal(sameFolderOn("linux")("/home/ash/Clients", "/home/ash/clients"), false, "Linux tells case apart");
+  // The Files page shared C:\Users\Ash\Clients before; lending reports it with another spelling: one folder, one copy.
+  const clients = { id: randomUUID(), path: "c:\\users\\ash\\Clients", name: "Clients", write: false };
+  const legacy = { key: "k-1", id: "pc-1", pcPath: "C:\\Users\\Ash\\Clients", name: "Clients", deletes: null };
+  const plan = new Map([[clients.id, { copy: true }]]);
+  const { shared, dropped } = reconcileLent({ shared: [legacy], folders: [clients], plan, sameFolder: sameFolderOn("win32"), now: AT, newKey: () => "k-new" });
+  assert.deepEqual(shared, [{ ...legacy, lentId: clients.id, write: false }]);
+  assert.deepEqual(dropped, []);
+  assert.equal(reconcileLent({ shared: [legacy], folders: [clients], plan, sameFolder: sameFolderOn("linux"), now: AT, newKey: () => "k-new" }).shared.length, 2);
 });

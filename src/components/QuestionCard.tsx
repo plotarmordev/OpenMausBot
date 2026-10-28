@@ -3,6 +3,7 @@ import { useMemo, useState, type KeyboardEvent } from "react";
 import { Check, X } from "lucide-react";
 import { useStore, type Bot, type Message } from "@/state/store";
 import { cn } from "@/lib/cn";
+import { useAdvancedMode } from "@/lib/interface-mode";
 import { t } from "@/lib/i18n";
 import {
   answerWithoutPreamble,
@@ -12,10 +13,16 @@ import {
   type AskQuestion,
 } from "../../shared/ask-question";
 import {
+  ASK_CHOICE_LABEL,
+  ASK_CHOICE_LIST,
+  ASK_CHOICE_ROW,
+  ASK_SOMETHING_ELSE_FIELD,
+  AskSomethingElse,
   ASK_PRIMARY_BUTTON,
   ASK_QUIET_BUTTON,
   ASK_SMALL_PILL,
   AskCard,
+  AskChoiceLetter,
   AskSettledLine,
   moveChoiceFocus,
   returnFocusToComposer,
@@ -91,12 +98,16 @@ export function QuestionCard({
   threadId,
   bot,
   message,
+  typedPast = false,
 }: {
   threadId: string;
   bot?: Pick<Bot, "name">;
   message: Message;
+  /** The person has written in the chat since: Simple mode quiets the choices, which still answer. */
+  typedPast?: boolean;
 }) {
   const { dispatch } = useStore();
+  const simple = !useAdvancedMode();
   const card = message.card;
   const questions = card?.questionRequest?.questions ?? [];
   const [drafts, setDrafts] = useState<Record<number, Draft>>({});
@@ -178,10 +189,11 @@ export function QuestionCard({
         </AskSettledLine>
       );
     }
-    return <SettledQuestion questions={questions} answer={answer} />;
+    return <SettledQuestion questions={questions} answer={answer} simple={simple} />;
   }
 
   const single = questions.length === 1;
+  const quiet = simple && typedPast && draft.picked.length === 0;
   const named = bot ? t("question.card.named", { name: bot.name }) : t("question.card.title");
   const questionIsTitle = single && current.question.length <= TITLE_MAX;
   const title = questionIsTitle ? current.question : single && current.header ? current.header : named;
@@ -211,7 +223,7 @@ export function QuestionCard({
         <>
           <span className="me-auto text-[12px] text-ink-tertiary">{t("question.status.waiting")}</span>
           <button type="button" onClick={submit} disabled={!complete} className={ASK_PRIMARY_BUTTON}>
-            {questions.length > 1 ? t("question.submitAll") : t("question.submit")}
+            {simple && multi && questions.length === 1 ? t("question.done") : questions.length > 1 ? t("question.submitAll") : t("question.submit")}
           </button>
         </>
       )}
@@ -253,7 +265,8 @@ export function QuestionCard({
           role={multi ? "group" : "radiogroup"}
           aria-label={current.question}
           onKeyDown={moveChoiceFocus}
-          className="divide-y divide-ink/[0.12] overflow-hidden rounded-2xl border border-ink/[0.12]"
+          data-quiet={quiet || undefined}
+          className={simple ? ASK_CHOICE_LIST : "divide-y divide-ink/[0.12] overflow-hidden rounded-2xl border border-ink/[0.12]"}
         >
           {current.options.map((option, index) => {
             const picked = draft.picked.includes(option.label);
@@ -266,11 +279,11 @@ export function QuestionCard({
                 aria-checked={picked}
                 aria-keyshortcuts={choiceKey(index)}
                 onClick={() => choose(option.label)}
-                className={cn(CHOICE_ROW, picked ? CHOICE_ROW_PICKED : CHOICE_ROW_IDLE)}
+                className={cn(simple ? ASK_CHOICE_ROW : CHOICE_ROW, picked ? CHOICE_ROW_PICKED : CHOICE_ROW_IDLE)}
               >
-                <KeyBadge letter={choiceKey(index)} picked={picked} />
+                {simple ? <AskChoiceLetter letter={choiceKey(index)} picked={picked} quiet={quiet} /> : <KeyBadge letter={choiceKey(index)} picked={picked} />}
                 <span className="min-w-0 flex-1">
-                  <span className="block break-words text-[15px] leading-6 text-ink [unicode-bidi:plaintext]">{option.label}</span>
+                  <span className={simple ? cn(ASK_CHOICE_LABEL, "block", quiet ? "text-ink-tertiary" : "text-ink") : "block break-words text-[15px] leading-6 text-ink [unicode-bidi:plaintext]"}>{option.label}</span>
                   {option.description && (
                     <span className="block break-words text-[13px] leading-snug text-ink-secondary [unicode-bidi:plaintext]">{option.description}</span>
                   )}
@@ -282,7 +295,28 @@ export function QuestionCard({
         </div>
       )}
       {/* ACP engines answer with an option id, never text, so an options-only question has no free-text field. */}
-      {freeText && (
+      {freeText && simple && current.options.length > 0 && (
+        <div className={ASK_CHOICE_LIST}>
+          <AskSomethingElse>
+            <textarea
+              dir="auto"
+              rows={1}
+              value={draft.custom}
+              maxLength={MAX_CUSTOM_ANSWER}
+              aria-label={t("question.somethingElse")}
+              onChange={(event) => type(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key !== "Enter" || event.shiftKey || event.nativeEvent.isComposing) return;
+                event.preventDefault();
+                if (complete) submit();
+              }}
+              placeholder={t("question.somethingElse")}
+              className={ASK_SOMETHING_ELSE_FIELD}
+            />
+          </AskSomethingElse>
+        </div>
+      )}
+      {freeText && !(simple && current.options.length > 0) && (
         <textarea
           dir="auto"
           rows={1}
@@ -295,7 +329,7 @@ export function QuestionCard({
             event.preventDefault();
             if (complete) submit();
           }}
-          placeholder={current.options.length ? t("question.otherPlaceholder") : t("question.answerPlaceholder")}
+          placeholder={current.options.length ? t(simple ? "question.somethingElse" : "question.otherPlaceholder") : t("question.answerPlaceholder")}
           className={cn(
             "block max-h-40 min-h-11 w-full resize-none rounded-xl border border-ink/[0.12] bg-inset px-3 py-2.5 text-[15px] leading-6 text-ink outline-none placeholder:text-ink-tertiary focus:border-accent/70 [field-sizing:content]",
             current.options.length > 0 && "mt-2.5",
@@ -306,7 +340,7 @@ export function QuestionCard({
   );
 }
 
-function SettledQuestion({ questions, answer }: { questions: readonly AskQuestion[]; answer: string | null }) {
+function SettledQuestion({ questions, answer, simple = false }: { questions: readonly AskQuestion[]; answer: string | null; simple?: boolean }) {
   const [open, setOpen] = useState(false);
   const line = settledQuestionLine(questions, answer);
   const full = answer ? answerWithoutPreamble(answer) : "";
@@ -324,7 +358,7 @@ function SettledQuestion({ questions, answer }: { questions: readonly AskQuestio
         </div>
       )}
     >
-      <span>{line.label}</span>
+      <span>{simple && answer ? t("question.yourAnswer") : line.label}</span>
       {line.value && <span className="text-ink-secondary"> · {line.value}</span>}
     </AskSettledLine>
   );

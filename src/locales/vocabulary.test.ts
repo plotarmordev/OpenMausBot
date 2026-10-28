@@ -27,7 +27,8 @@ const RETIRED: ReadonlyArray<readonly [string, RegExp, string]> = [
   ["T3", /\bT3\b/, "no other app's name"],
 ];
 
-const OWN_KEY = /Boat (?:API key|account|key|token|plan|provider|credentials|setup|is not configured|is not connected|is a paid service)|boat\.dev|\b(?:Connect|Configure) Boat\b/g;
+// Boat makes the cloud desktops and is credited where they appear ("from Boat", "by Boat"); it never names one desktop.
+const OWN_KEY = /Boat (?:API key|account|key|token|plan|provider|credentials|setup|is not configured|is not connected|is a paid service)|boat\.dev|\b(?:Connect|Configure) Boat\b|\b(?:from|by) Boat\b/g;
 const BOAT = /\bBoats?\b/;
 
 function retiredIn(text: string, boat: RegExp = BOAT): string[] {
@@ -39,7 +40,6 @@ function retiredIn(text: string, boat: RegExp = BOAT): string[] {
 const PENDING_KEY_PREFIXES: string[] = [];
 const EN_ALLOWED: Record<string, string> = {
   "botAccess.cloud.boat": "the own-key provider picker names its two providers, Boat and a VPS",
-  "botAccess.cloud.hostedDescription": "the own-key provider picker names its two providers, Boat and a VPS",
   "botAccess.cloud.hostedBackendDescription": "the own-key provider picker names its two providers, Boat and a VPS",
   "botAccess.cloud.vpsAutoDescription": "the own-key provider picker's VPS line names its Cloud choice",
 };
@@ -183,6 +183,7 @@ describe("one name per thing", () => {
       "Sign in to MausBot Cloud", "Pro active · verified by MausBot Cloud", "Restart OpenMausBot", "locked by another OpenMausBot process",
       "set OMB_PUBLIC_IPV4", "Open My Cloud", "Open the Cloud", "Choose Cloud desktop to wake", "Auto, Cloud desktop or Browser",
       "Included with your Cloud plan", "Add a Boat API key in Settings → API keys", "Connect Boat", "Check boat.dev",
+      "Bots here can get their own cloud desktops from Boat, a paid service", "Cloud desktops by Boat",
       "Local VM", "Open your Plan page",
     ]) expect(retiredIn(good), good).toEqual([]);
   });

@@ -3,10 +3,11 @@ import { join } from "node:path";
 
 import { writeFileAtomic } from "./atomic.ts";
 import { DATA_DIR } from "./config.ts";
-import { CaptureBuffer, captureItemLimit, capturePrompt, captureSize, newCandidates, parseCandidates, worthCapturing, type Candidate, type CaptureBatch, type CaptureTurn } from "./memory-capture.ts";
+import { CaptureBuffer, captureItemLimit, capturePrompt, captureSize, newCandidates, parseCandidates, statedInConversation, worthCapturing, type Candidate, type CaptureBatch, type CaptureTurn } from "./memory-capture.ts";
 import { DREAM_FIRST_LOOKBACK_MS, DREAM_MIN_CONVERSATIONS, dreamPrompt, parseDream, type DreamConversation } from "./memory-dream.ts";
 import { factIdentity, lineFactIdentity, notebookIdentities } from "./memory-entries.ts";
 import { mergeTopicText } from "./memory-topics.ts";
+import { isForgotten } from "./profile-learned.ts";
 import { applyMoves, MAX_MOVES, organizeCandidates, organizePrompt, parseMoves } from "./memory-organize.ts";
 import { recordMemoryChange } from "./memory-journal.ts";
 import { applyTidy, contradictionCandidates, contradictionPrompt, parseContradictions, planChanges, planTidy, type Contradiction } from "./memory-tidy.ts";
@@ -298,7 +299,7 @@ export function createMemoryUpkeep(deps: UpkeepDeps): MemoryUpkeep {
   function fileCandidates(botId: string, candidates: readonly Candidate[], filed: { source: string; via: string; threadId?: string }): { added: number; topics: number; kept: { text: string; where: string }[] } {
     const before = readRaw(botId, "MEMORY.md");
     const archiveBefore = readRaw(botId, ARCHIVE_PATH);
-    const fresh = newCandidates(candidates, before ?? "");
+    const fresh = newCandidates(candidates, before ?? "").filter((candidate) => !isForgotten(candidate.text));
     const { source, via, threadId } = filed;
     const kept: { text: string; where: string }[] = [];
     let added = 0;
@@ -407,7 +408,11 @@ export function createMemoryUpkeep(deps: UpkeepDeps): MemoryUpkeep {
     if (!upkeepEnabled(deps.bot(id))) return off;
     const still = conversations.map((conversation) => allowed(conversation.threadId));
     if (!still.some(Boolean)) return refused;
-    const filed = attribute(parseCandidates(answer, today, captureItemLimit(conversations.length)), conversations, still);
+    const filed = attribute(parseCandidates(answer, today, captureItemLimit(conversations.length)), conversations, still).flatMap((item) => {
+      const turns = conversations[item.at]!.turns;
+      if (isForgotten(item.candidate.text) || !statedInConversation(item.candidate, turns, false)) return [];
+      return [{ ...item, aboutMe: item.aboutMe && statedInConversation(item.candidate, turns, true) }];
+    });
     const { added, topics } = writing(id, () => {
       let added = 0;
       let topics = 0;

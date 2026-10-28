@@ -18,7 +18,8 @@
 //     | stall-after-text | stall-after-tool (then silent forever) | slow-tool (silent for FAKE_ACP_TOOL_MS, or until
 //       FAKE_ACP_TOOL_GATE exists when set)
 //     | quiet-then-answer (silent for FAKE_ACP_QUIET_MS; with QWEN_HOME, append FAKE_ACP_QWEN_LOG lines to
-//       Qwen's debug log every FAKE_ACP_LOG_EVERY_MS) | mcp-tools (list each mcpServers entry's tools with
+//       Qwen's debug log every FAKE_ACP_LOG_EVERY_MS; with XDG_DATA_HOME, append FAKE_ACP_OPENCODE_LOG lines once to
+//       OpenCode's shared log, {session} replaced by the session id) | mcp-tools (list each mcpServers entry's tools with
 //       grok 1.0.25's initialize, or FAKE_ACP_MCP_HANDSHAKE; FAKE_ACP_MCP_SCHEMA_BYTES=1 adds each schema's length)
 //     | lend-question (list_shared_computers around a question)
 //     | list-peers (list_bots through the agents MCP; keeps the first agents server it is offered, like Hermes)
@@ -899,6 +900,15 @@ function handle(msg: any) {
           let i = 0;
           logTimer = setInterval(() => {
             appendFileSync(`${dir}/${liveSession}.txt`, `${new Date().toISOString()} ${lines[Math.min(i++, lines.length - 1)]}\n`);
+          }, Number(process.env.FAKE_ACP_LOG_EVERY_MS ?? 100));
+        }
+        const openCodeLines: string[] = process.env.FAKE_ACP_OPENCODE_LOG ? JSON.parse(process.env.FAKE_ACP_OPENCODE_LOG) : [];
+        if (openCodeLines.length && process.env.XDG_DATA_HOME && liveSession) {
+          const dir = `${process.env.XDG_DATA_HOME}/opencode/log`;
+          mkdirSync(dir, { recursive: true });
+          const session = liveSession;
+          setTimeout(() => {
+            appendFileSync(`${dir}/opencode.log`, openCodeLines.map((line) => `${line.replaceAll("{session}", session)}\n`).join(""));
           }, Number(process.env.FAKE_ACP_LOG_EVERY_MS ?? 100));
         }
         setTimeout(() => {

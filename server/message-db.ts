@@ -606,7 +606,7 @@ export function attentionRows(since: number): AttentionRow[] {
   return db().prepare(
     `${columns} FROM messages INDEXED BY messages_work_at WHERE ${WORK_KINDS} AND kind = 'options' AND at >= ? ` +
     "AND json_extract(json, '$.card.answered') IS NULL AND coalesce(json_extract(json, '$.card.dismissed'), 0) = 0 " +
-    "AND coalesce(json_extract(json, '$.card.expired'), 0) = 0 AND json_extract(json, '$.helperIntro') IS NULL " +
+    "AND coalesce(json_extract(json, '$.card.expired'), 0) = 0 AND json_extract(json, '$.helperIntro') IS NULL AND json_extract(json, '$.inbox') IS NULL " +
     `UNION ALL ${columns} FROM messages INDEXED BY messages_failed_at WHERE ${FAILED_CALL} AND at >= ? AND json_extract(json, '$.tool.ok') = 0 ` +
     `UNION ALL ${columns} FROM messages INDEXED BY messages_work_at WHERE ${WORK_KINDS} AND kind = 'digest' AND at >= ? ` +
     "AND json_extract(json, '$.turnSucceeded') = 1 ORDER BY at",

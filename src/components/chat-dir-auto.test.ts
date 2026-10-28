@@ -13,7 +13,7 @@ function expectDirAuto(file: string, marker: string) {
 
 describe("chat text follows the writer's direction", () => {
   it("sets dir=auto on the chat inputs and previews that were still forced ltr", () => {
-    expectDirAuto("ChatView.tsx", "value={draft}");
+    expectDirAuto("BubbleEditor.tsx", "value={draft}");
     expectDirAuto("OptionCard.tsx", "value={custom}");
     expectDirAuto("QuestionCard.tsx", "value={draft.custom}");
     expectDirAuto("CitationUI.tsx", "value={comment}");
