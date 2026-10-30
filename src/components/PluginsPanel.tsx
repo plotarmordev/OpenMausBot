@@ -32,6 +32,7 @@ import { HighLevelCard } from "./HighLevelCard";
 import { X_CARD_SEARCH, XCard } from "./XCard";
 import { mergeCompleteConnectorStatus, mergeCurrentConnectorStatus, onlyLatestConnectorResponses } from "@/lib/connector-status-merge";
 import { openBotSettings } from "./bot-panel/panel-link";
+import { openKeySettings } from "./keys/key-focus";
 import { ServiceIcon, type ToolkitCard } from "./ServiceIcon";
 export { ServiceIcon, type ToolkitCard } from "./ServiceIcon";
 
@@ -638,10 +639,7 @@ export function PluginsPanel() {
                   setupNotice.tone === "info" && "text-ink",
                   remoteClient && "hidden",
                 )}
-                onClick={() => {
-                  close();
-                  dispatch({ type: "toggleAppSettings", open: true, section: "connections" });
-                }}
+                onClick={() => { close(); dispatch(openKeySettings("composio")); }}
               >
                 {t("connectors.openSettings")}
               </button>

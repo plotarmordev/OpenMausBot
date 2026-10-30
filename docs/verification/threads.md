@@ -12,6 +12,22 @@ two different saved model choices, an optional Email folder, and a Launch team
 group with separate histories. New turns deliberately remain running so that
 switching and Stop can be exercised without a real provider or account.
 
+Quota-card resends recover capacity provenance from the card's persisted runtime
+root, including after a server restart. Only its `capacity: "person"` marker
+exempts the resend; a missing root or marker remains capped. Computer-selection
+continuations retain the original request's marker. Peer and bot work never
+inherit it.
+
+The durable queue preserves order within each capacity class and never coalesces
+marked and unmarked messages. A marked person message can pass an ordinary
+message waiting for capacity; the ordinary message retains its pending status.
+The restart fixtures check provider prompts and durable dispatch status:
+
+```sh
+pnpm exec vitest run --no-file-parallelism server/quota-capacity-restart.e2e.test.ts server/mixed-capacity-restart.e2e.test.ts
+pnpm exec vitest run server/group-local-vm.e2e.test.ts -t "keeps computer continuation"
+```
+
 ## Check the real UI
 
 1. Expand Pepper and open Triage Gmail. Confirm its conversation and model.

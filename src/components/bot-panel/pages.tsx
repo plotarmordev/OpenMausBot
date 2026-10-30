@@ -1,7 +1,7 @@
 import { useState, type ReactNode } from "react";
 import { FolderOpen, Plus } from "lucide-react";
 
-import { withBotApp } from "@/lib/bot-app-access";
+import { appSwitchPatch } from "@/lib/bot-app-access";
 import { skillsLibraryEnabled } from "@/lib/feature-flags";
 import { t } from "@/lib/i18n";
 import { MEMORY_INDEX, saveMemoryDoc } from "@/lib/memory";
@@ -19,7 +19,8 @@ import { useBotApps, type BotApp } from "../bot-settings/useBotApps";
 import type { useBotSettingsDerived } from "../bot-settings/useBotSettingsDerived";
 import { RoutineList } from "../routines/RoutineList";
 import { BrowserLogins } from "./browser-logins";
-import { useOpenComputer } from "./ComputerTab";
+import { useOpenComputer, WherePage } from "./ComputerTab";
+import { SettingsPage } from "./SettingsPage";
 import { memoryNotes, withMemoryNote, withoutMemoryNote } from "./memory-notes";
 import type { SimplePageId } from "./page-registry";
 import { BotSwitch, buttonCls, Card, LinkRow, NoteRow, RadioRow, rowCls, SwitchRow, TextRow, TrashButton } from "./rows";
@@ -40,22 +41,13 @@ function errorText(error: unknown, fallback: string): string {
   return error instanceof Error && error.message ? error.message : fallback;
 }
 
-/** One switch per connected app; the first app switched on while apps are off for the bot turns them on with only
- * that app granted. */
 export function AppsPage({ bot, derived }: PageContext) {
   const { dispatch } = useStore();
   const apps = useBotApps(bot);
-  const { patch, canUseConnectedApps, connectedAppsEnabled } = derived;
+  const { patch, canUseConnectedApps } = derived;
 
   const toggle = (app: BotApp) => {
-    const on = app.scope === null;
-    const connectorScopes = on && !connectedAppsEnabled && !bot.connectorScopes
-      ? { apps: { [app.slug]: "write" as const } }
-      : withBotApp(bot.connectorScopes, apps.connectedSlugs, app.slug, on);
-    const next = {
-      ...(connectorScopes ? { connectorScopes } : {}),
-      ...(on && !connectedAppsEnabled ? { composio: true } : {}),
-    };
+    const next = appSwitchPatch(bot, apps.connectedSlugs, app.slug, app.scope === null);
     if (Object.keys(next).length > 0) patch(next);
   };
   const note = !canUseConnectedApps
@@ -388,8 +380,17 @@ export function BrowserPage({ bot, derived }: PageContext) {
   return <BrowserLogins bot={bot} browserEnabled={derived.browserEnabled} onOpenBrowser={() => openComputer("browser")} />;
 }
 
-export function PageBody({ page, ...context }: PageContext & { page: SimplePageId }): ReactNode {
+export function PageBody({ page, onOpen, editingInstructions, onEditInstructions, ...context }: PageContext & {
+  page: SimplePageId;
+  onOpen?: (page: SimplePageId) => void;
+  editingInstructions?: boolean;
+  onEditInstructions?: (open: boolean) => void;
+}): ReactNode {
   switch (page) {
+    case "settings":
+      return <SettingsPage {...context} onOpen={onOpen} editingInstructions={editingInstructions} onEditInstructions={onEditInstructions} />;
+    case "where":
+      return <WherePage {...context} />;
     case "apps":
       return <AppsPage {...context} />;
     case "routines":

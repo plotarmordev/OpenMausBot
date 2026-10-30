@@ -1,6 +1,8 @@
 // The trigger tools a bot uses from chat: list_triggers, list_trigger_events, create_trigger and manage_trigger. Every
 // change applies at once (no confirmation card); the harness records it on the automation's card with Pause, Edit and Undo.
 import { normalizeCronSchedule } from "../../shared/routine-schedule.ts";
+import { plainTimeZone } from "../../shared/plain-time-zone.ts";
+import { plainWhen } from "../plain-time.ts";
 
 import type { ToolCallContext, ToolCallResult } from "./agents-call.ts";
 import { WEEKDAYS } from "./agents-catalog.ts";
@@ -312,14 +314,26 @@ function addressText(r: Json): string {
   return `\n\nIts private address: ${JSON.stringify(r.address, null, 2)}`;
 }
 
-function appliedText(r: Json, done: string): ToolCallResult {
+/** What the bot should say about a schedule it just set: what it assumed, with the time zone and the next run in words. */
+function closingWords(r: Json, action: string): string {
+  const zone = typeof r.timeZone === "string" ? r.timeZone : "";
+  const plain = zone ? plainTimeZone(zone) : "";
+  const next = typeof r.nextRunAt === "number" && zone ? `${plainWhen(r.nextRunAt, zone)} ${plain}` : "";
+  if (next && action === "create") {
+    return `In a sentence or two of plain words, tell the person what you set up and what you assumed: when it runs, saying the time zone as "${plain}", never as a zone id; where its results will appear (here in this chat); what each run covers; and that the first run is ${next}.`;
+  }
+  if (next && (action === "update" || action === "resume")) return `Tell the person in one plain sentence what changed, saying the time zone as "${plain}", and that the next run is ${next}.`;
+  return "Tell the person in one sentence what will happen.";
+}
+
+function appliedText(r: Json, done: string, action: string): ToolCallResult {
   const summary = typeof r.summary === "string" && r.summary.trim() ? `\n\n${r.summary.trim()}` : "";
   const detail = typeof r.detail === "string" && r.detail.trim() ? `\n\n${r.detail.trim()}` : "";
   const id = typeof r.resultId === "string" ? r.resultId : jsonRecord(r.result) && typeof r.result.resultId === "string" ? r.result.resultId : "";
   const attention = r.settlementPending && typeof r.message === "string" ? `\n\nNeeds attention: ${r.message}`
     : jsonRecord(r.result) && typeof r.result.message === "string" ? `\n\nNeeds attention: ${r.result.message}` : "";
   return {
-    text: `${done}${id ? ` (trigger id ${id})` : ""}. It applied at once; the person sees it on a card with Edit, Pause and Undo.${summary}${detail}${attention}${addressText(r)}\n\nDo not ask for confirmation. Tell the person in one sentence what will happen.`,
+    text: `${done}${id ? ` (trigger id ${id})` : ""}. It applied at once; the person sees it right here in the chat, with Pause, Edit and Undo.${summary}${detail}${attention}${addressText(r)}\n\nDo not ask for confirmation. ${closingWords(r, action)}`,
   };
 }
 
@@ -332,7 +346,7 @@ async function request(body: Json, context: ToolCallContext, done: string): Prom
     const error = typeof r.error === "string" ? r.error : `HTTP ${status}`;
     return { text: `The trigger change did not apply: ${error}\n\nDo not claim it was applied. Fix what the error says, or tell the person plainly what is missing.`, isError: true };
   }
-  return appliedText(r, done);
+  return appliedText(r, done, String(body.action ?? ""));
 }
 
 export async function callTriggerTool(name: string, args: Json, context: ToolCallContext): Promise<ToolCallResult> {

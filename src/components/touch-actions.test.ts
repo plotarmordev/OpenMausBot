@@ -24,6 +24,8 @@ const notActions: Array<{ file: string; snippet: string; why: string }> = [
   { file: "components/ComputerPanel.tsx", snippet: "opacity-80", why: "already visible at 80% without hover" },
   { file: "components/bot-panel/PanelHero.tsx", snippet: "whitespace-nowrap rounded-md border border-hairline bg-menu", why: "\"Edit avatar\" tooltip; the avatar button itself is the tap target" },
   { file: "components/ChatView.tsx", snippet: "-ml-2.5 w-0 shrink-0 text-ink-secondary", why: "decorative chevron in the Simple bot pill; the whole pill is the tap target" },
+  { file: "components/RoomHeader.tsx", snippet: "-ml-1 w-0 shrink-0 text-ink-secondary", why: "decorative chevron on the Simple room name; the whole name is the tap target" },
+  { file: "components/ChatHeadPill.tsx", snippet: "-ml-2 flex w-0 shrink-0 overflow-hidden", why: "decorative chevron in the Simple bot pill; the whole pill is the tap target" },
 ];
 
 function sourceFiles(dir: string): string[] {

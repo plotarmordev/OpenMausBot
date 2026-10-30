@@ -26,9 +26,9 @@ function setup() {
   const service = new BrowserService({ dataDir, backend: () => backend, maxRunning: 10, idleMs: () => 600_000, takeoverMs: 200 });
   const live = new LiveV1({ service, target: (session) => ({ session, key: `bot:${session}` }) });
   cleanups.push(async () => { live.closeAll(); await service.closeAll(); });
-  const open = async (session = "a", owner = "local-owner") => {
+  const open = async (session = "a", owner = "local-owner", size: { width: number; height: number } | null = null) => {
     const sse = new SseRecorder();
-    await live.open({ botId: "bot", session, owner, isCurrent: () => true, res: sse.response });
+    await live.open({ botId: "bot", session, owner, isCurrent: () => true, res: sse.response, size });
     const viewerId = String(sse.events.find((event) => event.type === "ready")?.data.viewerId);
     return { sse, viewerId, action: (body: Record<string, unknown>) => live.action({ viewerId, botId: "bot", owner, body }) };
   };
@@ -57,6 +57,18 @@ describe("the v1 live view on the new browser", () => {
     expect(v1Differences(waiting({ reason: "number" }))).toEqual(['open: waiting carries {"reason":"number"}, the contract {"reason":"string"}']);
     expect(v1Differences(waiting({}).map((step) => step.step === "open" ? { ...step, shapes: { ...(step.shapes as object), stalled: {} } } : step)))
       .toContain("open: an event the v1 contract does not have: stalled");
+  });
+
+  it("fills the panel a view opened at, and follows its resizes, as the stream does", async () => {
+    const { open, backend } = setup();
+    const { action } = await open("a", "local-owner", { width: 400, height: 750 });
+    await sleep(30);
+    expect(backend.chrome.viewport).toEqual({ width: 1280, height: 2400 });
+    expect(await action({ type: "resize", width: 1440, height: 819 })).toEqual({ ok: true });
+    await sleep(30);
+    expect(backend.chrome.viewport).toEqual({ width: 1440, height: 819 });
+    expect(await action({ type: "resize", width: 1440, height: 20 })).toEqual({ ok: true });
+    expect(backend.chrome.viewport).toEqual({ width: 1440, height: 819 });
   });
 
   it("opens at most two views of one browser and eight in all", async () => {

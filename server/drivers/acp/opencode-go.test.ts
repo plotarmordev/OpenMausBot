@@ -15,6 +15,7 @@ import {
   createOpenCodeDriver,
   describeOpenCodeAccountError,
   discoverOpenCodeModels,
+  openCodeFreeFallback,
   openCodeOwnedDirectories,
   openCodeProviderKeysAllowed,
   openMausOwnsWorkingFolder,
@@ -26,7 +27,8 @@ import {
 } from "./opencode-go.ts";
 import { ATTACHMENTS_DIR } from "../../attachments.ts";
 import { cloudHomeConfigured } from "../../cloud-home.ts";
-import { OPENCODE_PROVIDER_ENV } from "../../config.ts";
+import { DATA_DIR, OPENCODE_PROVIDER_ENV } from "../../config.ts";
+import * as quietStatus from "./quiet-status.ts";
 import { hostedWorkspaceConfigured } from "../../enterprise.ts";
 import { TASK_WORKSPACES_DIR, workspaceDir } from "../../workspace.ts";
 import type { ModelCatalog, ProviderInstance, SendTurnInput } from "../../contracts.ts";
@@ -777,6 +779,33 @@ describe("OpenCode turns without a sign-in gate", () => {
     }
     expect(f.launches()).toBe(1);
   });
+
+  it("names a rate limit OpenCode logged for this turn's main request while the turn stays quiet", async () => {
+    vi.spyOn(quietStatus, "sampleProcessTree").mockResolvedValue({ cpuMs: 0, connections: 1 });
+    vi.stubEnv("OMB_ACP_QUIET_NOTICE_MS", "300");
+    vi.stubEnv("OMB_ACP_QUIET_TICK_MS", "50");
+    // The row format of #3143's opencode log, with a synthetic run and model.
+    const row = (session: string, small: boolean, error: string) =>
+      `timestamp=2026-10-01T00:00:03.000Z level=ERROR run=fixture_run message="stream error" providerID=opencode modelID=mimo-v2.6-flash-free session.id=${session} small=${small} agent=build mode=primary error.error="${error}"`;
+    const f = await open("opencode-rate-limit", () => ({
+      FAKE_ACP_MODE: "quiet-then-answer", FAKE_ACP_QUIET_MS: "1200", FAKE_ACP_MODELS: "opencode/big-pickle",
+      FAKE_ACP_OPENCODE_LOG: JSON.stringify([
+        row("ses_someone_else", false, "AI_APICallError: Insufficient balance."),
+        row("{session}", true, "AI_APICallError: The title model is busy."),
+        row("{session}", false, "AI_APICallError: Rate limit exceeded. Please try again later."),
+      ]),
+    }));
+    try {
+      const { done, events } = await f.run("t-rate-limit", "opencode/big-pickle");
+      expect(done).toMatchObject({ ok: true });
+      const notices = events.flatMap((event) => event.type === "runtime.notice" ? [event.message] : []);
+      expect(notices).toContainEqual(expect.stringContaining("Rate limit exceeded. Please try again later."));
+      expect(notices.join("\n")).not.toMatch(/Insufficient balance|title model/);
+    } finally {
+      vi.unstubAllEnvs();
+      vi.restoreAllMocks();
+    }
+  });
 });
 
 // Measured on opencode 1.18.27: a pooled `opencode acp` kept its old model list after `opencode auth login`.
@@ -1253,5 +1282,92 @@ describe("OpenCode model choice without a saved model", () => {
       method: "session/set_config_option",
       params: { sessionId: "fake-acp-session", configId: "model", value: "opencode/longcat-2.5-preview-free" },
     }]);
+  });
+});
+
+describe("OpenCode ready only through its free models", () => {
+  const noKeys = { OPENCODE_API_KEY: "", OPENCODE_AUTH_CONTENT: "", ...Object.fromEntries(OPENCODE_PROVIDER_ENV.map((key) => [key, ""])) };
+  async function snapshotWith(models: ModelCatalog, environment: Record<string, string> = {}, login?: Record<string, unknown>) {
+    const scratch = mkdtempSync(join(tmpdir(), "omb-opencode-fallback-"));
+    if (login) {
+      mkdirSync(join(scratch, "data", "opencode"), { recursive: true });
+      writeFileSync(join(scratch, "data", "opencode", "auth.json"), JSON.stringify(login));
+    }
+    resetOpenCodeModelCache();
+    const driver = createOpenCodeDriver(async () => models);
+    const instance = await driver.create({
+      instanceId: "opencode-fallback",
+      displayName: "OpenCode",
+      environment: { HOME: scratch, USERPROFILE: scratch, XDG_DATA_HOME: join(scratch, "data"), ...noKeys, ...environment },
+      enabled: true,
+      config: { cli: FAKE_CLI, fullAuto: false },
+    });
+    try {
+      return await instance.snapshot();
+    } finally {
+      await instance.dispose();
+      await removeTempDir(scratch);
+      resetOpenCodeModelCache();
+    }
+  }
+
+  it("is a free fallback with only Zen's models and no login or key", async () => {
+    expect(await snapshotWith(catalog("opencode/big-pickle", "opencode/grok-code"))).toMatchObject({ authenticated: true, freeFallback: true });
+    // A local model the app found is not the person signing OpenCode in to anything.
+    expect(await snapshotWith({ default: "opencode/big-pickle", options: [
+      { id: "opencode/big-pickle", label: "Big Pickle" }, { id: "ollama/qwen3", label: "Qwen 3", custom: true },
+    ] })).toMatchObject({ freeFallback: true });
+  });
+
+  it("is a normal AI with an OpenCode login, an OpenCode key, or a provider key", async () => {
+    const zen = catalog("opencode/big-pickle");
+    for (const snapshot of [
+      await snapshotWith(zen, {}, { opencode: { type: "oauth", access: "acc-token", refresh: "ref-token" } }),
+      await snapshotWith(zen, { OPENCODE_API_KEY: "zen-key" }),
+      await snapshotWith(zen, { ANTHROPIC_API_KEY: "provider-key" }),
+    ]) {
+      expect(snapshot.authenticated).toBe(true);
+      expect(snapshot).not.toHaveProperty("freeFallback");
+    }
+  });
+
+  it("is no fallback with an empty catalog, which is not ready at all; local models alone still are one", () => {
+    expect(openCodeFreeFallback(false, { default: "", options: [] })).toBe(false);
+    expect(openCodeFreeFallback(false, { default: "ollama/qwen3", options: [{ id: "ollama/qwen3", label: "Qwen 3", custom: true }] })).toBe(true);
+    expect(openCodeFreeFallback(true, catalog("opencode/big-pickle"))).toBe(false);
+  });
+
+  it("is a normal AI when OpenCode offers another provider's models", async () => {
+    const snapshot = await snapshotWith(catalog("opencode/big-pickle", "openrouter/vendor/model-v2"));
+    expect(snapshot.authenticated).toBe(true);
+    expect(snapshot).not.toHaveProperty("freeFallback");
+  });
+});
+
+describe("OpenCode one-off calls (connection checks, memory upkeep)", () => {
+  it("file their session under OpenMaus's own OpenCode project, never the global one the person's other folders share", async () => {
+    const scratch = mkdtempSync(join(tmpdir(), "omb-opencode-oneshot-"));
+    const requests = join(scratch, "requests.jsonl");
+    const driver = createOpenCodeDriver(async () => catalog("opencode/big-pickle"));
+    const instance = await driver.create({
+      instanceId: "opencode-oneshot",
+      displayName: "OpenCode",
+      environment: { XDG_DATA_HOME: join(scratch, "data"), OPENCODE_API_KEY: "", FAKE_ACP_MODELS: "opencode/big-pickle", FAKE_ACP_RPC_APPEND_FILE: requests },
+      enabled: true,
+      config: { cli: FAKE_CLI, fullAuto: false },
+    });
+    try {
+      await instance.generateMemoryText!("This is a connection check. Reply with the single word OK.").catch(() => "");
+      const folders = readFileSync(requests, "utf8").split("\n").filter(Boolean).map((line) => JSON.parse(line) as { method: string; cwd: string });
+      const opened = folders.find((request) => request.method === "session/new")!;
+      const project = realpathSync(join(DATA_DIR, "providers", "opencode", "discovery"));
+      expect(relative(project, opened.cwd).startsWith("..")).toBe(false);
+      expect(existsSync(join(project, ".git"))).toBe(true);
+      // The one-off's own folder inside it is gone again.
+      expect(existsSync(opened.cwd)).toBe(false);
+    } finally {
+      await instance.dispose();
+      await removeTempDir(scratch);
+    }
   });
 });

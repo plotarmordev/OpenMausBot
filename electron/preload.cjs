@@ -38,9 +38,9 @@ ipcRenderer.on("app:open-settings", (_event, section) => {
 // The full bridge goes only to the local server's UI; a remote page gets the safe subset, and main enforces the same rule.
 const localOrigin = process.argv.find((arg) => arg.startsWith("--omb-local-origin="))?.slice("--omb-local-origin=".length) ?? null;
 const isLocalPage = !localOrigin || location.origin === localOrigin;
-const REMOTE_SAFE = new Set(["platform", "getCapabilities", "onCapabilitiesChanged", "applySkin", "setUnreadCount", "permStatus", "workspaces", "cloudLending", "cloudPlan", "cloudSendPage", "desktopNotices", "desktopAnalytics", "desktopLanguage", "updatesConsent", "windowControls"]);
+const REMOTE_SAFE = new Set(["platform", "app", "getCapabilities", "onCapabilitiesChanged", "applySkin", "setUnreadCount", "permStatus", "workspaces", "cloudLending", "cloudPlan", "cloudSendPage", "desktopNotices", "desktopAnalytics", "desktopLanguage", "updatesConsent", "windowControls"]);
 /** My Cloud's own page once it is the person's home (main checks the sender again): it is this app's page then. */
-const HOME_PAGE = ["home", "onChatLink", "onPackageInstall", "onOpenAppSettings", "exportDiagnostics", "openLogsFolder"];
+const HOME_PAGE = ["home", "onChatLink", "onPackageInstall", "onOpenAppSettings", "exportDiagnostics", "openLogsFolder", "openAtLogin"];
 function updaterOffered() {
   try { return ipcRenderer.sendSync("update:offered") === true; } catch { return false; }
 }
@@ -94,8 +94,13 @@ if (isLocalPage && !desktopRemoteClient && process.argv.includes("--omb-company-
   });
 }
 
+// main passes app.getVersion(): a server's page carries that server's version, so About asks this for the app's own.
+const appVersion = (process.argv.find((arg) => arg.startsWith("--omb-app-version="))?.slice("--omb-app-version=".length) ?? "").slice(0, 64);
+
 const bridge = {
   platform: process.platform,
+  /** This app's version, and whether this page is this app's own (served by this computer, not a server from the Server menu). */
+  app: { version: appVersion, ownPage: isLocalPage },
   // Safe on a cloud page: the person chooses in a native menu; no direct switching, saved-list reads, host files or secrets.
   workspaces: {
     state: () => ipcRenderer.invoke("workspaces:state"),
@@ -259,12 +264,18 @@ const bridge = {
   revealInFolder: (filePath) => ipcRenderer.invoke("desktop:reveal-file", filePath),
   // This app's own logs folder (server.log, desktop-crashes.log, updater.log); the page names no path.
   openLogsFolder: () => ipcRenderer.invoke("desktop:open-logs"),
+  openAtLogin: {
+    state: () => ipcRenderer.invoke("open-at-login:state"),
+    set: on => on !== true || isLocalPage || navigator.userActivation?.isActive === true
+      ? ipcRenderer.invoke("open-at-login:set", on === true) : Promise.reject(new Error("Turn on the switch to open OpenMausBot at login.")),
+  },
   setCredential: (name, value) => ipcRenderer.invoke("credential:set", name, value),
 
   updater: {
     check: () => ipcRenderer.invoke("update:check"),
     install: () => isLocalPage || navigator.userActivation?.isActive === true
       ? ipcRenderer.invoke("update:install") : Promise.reject(new Error("Choose Restart to update.")),
+    seen: () => ipcRenderer.invoke("update:seen"),
     onState: (cb) => {
       ipcRenderer
         .invoke("update:get-state")
@@ -454,6 +465,9 @@ const bridge = {
       status: String(choice?.status),
       ...(typeof choice?.email === "string" ? { email: choice.email } : {}),
     }),
+  },
+  desktopProfile: {
+    systemName: () => ipcRenderer.invoke("desktop-profile:system-name"),
   },
   desktopNotices: {
     state: () => ipcRenderer.invoke("desktop-notices:state"),

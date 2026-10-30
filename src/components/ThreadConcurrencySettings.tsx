@@ -6,7 +6,7 @@ import { Select } from "./Select";
 
 export function ThreadConcurrencySettings() {
   const { state, dispatch } = useStore();
-  const confirmed = state.config?.threads?.maxConcurrentPerBot ?? 3;
+  const confirmed = state.config?.threads?.maxConcurrentPerBot ?? 16;
   const [pending, setPending] = useState<number | null>(null);
   const [error, setError] = useState("");
   const saving = useRef(false);

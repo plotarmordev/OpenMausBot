@@ -140,36 +140,27 @@ describe("sidebar top row", () => {
     expect(html.match(/Switch server:/g)).toHaveLength(1);
   });
 
-  it("in Simple mode keeps the server pill, a round search and a round + together on the right of one macOS row, with the collapse bump on the edge", () => {
+  it("in Simple mode puts a round search and a round + on the right of a 60px macOS row, with no server pill, and the collapse bump on the edge until hover", () => {
     fixture.advanced = false;
     fixture.windowChrome = "mac-inset";
     desktop();
     const html = render();
     const row = topRow(html);
-    expect(row).toMatch(/^data-sidebar-top-row="true" class="[^"]*\bitems-center\b[^"]*" style="-webkit-app-region:drag;height:46px"/);
-    const { lights, slot, spacer, switcher, buttons } = order(row);
-    const search = row.indexOf("data-sidebar-search-toggle");
-    expect(spacer).toBe(-1);
+    expect(row).toMatch(/^data-sidebar-top-row="true" class="[^"]*\bh-\[60px\][^"]*\bitems-start\b[^"]*" style="-webkit-app-region:drag"/);
+    expect(classesOf(row, "data-sidebar-top-row")).toEqual(expect.arrayContaining(["pl-4", "pr-4", "pt-3"]));
+    expect(row).not.toContain("data-workspace-switcher");
+    expect(html).not.toContain("Switch server:");
+    const { lights, slot, buttons } = order(row);
     expect(lights).toBeGreaterThan(-1);
     expect(slot).toBeGreaterThan(lights);
-    expect(switcher).toBeGreaterThan(slot);
-    expect(buttons).toBeGreaterThan(switcher);
-    expect(search).toBeGreaterThan(buttons);
-    expect(row).not.toContain("data-sidebar-collapse-toggle");
+    expect(buttons).toBeGreaterThan(slot);
+    expect(classesOf(row, "data-sidebar-top-buttons")).toEqual(expect.arrayContaining(["shrink-0", "gap-2"]));
     expect(row.slice(buttons).match(/<button/g)).toHaveLength(2);
-    expect(classesOf(row, "data-sidebar-top-slot")).toEqual(["@container/sidebar-top", "flex", "min-w-0", "flex-1", "items-center", "justify-end"]);
-    expect(classesOf(row, "data-sidebar-top-switcher")).not.toContain("max-w-[140px]");
-    expect(classesOf(row, "data-sidebar-top-buttons")).toEqual(expect.arrayContaining(["shrink-0", "gap-1", "pl-0.5"]));
-    expect(html).toMatch(/data-sidebar-edge-toggle="true" aria-label="Collapse sidebar to avatars" aria-expanded="true" title="Collapse to avatars" style="-webkit-app-region:no-drag" class="[^"]*\babsolute\b[^"]*\btop-\[7px\][^"]*\brounded-r-\[4px\][^"]*"><svg[^>]*lucide-chevron-left/);
-    expect(row).toMatch(/aria-label="Switch server: Servers"[^>]*class="[^"]*\bh-8\b[^"]*\brounded-full\b[^"]*\bbg-raised\/50\b[^"]*\btext-\[13px\][^"]*" style="-webkit-app-region:no-drag"/);
-    expect(row).toContain('<span class="min-w-0 truncate @max-[124px]/sidebar-top:hidden">Servers</span>');
-    expect(row).toContain('class="lucide lucide-laptop hidden shrink-0 text-ink-secondary @max-[124px]/sidebar-top:block"');
-    expect(row).toMatch(/data-sidebar-search-toggle="true" aria-label="Search bots and messages" aria-expanded="false" title="Search bots and messages" class="[^"]*\bsize-\[30px\][^"]*\brounded-full\b/);
-    expect(html).toMatch(/aria-label="New or share" class="[^"]*\bsize-\[30px\][^"]*\brounded-full\b/);
+    expect(row).toMatch(/data-sidebar-search-toggle="true" aria-label="Search bots and messages" aria-expanded="false" title="Search bots and messages" class="[^"]*\bsize-9\b[^"]*\brounded-full\b[^"]*\btext-ink\/90\b[^"]*\bbg-composer\b/);
+    expect(html).toMatch(/aria-label="New or share" class="[^"]*\bsize-9\b[^"]*\brounded-full\b/);
+    expect(html).toMatch(/data-sidebar-edge-toggle="true" aria-label="Collapse sidebar to avatars" aria-expanded="true" title="Collapse to avatars" style="-webkit-app-region:no-drag" class="[^"]*\babsolute\b[^"]*\bpointer-events-none opacity-0\b[^"]*\btouch:pointer-events-auto touch:opacity-100\b[^"]*\btop-\[14px\]/);
     expect(html).not.toContain('title="Active Threads"');
     expect(html).not.toContain("data-sidebar-search-pill");
-    expect(html).not.toContain('placeholder="Search"');
-    expect(html.match(/Switch server:/g)).toHaveLength(1);
   });
 
   it.each([["win-caption", "Windows"], ["native", "Linux"]] as const)(
@@ -200,36 +191,39 @@ describe("sidebar top row", () => {
     expect(buttons).toBeGreaterThan(spacer);
   });
 
-  it("collapses Simple mode to a rail: only the lights on top, the expand bump on the edge, and search, +, server, Apps and profile at the foot", () => {
+  it("collapses Simple mode to a rail: the lights, then round search and + on top, the expand bump on the edge, and Apps and the account at the foot", () => {
     fixture.advanced = false;
     fixture.density = "icons";
     fixture.windowChrome = "mac-inset";
     desktop();
     const html = render();
-    const top = html.slice(html.indexOf("data-sidebar-top-row"), html.indexOf('data-glass-bar="bottom"'));
+    const top = html.slice(html.indexOf("data-sidebar-top-row"), html.indexOf("data-sidebar-rail-footer"));
     expect(top).toContain("data-traffic-light-space");
     expect(top).not.toContain("data-sidebar-top-buttons");
     expect(top).not.toContain("data-workspace-switcher");
+    expect(top.indexOf("data-traffic-light-space")).toBeLessThan(top.indexOf('aria-label="Search bots and messages"'));
+    expect(top.indexOf('aria-label="Search bots and messages"')).toBeLessThan(top.indexOf('aria-label="New or share"'));
+    expect(top).toMatch(/data-sidebar-rail-top="true" class="flex flex-col items-center gap-2 pt-1"/);
+    expect(top).toMatch(/aria-label="New or share" class="[^"]*\bsize-9\b[^"]*\brounded-full\b/);
     const foot = html.slice(html.indexOf("data-sidebar-rail-footer"));
     const at = (marker: string) => {
       const index = foot.indexOf(marker);
       expect(index, marker).toBeGreaterThan(-1);
       return index;
     };
-    expect(html).toMatch(/data-sidebar-edge-toggle="true" aria-label="Expand sidebar" aria-expanded="false"[^>]*><svg[^>]*lucide-chevron-right/);
+    expect(html).toMatch(/data-sidebar-edge-toggle="true" aria-label="Expand sidebar" aria-expanded="false"[^>]*class="[^"]*\bopacity-100\b[^"]*"><svg[^>]*lucide-chevron-right/);
     expect(foot).not.toContain('aria-label="Expand sidebar"');
+    expect(foot).not.toContain('aria-label="Search bots and messages"');
     const positions = [
-      at('aria-label="Search bots and messages"'),
-      at('aria-label="New or share"'),
-      at('data-workspace-switcher="rail"'),
-      at('data-sidebar-nav="automations"'),
       at('data-sidebar-nav="apps"'),
-      at("transition-colors size-10"),
+      at("data-sidebar-account"),
     ];
     expect(positions).toEqual([...positions].sort((a, b) => a - b));
-    expect(foot).toMatch(/data-workspace-switcher="rail"[^>]*><button[^>]*aria-label="Switch server: Servers"/);
-    expect(foot).not.toContain('data-sidebar-nav="routines"');
-    expect(html.match(/Switch server:/g)).toHaveLength(1);
+    expect(foot).toMatch(/data-tour="nav-apps" data-sidebar-nav="apps"[^>]*aria-label="Connect apps"[^>]*class="[^"]*\bsize-9\b[^"]*"><svg[^>]*lucide-puzzle/);
+    expect(foot).not.toContain("data-workspace-switcher");
+    expect(foot).not.toContain('data-sidebar-nav="automations"');
+    expect(foot).not.toContain('data-sidebar-nav="team-map"');
+    expect(html).not.toContain("Switch server:");
     expect(html.match(/aria-label="New or share"/g)).toHaveLength(1);
   });
 
@@ -248,9 +242,9 @@ describe("sidebar top row", () => {
   });
 });
 
-describe("sidebar glass head and foot", () => {
+describe("sidebar head and foot", () => {
   it.each(["comfortable", "compact", "icons"] as const)(
-    "puts the top row and search in the glass head, the places in the glass foot, and the list between at %s density",
+    "puts the top row and search in the head, the places in the foot, and the fading list between at %s density",
     (density) => {
       fixture.density = density;
       const html = render();
@@ -262,7 +256,7 @@ describe("sidebar glass head and foot", () => {
       const head = at('data-glass-bar="top"');
       const topRow = at("data-sidebar-top-row");
       const search = at('aria-label="Search bots and messages"');
-      const list = at('class="glass-scroller ');
+      const list = at('data-scroll-fade-frame=""');
       const foot = at('data-glass-bar="bottom"');
       const automations = at('data-sidebar-nav="automations"');
       const places = at('data-sidebar-nav="team-map"');
@@ -280,17 +274,19 @@ describe("sidebar glass head and foot", () => {
 });
 
 describe("sidebar foot in Simple mode", () => {
-  it.each(["comfortable", "compact"] as const)("keeps Automations above the profile row, with Apps at its end (%s)", (density) => {
+  it.each(["comfortable", "compact"] as const)("puts the account avatar then the Connect apps pill in the foot, with Automations and Team map in the account menu (%s)", (density) => {
     fixture.advanced = false;
     fixture.density = density;
     const html = render();
-    const foot = html.indexOf('data-glass-bar="bottom"');
-    expect(html).not.toContain('data-sidebar-nav="routines"');
-    expect(html.match(/data-sidebar-nav="automations"/g)).toHaveLength(1);
-    expect(html.indexOf('data-sidebar-nav="automations"')).toBeGreaterThan(foot);
-    expect(html.indexOf('data-sidebar-nav="automations"')).toBeLessThan(html.indexOf('data-sidebar-nav="apps"'));
+    const foot = html.slice(html.indexOf('data-glass-bar="bottom"'));
+    expect(foot).toContain('data-sidebar-footer="simple"');
+    expect(html).not.toContain('data-sidebar-nav="automations"');
+    expect(html).not.toContain('data-sidebar-nav="team-map"');
     expect(html.match(/data-sidebar-nav="apps"/g)).toHaveLength(1);
-    expect(html.indexOf('data-sidebar-nav="apps"')).toBeGreaterThan(foot);
+    expect(foot.indexOf("data-sidebar-account")).toBeGreaterThan(-1);
+    expect(foot.indexOf("data-sidebar-account")).toBeLessThan(foot.indexOf('data-sidebar-nav="apps"'));
+    expect(foot).toMatch(/data-tour="nav-apps" data-sidebar-nav="apps"[^>]*>(<[^>]*>)*Connect apps</);
+    expect(foot.match(/data-app-face="/g)).toHaveLength(3);
   });
 
   it("keeps one Automations row in the foot and no Routines row in Advanced mode, and still one Apps", () => {

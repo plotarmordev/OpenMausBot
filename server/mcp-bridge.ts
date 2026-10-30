@@ -98,7 +98,8 @@ export interface BridgeOptions {
   label: string;
   /** docker's ssh connection helper takes no ConnectTimeout/ServerAlive options, so a dropped VPS wedges silently without this. */
   liveness?: BridgeLiveness;
-  gate?: { url: string; token: string };
+  /** `describe`: what a tools/call would open, passed to the gate so the person can be asked in plain words. */
+  gate?: { url: string; token: string; describe?: (frame: unknown) => Record<string, string> };
   rewriteResponse?: (line: string) => string;
 }
 
@@ -129,7 +130,7 @@ export function createLineSplitter(onLine: (line: string) => void): {
 
 /** Serialized: the check is async, and answering frame N+1 before frame N would reorder the agent's protocol stream. */
 export function createGateInterceptor(options: {
-  check: () => Promise<ControlState>;
+  check: (frame: unknown) => Promise<ControlState>;
   forward: (line: string) => void;
   refuse: (line: string) => void;
   actWithinMs?: number;
@@ -148,7 +149,7 @@ export function createGateInterceptor(options: {
         options.forward(line);
         return;
       }
-      const state = await options.check().catch((): ControlState => ({ held: true, helpOpen: false, blockedReason: CONTROL_UNCONFIRMED }));
+      const state = await options.check(frame).catch((): ControlState => ({ held: true, helpOpen: false, blockedReason: CONTROL_UNCONFIRMED }));
       if (!state.held && Date.now() - arrivedAt <= actWithinMs) {
         options.forward(line);
         return;
@@ -168,7 +169,7 @@ export function createGateInterceptor(options: {
 export interface McpBridgeInterceptorOptions {
   answer: (line: string) => void;
   forward: (line: string) => void;
-  gate?: { check: () => Promise<ControlState> };
+  gate?: { check: (frame: unknown) => Promise<ControlState> };
 }
 
 /** The bundled cua-driver (through at least v0.22.1) answers MCP `ping` with -32601, so ping is answered here. */
@@ -217,7 +218,7 @@ export function runMcpBridge(options: BridgeOptions): void {
   const intercept = createMcpBridgeInterceptor({
     answer,
     forward,
-    ...(client ? { gate: { check: () => client.state(true) } } : {}),
+    ...(client ? { gate: { check: (frame: unknown) => client.state(true, options.gate?.describe?.(frame)) } } : {}),
   });
   const toolLists = createToolListNormalizer(toolSchemaProfileFromEnv(), (line) => process.stderr.write(`${options.label}: ${line}\n`));
   let pendingInput = Promise.resolve();

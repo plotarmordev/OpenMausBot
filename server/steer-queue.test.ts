@@ -7,7 +7,7 @@ import { DatabaseSync } from "node:sqlite";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
-import { saveChatFollowup } from "./message-db.ts";
+import { chatFollowups, saveChatFollowup } from "./message-db.ts";
 import { killCliTree } from "./procs.ts";
 import {
   cancelSteeredMessage,
@@ -27,6 +27,7 @@ import {
   type SteerStore,
 } from "./steer-queue.ts";
 import type { BotRecord, Message } from "./store.ts";
+import type { QueuedAutomaticRecovery } from "./turn-options.ts";
 import { removeTempDir } from "./testing/cleanup.ts";
 import { freePortBlock } from "./testing/ports.ts";
 
@@ -71,6 +72,40 @@ function fakeStore(bots: BotRecord[]): SteerStore & { messages: Message[] } {
 }
 
 describe("steer-queue module", () => {
+  it("dispatches a main-chat person behind a capacity-blocked peer head without dispatching the peer", () => {
+    const bot = fakeBot("mixed-capacity", "mixed-main", false);
+    const store = fakeStore([bot]);
+    const peer = queueSteeredMessage(bot.id, bot.threadId, "Peer waits", { peerAsk: { botId: "chief", name: "Chief" }, reason: "capacity" });
+    queueSteeredMessage(bot.id, bot.threadId, "Person runs", { capacity: "person" });
+    const run = vi.fn();
+    drainSteeredMessages(store, run, (_botId, threadId, head) => threadId !== bot.threadId || Boolean(head.peerAsk));
+    expect(store.messages.map(message => message.text)).toEqual(["Person runs"]);
+    expect(run).toHaveBeenCalledTimes(1);
+    expect(isSteeredMessageQueued(bot.id, bot.threadId, peer.id)).toBe(true);
+    drainSteeredMessages(store, run, () => false);
+    expect(store.messages.map(message => message.text)).toEqual(["Person runs", "Peer waits"]);
+    expect(run.mock.calls[1][3].peerAsk).toEqual({ botId: "chief", name: "Chief" });
+  });
+
+  it("dispatches only the marked person past a blocked peer and unattended routine after restore", () => {
+    const bot = fakeBot("mixed-restored-capacity", "mixed-restored-main", false);
+    const store = fakeStore([bot]);
+    const peer = queueSteeredMessage(bot.id, bot.threadId, "Peer waits", { peerAsk: { botId: "chief", name: "Chief" }, reason: "capacity" });
+    const routine = queueSteeredMessage(bot.id, bot.threadId, "Routine waits", { unattended: true, origin: { kind: "outside" }, trigger: { kind: "routine" } });
+    queueSteeredMessage(bot.id, bot.threadId, "Person runs", { capacity: "person" });
+    restoreSteeredMessages();
+    const run = vi.fn();
+    drainSteeredMessages(store, run, (_botId, _threadId, head) => head.capacity !== "person");
+    expect(store.messages.map(message => message.text)).toEqual(["Person runs"]);
+    expect(run).toHaveBeenCalledTimes(1);
+    expect(run.mock.calls[0][6].capacity).toBe("person");
+    expect(isSteeredMessageQueued(bot.id, bot.threadId, peer.id)).toBe(true);
+    expect(isSteeredMessageQueued(bot.id, bot.threadId, routine.id)).toBe(true);
+    drainSteeredMessages(store, run, () => false);
+    drainSteeredMessages(store, run, () => false);
+    expect(store.messages.map(message => message.text)).toEqual(["Person runs", "Peer waits", "Routine waits"]);
+  });
+
   it("keeps readable citation prompts byte-for-byte through queue, hold, and drain", () => {
     const bot = fakeBot("bot-citation-queue", "thread-citation-queue", true);
     const store = fakeStore([bot]);
@@ -414,6 +449,35 @@ describe("steer-queue module", () => {
       cancelSteeredMessage("bot-hold-merge", later.id);
     } finally {
       cancelSteeredMessage("bot-hold-merge", queued.id);
+    }
+  });
+
+  it("steering an ordinary item holds only the ordinary items and leaves a sharing recovery queued in place", () => {
+    const botId = "bot-hold-recovery";
+    const threadId = "thread-hold-recovery";
+    const recovery = { generation: "hold-recovery" } as QueuedAutomaticRecovery;
+    const texts = () => queuedSteerSnapshot(() => true)[threadId]?.map((item) => item.text) ?? [];
+    const journalStatus = (id: string) => chatFollowups("bot").find((row) => row.id === id)?.status;
+    const first = queueSteeredMessage(botId, threadId, "O1");
+    const queuedRecovery = queueSteeredMessage(botId, threadId, "R", { reason: "capacity", recovery });
+    const second = queueSteeredMessage(botId, threadId, "O2");
+    let third: { id: string } | undefined;
+    try {
+      const held = holdSteeredQueue(botId, threadId, first.id)!;
+      expect(held.items.map((item) => item.text)).toEqual(["O1", "O2"]);
+      expect(texts()).toEqual(["R"]);
+      third = queueSteeredMessage(botId, threadId, "O3");
+      restoreHeldSteeredQueue(held);
+      expect(texts()).toEqual(["O1", "R", "O2", "O3"]);
+
+      const steered = holdSteeredQueue(botId, threadId, first.id)!;
+      expect(steered.items.map((item) => item.text)).toEqual(["O1", "O2", "O3"]);
+      settleHeldSteeredQueue(steered);
+      expect(texts()).toEqual(["R"]);
+      expect(journalStatus(queuedRecovery.id)).toBe("pending");
+      expect([first.id, second.id, third.id].map(journalStatus)).toEqual([undefined, undefined, undefined]);
+    } finally {
+      for (const id of [first.id, queuedRecovery.id, second.id, third?.id]) if (id) cancelSteeredMessage(botId, id);
     }
   });
 

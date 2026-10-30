@@ -164,8 +164,8 @@ if (process.argv[2] !== "--version") { process.env.FAKE_CLAUDE_DUMP = ${JSON.str
 await import(${JSON.stringify(fake)});
 `, { mode: 0o755 });
   // `done`: every turn completes, and memory capture's one-shot proposes the
-  // injected instruction as a fact to remember.
-  writeFileSync(join(home, "capture.json"), JSON.stringify({ facts: [{ text: INJECTED, kind: "preference" }] }));
+  // injected instruction as a decision to remember (a decision needs no quoted words).
+  writeFileSync(join(home, "capture.json"), JSON.stringify({ facts: [{ text: INJECTED, kind: "decision" }] }));
   const completing = (name: string, replies: string[]) => {
     const cli = join(home, `${name}-claude.mjs`);
     writeFileSync(cli, `#!/usr/bin/env node

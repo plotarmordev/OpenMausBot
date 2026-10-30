@@ -6,7 +6,7 @@ import { describe, expect, it } from "vitest";
 
 import { removeTempDir } from "../../testing/cleanup.ts";
 import {
-  classifyQuiet, describeQuiet, LogTail, parseQwenLogLine, quietKey, sampleProcessTree, treePids,
+  classifyQuiet, describeQuiet, LogTail, parseOpenCodeLogLine, parseQwenLogLine, quietKey, sampleProcessTree, treePids,
 } from "./quiet-status.ts";
 import { qwenDebugLogPath } from "./qwen.ts";
 
@@ -61,6 +61,34 @@ describe("classifyQuiet", () => {
   });
 });
 
+// The row format of an opencode log quoted in #3143, with synthetic identifiers.
+const openCodeRow = (fields: string) =>
+  `timestamp=2026-10-01T00:00:03.000Z level=ERROR run=fixture_run message="stream error" providerID=opencode modelID=mimo-v2.6-flash-free ${fields}`;
+
+describe("parseOpenCodeLogLine", () => {
+  it("reads only this session's main-request errors", () => {
+    const limit = 'error.error="AI_APICallError: Rate limit exceeded. Please try again later."';
+    expect(parseOpenCodeLogLine(openCodeRow(`session.id=ses_a small=false agent=build mode=primary ${limit}`), "ses_a"))
+      .toEqual({ kind: "provider-error", message: "Rate limit exceeded. Please try again later." });
+    expect(parseOpenCodeLogLine(openCodeRow(`session.id=ses_b small=false ${limit}`), "ses_a")).toBeNull();
+    expect(parseOpenCodeLogLine(openCodeRow(`session.id=ses_ab small=false ${limit}`), "ses_a")).toBeNull();
+    expect(parseOpenCodeLogLine(openCodeRow(`session.id=ses_a small=true agent=title ${limit}`), "ses_a")).toBeNull();
+    expect(parseOpenCodeLogLine(openCodeRow(`session.id=ses_a small=false ${limit}`).replace("level=ERROR", "level=WARN"), "ses_a")).toBeNull();
+    expect(parseOpenCodeLogLine(openCodeRow("session.id=ses_a small=false"), "ses_a")).toBeNull();
+  });
+
+  it("never repeats a key the provider echoed", () => {
+    const signal = parseOpenCodeLogLine(openCodeRow('session.id=ses_a error.error="AI_APICallError: Incorrect API key provided: sk-proj-abcdefghijklmnopqrstuvwxyz123456"'), "ses_a");
+    expect(signal).toMatchObject({ kind: "provider-error", message: expect.stringContaining("Incorrect API key provided") });
+    expect(JSON.stringify(signal)).not.toContain("abcdefghijklmnopqrstuvwxyz123456");
+  });
+
+  it("keeps an escaped quote inside the error", () => {
+    expect(parseOpenCodeLogLine(openCodeRow('session.id=ses_a error.error="Model \\"x\\" is overloaded" next=1'), "ses_a"))
+      .toEqual({ kind: "provider-error", message: 'Model \\"x\\" is overloaded' });
+  });
+});
+
 describe("describeQuiet", () => {
   it("says it in plain words", () => {
     expect(describeQuiet("Qwen", { kind: "retrying", status: 429, delayMs: 20_000, attempt: 1 }, 90_000, 900_000))
@@ -69,6 +97,8 @@ describe("describeQuiet", () => {
     expect(describeQuiet("Qwen", { kind: "no-signs" }, 180_000, 900_000)).toContain("stopped after 15 min");
     expect(describeQuiet("Qwen", { kind: "between-requests" }, 25_000, 900_000))
       .toBe("Qwen has sent nothing for 25 s and has no request open to its model right now. It may be waiting before a retry. Still waiting; press Stop to end the turn.");
+    expect(describeQuiet("OpenCode", { kind: "provider-error", message: "Rate limit exceeded. Please try again later." }, 75_000, 900_000))
+      .toBe('OpenCode\'s model request failed: "Rate limit exceeded. Please try again later." OpenCode may retry or stop; no reply for 75 s so far.');
   });
 
   it("a new retry attempt is news; the same state is not", () => {

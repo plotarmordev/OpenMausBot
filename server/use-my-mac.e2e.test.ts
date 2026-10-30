@@ -275,7 +275,7 @@ it("My Cloud offers the device link, and a fresh Mac signed in to it lends its i
   await expect.poll(() => mac.connector.cloudState(mac.env).link, { timeout: 8000 }).toBe("on");
   expect(mac.connector.cloudState(mac.env)).toMatchObject({ enabled: true, folders: [], screen: false, terminal: false, internet: true });
   const known = (await api("GET", "/api/shared-computers", { token: owner })).body.known;
-  expect(known).toEqual([expect.objectContaining({ online: true, lent: true, scopes: { folders: 0, terminal: false, screen: false, internet: true } })]);
+  expect(known).toEqual([expect.objectContaining({ online: true, lent: true, scopes: { folders: 0, terminal: false, screen: false, internet: true, chrome: false } })]);
 }, hostTimeout(30_000));
 
 posixOnly("a bot's browser on My Cloud reaches Instagram from the Mac's own connection: the website sees the Mac, not My Cloud", async () => {

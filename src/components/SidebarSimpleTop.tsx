@@ -4,8 +4,12 @@ import { createPortal } from "react-dom";
 
 import { cn } from "@/lib/cn";
 import { t } from "@/lib/i18n";
+import { ELEVATED_CONTROL, ELEVATED_HOVER } from "./elevated";
 
-export const SIMPLE_TOP_BUTTON = "flex size-[30px] shrink-0 items-center justify-center rounded-full bg-raised/50 text-ink hover:bg-raised focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus";
+/** Keyboard focus on a Simple row or tile: the focus ring drawn inside its edge. */
+export const SIMPLE_ROW_FOCUS = "focus-visible:outline-2 focus-visible:-outline-offset-2! focus-visible:outline-focus";
+
+export const SIMPLE_TOP_BUTTON = `flex size-9 shrink-0 items-center justify-center rounded-full text-ink/90 ${ELEVATED_CONTROL} ${ELEVATED_HOVER} focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus`;
 
 /** The round control at either end of the phone bot list's top row. */
 export const PHONE_TOP_BUTTON = "flex size-10 shrink-0 items-center justify-center rounded-full border border-hairline bg-card text-ink hover:bg-raised focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus";
@@ -17,11 +21,13 @@ export const SIMPLE_RAIL_BUTTON = "flex size-9 shrink-0 items-center justify-cen
  * traffic-light zone, which swallows clicks before 88px.
  * Once mounted it is portaled to the end of <body> and pinned to the sidebar's edge: Electron applies -webkit-app-region
  * rects in document order, so the chat header's drag region (which comes after the sidebar) would otherwise swallow it. */
-export function SidebarEdgeToggle({ collapsed, onToggle, style, anchorRef }: {
+export function SidebarEdgeToggle({ collapsed, onToggle, style, anchorRef, shown = true, onHover }: {
   collapsed: boolean;
   onToggle: () => void;
   style?: CSSProperties;
   anchorRef?: RefObject<HTMLElement | null>;
+  shown?: boolean;
+  onHover?: (inside: boolean) => void;
 }) {
   const [edge, setEdge] = useState<{ left: number; top: number } | null>(null);
   // A passive effect, not a layout one: React attaches the parent <aside>'s ref after its children's layout effects run.
@@ -50,10 +56,14 @@ export function SidebarEdgeToggle({ collapsed, onToggle, style, anchorRef }: {
       aria-label={t(collapsed ? "sidebar.density.expand" : "sidebar.density.collapseAria")}
       aria-expanded={!collapsed}
       title={t(collapsed ? "sidebar.density.expand" : "sidebar.density.collapse")}
-      style={pinned ? { ...style, left: edge.left, top: edge.top + 7 } : style}
+      style={pinned ? { ...style, left: edge.left, top: edge.top + 14 } : style}
+      onPointerEnter={() => onHover?.(true)}
+      onPointerLeave={() => onHover?.(false)}
       className={cn(
         pinned ? "fixed" : "absolute -right-[14px]",
-        "top-[7px] z-30 hidden h-8 w-[14px] items-center justify-center rounded-r-[4px] border border-l-0 border-hairline/50 bg-panel text-ink-tertiary shadow-[1px_0_2px_rgb(0_0_0/0.06)] hover:bg-raised hover:text-ink focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus md:flex",
+        shown ? "opacity-100" : "pointer-events-none opacity-0 focus-visible:pointer-events-auto focus-visible:opacity-100 touch:pointer-events-auto touch:opacity-100",
+        "transition-opacity duration-150",
+        "top-[14px] z-30 hidden h-8 w-[14px] items-center justify-center rounded-r-[4px] border border-l-0 border-hairline/50 bg-panel text-ink-tertiary shadow-[1px_0_2px_rgb(0_0_0/0.06)] hover:bg-raised hover:text-ink focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus md:flex",
       )}
     >
       <Arrow size={12} strokeWidth={2.25} aria-hidden="true" />
@@ -72,9 +82,9 @@ export function SidebarSearchToggle({ open, onToggle, ref }: { open: boolean; on
       aria-label={t("sidebar.searchAria")}
       aria-expanded={open}
       title={t("sidebar.searchAria")}
-      className={cn(SIMPLE_TOP_BUTTON, open && "bg-raised")}
+      className={SIMPLE_TOP_BUTTON}
     >
-      <Search size={15} strokeWidth={2} aria-hidden="true" />
+      <Search size={18} strokeWidth={1.5} aria-hidden="true" />
     </button>
   );
 }
@@ -82,7 +92,7 @@ export function SidebarSearchToggle({ open, onToggle, ref }: { open: boolean; on
 export function SidebarSearchPill({ query, onQuery, onClose }: { query: string; onQuery: (query: string) => void; onClose: () => void }) {
   return (
     <div data-sidebar-search-pill className="px-3 pb-2 pt-0.5">
-      <div className="flex h-[34px] items-center gap-2 rounded-full bg-raised/60 pl-3 pr-1.5 text-ink-secondary focus-within:ring-1 focus-within:ring-focus">
+      <div className={cn("flex h-[34px] items-center gap-2 rounded-full pl-3 pr-1.5 text-ink-secondary focus-within:ring-focus", ELEVATED_CONTROL)}>
         <Search size={15} aria-hidden="true" className="shrink-0" />
         <input
           autoFocus

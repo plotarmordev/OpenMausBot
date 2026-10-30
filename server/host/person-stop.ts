@@ -4,6 +4,7 @@ import type { HandoffView } from "../coordinator.ts";
 import type { Handoffs } from "../delta-context.ts";
 import { isStopCommand } from "../room-holds.ts";
 import type { RoutineManager } from "../routines.ts";
+import { cancelQueuedRecoveries } from "../steer-queue.ts";
 import type { Message, Store } from "../store.ts";
 import type { UsageTrigger } from "../usage-ledger.ts";
 
@@ -13,6 +14,8 @@ export interface PersonStopDeps {
   handoffs(): Pick<Handoffs, "stoppedByPerson">;
   interruptDirectThread(botId: string, threadId: string): Promise<void>;
   clearUnattended(threadId: string): void;
+  /** Remembers that the person stopped the turn running in this thread, so it ends as their stop. */
+  markStopped(threadId: string): void;
   /** Ends a goal running in this one-on-one chat, so the interrupted turn is its last. */
   stopGoal(threadId: string): void;
 }
@@ -33,15 +36,21 @@ export function createPersonStop(deps: PersonStopDeps) {
   const { store } = deps;
 
   async function stopThreadForPerson(botId: string, threadId: string): Promise<void> {
-    const routines = deps.routines();
-    const routine = routines?.activeBotRunForBot(botId);
-    if (routine?.threadId === threadId) {
-      await routines!.cancelRun(routine.id);
-      return;
+    const settleRecoveries = cancelQueuedRecoveries(botId, threadId);
+    try {
+      const routines = deps.routines();
+      const routine = routines?.activeBotRunForBot(botId);
+      if (routine?.threadId === threadId) {
+        await routines!.cancelRun(routine.id);
+        return;
+      }
+      deps.handoffs().stoppedByPerson(threadId);
+      deps.markStopped(threadId);
+      deps.stopGoal(threadId);
+      await deps.interruptDirectThread(botId, threadId);
+    } finally {
+      settleRecoveries();
     }
-    deps.handoffs().stoppedByPerson(threadId);
-    deps.stopGoal(threadId);
-    await deps.interruptDirectThread(botId, threadId);
   }
 
   /** Only a message made of stop words, from a person, acts as Stop: it is recorded, and never reaches the turn it ends. */

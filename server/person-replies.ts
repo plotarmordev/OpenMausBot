@@ -19,7 +19,7 @@ export interface PersonReplyDeps {
   startGroupTurn(groupId: string, text: string, replyTo: ReplyTarget, sendId: string, mode: "chat", queueId: undefined,
     options: { threadId: string; sender?: ResolvedSender; trigger: UsageTrigger }): unknown;
   startOrQueueDirectMessage(botId: string, threadId: string, text: string, replyTo: ReplyTarget, sendId: string,
-    sender?: ResolvedSender, trigger?: UsageTrigger, via?: "call", callId?: string): Promise<{ queued?: true }>;
+    sender?: ResolvedSender, trigger?: UsageTrigger, via?: "call", callId?: string, auth?: RequestAuth): Promise<{ queued?: true }>;
 }
 
 /** A person's answer to one message: it becomes their next message to the bot that wrote it, addressed to that bot by
@@ -94,7 +94,7 @@ export function createPersonReplies(deps: PersonReplyDeps) {
         deps.startGroupTurn(current.id, text, target, sendId, "chat", undefined, { threadId, sender, trigger });
         return { queued: false };
       }
-      const direct = await deps.startOrQueueDirectMessage(owner.id, threadId, text, target, sendId, sender, trigger, via, callId);
+      const direct = await deps.startOrQueueDirectMessage(owner.id, threadId, text, target, sendId, sender, trigger, via, callId, auth);
       return { queued: Boolean(direct.queued) };
     });
   }

@@ -45,21 +45,24 @@ function parseSkins(source) {
   return skins;
 }
 
-/** The `@media (max-width: 767.98px) { … }` block, cut out of the source so its
- * skin selectors are not mistaken for a second definition of the skin. */
+/** The `@media (max-width: 767.98px) { … }` block that re-declares skin tokens,
+ * cut out of the source so its skin selectors are not mistaken for a second
+ * definition of the skin. Other blocks under the same query hold layout only. */
 function splitPhone(source) {
-  const start = source.search(/@media \(max-width: 767\.98px\)\s*\{/);
-  if (start < 0) return { desktop: source, phone: "" };
-  let depth = 0;
-  let end = source.indexOf("{", start);
-  for (let i = end; i < source.length; i++) {
-    if (source[i] === "{") depth++;
-    else if (source[i] === "}" && --depth === 0) {
-      end = i + 1;
-      break;
+  for (const { index: start } of source.matchAll(/@media \(max-width: 767\.98px\)\s*\{/g)) {
+    let depth = 0;
+    let end = source.indexOf("{", start);
+    for (let i = end; i < source.length; i++) {
+      if (source[i] === "{") depth++;
+      else if (source[i] === "}" && --depth === 0) {
+        end = i + 1;
+        break;
+      }
     }
+    const phone = source.slice(start, end);
+    if (phone.includes("[data-skin=")) return { desktop: source.slice(0, start) + source.slice(end), phone };
   }
-  return { desktop: source.slice(0, start) + source.slice(end), phone: source.slice(start, end) };
+  return { desktop: source, phone: "" };
 }
 
 function parseHex(value) {

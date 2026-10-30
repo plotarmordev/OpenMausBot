@@ -144,6 +144,42 @@ reason otherwise; `OMB_UI_E2E=1` forces the verified download. The `ui-smoke`
 job in `.github/workflows/ci.yml` runs it on Ubuntu 24.04 and uploads the
 screenshot; it is not one of the required checks.
 
+## Mobile text and code blocks
+
+```sh
+OMB_UI_E2E=1 pnpm exec vitest run scripts/testing/mobile-code-blocks-ui.e2e.test.ts
+pnpm exec vitest run src/components/ChatMarkdown.block-actions.test.ts src/components/ChatMarkdown.test.ts src/lib/copy-text.test.ts
+```
+
+The browser recipe sends a synthetic reply through a disposable fake-engine
+server and renders it in the real chat. Its five blocks cover plaintext,
+highlighted code, an unknown language, an omitted language, and indented code.
+Copy preserves only the selected block's text, including whitespace; Wrap and
+Unwrap affect only that block and leave the copied source unchanged.
+
+At narrow widths and on coarse-pointer or no-hover devices, the labeled actions
+occupy their own row with at least 44px touch targets. Check 320px and 390px
+portrait, landscape and tablet widths, and a desktop with a fine pointer.
+Long tokens must wrap within the bubble when Wrap is selected; unwrapped code
+can scroll horizontally inside its block without widening the page. Copy keeps
+a stable mobile label while its icon shows success or failure; a persistent
+live region exposes the feedback to assistive technology. Keyboard focus has
+an outline.
+
+A hosted Linux runner has no mouse, so its headless Chrome reports no hover.
+The recipe starts Chrome with a fine, hovering pointer and runs the desktop
+pass before touch emulation starts: once touch emulation is switched on or
+off, Chrome goes back to the host's own pointer.
+
+This is mobile web renderer coverage in an isolated Chromium profile. It does
+not verify the separately maintained native iOS or Android clients, physical
+devices, or Safari. Clipboard permissions are confined to the fixture origin;
+the refusal case replaces only that disposable page's clipboard writer.
+
+| Before: small icon-only actions | After: labeled touch controls |
+| --- | --- |
+| ![Before at 390px](assets/mobile-code-blocks/before-390.png) | ![After at 390px](assets/mobile-code-blocks/after-390.png) |
+
 ## Thinking timer across thread switches
 
 `scripts/testing/thinking-timer-ui.e2e.test.ts` holds the working row's

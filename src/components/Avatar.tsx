@@ -6,7 +6,9 @@ import {
   useRef,
   useState,
   type PointerEvent as ReactPointerEvent,
+  type ReactNode,
 } from "react";
+import { cn } from "@/lib/cn";
 import { CHROME_EYES, CHROME_GRADIENT, MAUS_COLORS, type MausColor, type MausMotion, type MausState } from "@/lib/mascot";
 import { CursorAvatar, type CursorAvatarHandle } from "./CursorAvatar";
 import { avatarCropRadius, botAvatarProfile, clampAvatarFocus, clampAvatarZoom, type BotAvatarCrop } from "../../shared/bot-avatar";
@@ -297,22 +299,29 @@ export function InitialsAvatar({
   initials,
   avatarUrl,
   size = 32,
+  fallback,
+  fontSize,
+  className,
 }: {
   initials: string;
   avatarUrl?: string;
   size?: number;
+  className?: string;
+  /** drawn instead of the initials, for a person with no name or email to take them from */
+  fallback?: ReactNode;
+  fontSize?: number;
 }) {
   // A picture that is gone (a restored backup carries the address, not the file) falls back to the initials.
   const [failed, setFailed] = useState<string | null>(null);
   if (avatarUrl && failed !== avatarUrl) {
-    return <img src={avatarUrl} alt="" onError={() => setFailed(avatarUrl)} className="shrink-0 rounded-full object-cover" style={{ width: size, height: size }} />;
+    return <img src={avatarUrl} alt="" onError={() => setFailed(avatarUrl)} className={cn("shrink-0 rounded-full object-cover", className)} style={{ width: size, height: size }} />;
   }
   return (
     <div
-      className="flex shrink-0 items-center justify-center rounded-full bg-raised text-ink-secondary font-medium"
-      style={{ width: size, height: size, fontSize: size * 0.38 }}
+      className={cn("flex shrink-0 items-center justify-center rounded-full bg-raised text-ink-secondary font-medium", className)}
+      style={{ width: size, height: size, fontSize: fontSize ?? size * 0.38 }}
     >
-      {initials}
+      {fallback ?? initials}
     </div>
   );
 }

@@ -25,6 +25,7 @@ export function SidebarSectionHeader({
   onMenu,
   menuOpen = false,
   lead,
+  count,
 }: {
   name: string;
   collapsed: boolean;
@@ -43,6 +44,8 @@ export function SidebarSectionHeader({
   menuOpen?: boolean;
   /** On a Team Cloud, the person every bot in this department reports to. */
   lead?: string;
+  /** How many rows the section holds, shown at rest where the chevron shows on hover (Simple). */
+  count?: number;
 }) {
   const Chevron = collapsed ? ChevronRight : ChevronDown;
   const leadLabel = lead ? <span data-department-lead={lead} title={t("owner.departmentLeadAria", { department: name, name: lead })}
@@ -67,6 +70,12 @@ export function SidebarSectionHeader({
       : t("sidebar.section.collapse", { name });
 
   if (line) {
+    const tail = (
+      <span aria-hidden="true" className="relative flex size-4 shrink-0 items-center justify-center">
+        {count !== undefined && <span className={cn("text-[12px] tabular-nums leading-4 text-ink-secondary transition-opacity", onToggle && "group-hover/section:opacity-0 group-focus-within/section:opacity-0 touch:opacity-0")}>{count}</span>}
+        {onToggle && <Chevron size={14} className="absolute text-ink-secondary opacity-0 transition-opacity group-hover/section:opacity-100 group-focus-within/section:opacity-100 touch:opacity-100" />}
+      </span>
+    );
     return (
       <div
         data-section={name}
@@ -76,7 +85,7 @@ export function SidebarSectionHeader({
         draggable={reorderable || undefined}
         onDragStart={reorderable ? onDragStart : undefined}
         onDragEnd={reorderable ? onDragEnd : undefined}
-        className={cn("flex items-center gap-2 pb-1.5 pl-1.5 pr-0.5 pt-3.5", reorderable && "cursor-grab", dragging && "opacity-40")}
+        className={cn("group/section flex h-[30px] items-center gap-1.5 rounded-[6px] px-2 pb-1.5 pt-2 hover:bg-raised/50", reorderable && "cursor-grab", dragging && "opacity-40")}
       >
         {onToggle ? (
           <button
@@ -86,20 +95,21 @@ export function SidebarSectionHeader({
             aria-expanded={!collapsed}
             aria-keyshortcuts={reorderable ? "Alt+ArrowUp Alt+ArrowDown" : undefined}
             title={toggleTitle}
-            className="flex min-w-0 shrink items-center gap-1 rounded px-0.5 text-left text-[12px] font-medium tracking-[0.01em] text-ink-tertiary hover:text-ink-secondary focus-visible:outline focus-visible:outline-2 focus-visible:outline-focus"
+            className="flex min-w-0 flex-1 items-center gap-1.5 rounded text-left focus-visible:outline focus-visible:outline-2 focus-visible:outline-focus"
           >
-            <span className="truncate">{name}</span>
-            {collapsed && <ChevronRight size={11} className="shrink-0" aria-hidden="true" />}
-            <SectionAttention attention={attention} label={attentionLabel} alert={alert} />
+            <span className="min-w-0 flex-1 truncate text-[12px] leading-4 text-ink-secondary">{name}</span>
+            {leadLabel}
+            {collapsed && <SectionAttention attention={attention} label={attentionLabel} alert={alert} />}
+            {tail}
           </button>
         ) : (
-          <div className="flex min-w-0 shrink items-center px-0.5 text-[12px] font-medium tracking-[0.01em] text-ink-tertiary">
-            <span className="truncate">{name}</span>
+          <div className="flex min-w-0 flex-1 items-center gap-1.5">
+            <span className="min-w-0 flex-1 truncate text-[12px] leading-4 text-ink-secondary">{name}</span>
+            {leadLabel}
             {attentionLabel && <span className="sr-only">{attentionLabel}</span>}
+            {tail}
           </div>
         )}
-        <span aria-hidden="true" className="h-px min-w-4 flex-1 bg-hairline/60" />
-        {leadLabel}
         {onMenu && (
           <button
             type="button"
@@ -108,7 +118,7 @@ export function SidebarSectionHeader({
             aria-haspopup="menu"
             aria-expanded={menuOpen}
             onClick={(event) => onMenu(event.currentTarget)}
-            className="flex h-[18px] w-[22px] shrink-0 items-center justify-center rounded-[5px] text-ink-tertiary hover:bg-raised hover:text-ink focus-visible:outline focus-visible:outline-2 focus-visible:outline-focus aria-expanded:bg-raised aria-expanded:text-ink"
+            className="flex h-[18px] w-[22px] shrink-0 items-center justify-center rounded-[5px] text-ink-tertiary opacity-0 transition-opacity hover:bg-raised hover:text-ink focus-visible:opacity-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-focus group-hover/section:opacity-100 group-focus-within/section:opacity-100 aria-expanded:bg-raised aria-expanded:text-ink aria-expanded:opacity-100 touch:opacity-100"
           >
             <MoreHorizontal size={15} aria-hidden="true" />
           </button>

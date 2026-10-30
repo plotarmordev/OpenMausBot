@@ -11,6 +11,7 @@ import { rebuiltSessionNotice } from "./resume-recovery.ts";
 import { removeTempDir } from "./testing/cleanup.ts";
 import { readHandoffs } from "./testing/handoff-rows.ts";
 import { openSse } from "./testing/sse.ts";
+import { launchRestartableServer } from "./testing/restartable-server.ts";
 
 /** A fixture turn's launch instructions plus its own message, where changed parts arrive when the process was kept warm. */
 const told = (turn: any): string => {
@@ -19,16 +20,19 @@ const told = (turn: any): string => {
 };
 
 /** With OMB_TEST_DESKTOP_OWNER_TOKEN it runs as the desktop app runs it, every change carrying the app's owner capability. */
-async function fixture(test: (f: any) => Promise<void>, fakeEnv: NodeJS.ProcessEnv = {}) {
+async function fixture(test: (f: any) => Promise<void>, fakeEnv: NodeJS.ProcessEnv = {}, restartable = false) {
   const desktopOwner = fakeEnv.OMB_TEST_DESKTOP_OWNER_TOKEN;
   const realFetch = globalThis.fetch;
   if (desktopOwner) globalThis.fetch = (input, init = {}) => realFetch(input, { ...init,
     headers: { ...Object.fromEntries(new Headers(init.headers)), "x-openmausbot-desktop-owner": desktopOwner } });
-  try { await fixtureSession(test, fakeEnv); } finally { globalThis.fetch = realFetch; }
+  try { await fixtureSession(test, fakeEnv, restartable); } finally { globalThis.fetch = realFetch; }
 }
 
-async function fixtureSession(test: (f: any) => Promise<void>, fakeEnv: NodeJS.ProcessEnv) {
-  const session = await launchVerificationServer({ ...process.env, ...fakeEnv }, undefined, undefined, undefined, undefined, { scripted: true });
+async function fixtureSession(test: (f: any) => Promise<void>, fakeEnv: NodeJS.ProcessEnv, restartable: boolean) {
+  const server = restartable ? await launchRestartableServer({ scripted: true }) : undefined;
+  const session = server
+    ? { info: { url: server.url, dataDir: server.dataDir }, close: server.close }
+    : await launchVerificationServer({ ...process.env, ...fakeEnv }, undefined, undefined, undefined, undefined, { scripted: true });
   const cli = (...args: string[]) => runControlOmb(args, { env: { OPENMAUSBOT_URL: session.info.url } }) as Promise<any>;
   const api = (path: string, body?: unknown, method = "POST") => request(path, body === undefined ? {} : { method, body: JSON.stringify(body) }, session.info.url) as Promise<any>;
   try {
@@ -54,7 +58,8 @@ async function fixtureSession(test: (f: any) => Promise<void>, fakeEnv: NodeJS.P
     const messages = async (threadId: string) => (await api(`/api/threads/${threadId}/messages`)).messages;
     const start = async () => { save(); return cli("send", "--bot", chief.id, "--task", chief.activeTaskId, "--text", "Please have Engineering build and independently verify a CSV export. Own the result."); };
     const wait = () => cli("wait", "--bot", chief.id, "--task", chief.activeTaskId, "--timeout", "30");
-    await test({ session, cli, api, chief, lead, specialist, plan, save, start, wait, nodes, eventsOf, evidence, messages });
+    await test({ session, cli, api, chief, lead, specialist, plan, save, start, wait, nodes, eventsOf, evidence, messages,
+      restart: async () => { await server!.stop(); await server!.start(); } });
   } finally { await session.close(); }
 }
 
@@ -709,6 +714,161 @@ it("queues a recipient at capacity, preserving its existing task and resuming on
   expect((await f.messages(f.lead.activeTaskId)).some((message: any) => message.text === "Unrelated work completed")).toBe(true);
   expect(f.evidence().filter((turn: any) => turn.botId === f.lead.id).map((turn: any) => turn.threadId)).toEqual([f.lead.activeTaskId, f.nodes().find((node: any) => node.parentId && node.botId === f.lead.id).threadId]);
 }), 45_000);
+
+it.each(["typed", "guarded relay"])("resumes a person's %s main-chat root while a routine holds every capacity slot", (ingress) => fixture(async f => {
+  await f.api("/api/config", { threads: { maxConcurrentPerBot: 1 } }, "PATCH");
+  const childGate = join(f.session.info.dataDir, "capacity-child");
+  const routineGate = join(f.session.info.dataDir, "capacity-routine");
+  const routineReady = join(f.session.info.dataDir, "capacity-routine-ready");
+  f.plan[f.lead.id] = { gateFile: childGate, reply: "Saturated delegation finished" };
+  f.plan[f.chief.id].byPrompt = [{
+    promptIncludes: "HOLD_ROUTINE_CAPACITY",
+    plan: { gateFile: routineGate, readyFile: routineReady, reply: "Routine finished" },
+  }];
+  if (ingress === "typed") await f.start();
+  else {
+    f.save();
+    await f.api(`/api/bots/${f.chief.id}`, { approvalMode: "ask", autoApprove: false }, "PATCH");
+    const snapshot = await f.api(`/api/threads/${f.chief.activeTaskId}/messages`);
+    const relay = await f.api(`/api/bots/${f.chief.id}/messages/guarded`, {
+      threadId: f.chief.activeTaskId, sendId: "guarded-coordinator-person", text: "Please have Engineering build and independently verify a CSV export. Own the result.",
+      expectedActiveLeafId: snapshot.activeLeafId, expectedApprovalMode: "ask", onBehalfOf: { name: "Sam", email: "sam@example.test" },
+    });
+    expect(relay.queued).toBeUndefined();
+  }
+  await assigningTurnEnded(f);
+  const routine = (await f.api("/api/routines", {
+    name: "Coordinator capacity holder", prompt: "HOLD_ROUTINE_CAPACITY", target: "bot", botId: f.chief.id,
+    runOn: "maus", enabled: true, schedule: { type: "daily", time: "23:00" },
+  })).routine;
+  try {
+    await f.api(`/api/routines/${routine.id}/run`, {});
+    await expect.poll(() => existsSync(routineReady), { timeout: 20_000 }).toBe(true);
+    writeFileSync(childGate, "return the delegated result");
+    await expect.poll(async () => (await f.messages(f.chief.activeTaskId))
+      .some((message: { text?: string }) => message.text === "The requested CSV export is implemented and verified"), { timeout: 20_000 }).toBe(true);
+    const chief = (await f.api("/api/bots?messages=0")).bots.find((bot: { id: string }) => bot.id === f.chief.id);
+    expect(chief.tasks.some((task: { threadId: string; busy: boolean }) => task.threadId !== f.chief.activeTaskId && task.busy)).toBe(true);
+    expect(f.nodes().find((node: { parentId?: string; threadId: string }) => !node.parentId && node.threadId === f.chief.activeTaskId)?.status).toBe("completed");
+  } finally {
+    writeFileSync(childGate, "finish child");
+    writeFileSync(routineGate, "finish routine");
+  }
+}, { OMB_TEST_DESKTOP_OWNER_TOKEN: randomBytes(32).toString("base64url") }), 90_000);
+
+it.each(["peer", "peer restart", "relay restart"])("preserves capacity provenance for %s", (ingress) => fixture(async f => {
+  await f.api("/api/config", { threads: { maxConcurrentPerBot: 1 } }, "PATCH");
+  const childGate = join(f.session.info.dataDir, "provenance-child");
+  const routineGate = join(f.session.info.dataDir, "provenance-routine");
+  const routineReady = join(f.session.info.dataDir, "provenance-routine-ready");
+  const relay = ingress === "relay restart";
+  const delegation = { steps: [{ arguments: { bot_ids: [f.lead.id], message: "PROVENANCE_CHILD" } }],
+    reply: "Delegated", resumeReply: "PROVENANCE_RESUMED" };
+  f.plan[f.lead.id] = { gateFile: childGate, reply: "Child finished" };
+  f.plan[f.chief.id] = {
+    ...(relay ? delegation : { steps: [{ tool: "start_thread", arguments: { title: "Self opened provenance", message: "PROVENANCE_PEER" } }], reply: "Opened" }),
+    byPrompt: [
+      { promptIncludes: "PROVENANCE_PEER", plan: delegation },
+      { promptIncludes: "PROVENANCE_ROUTINE", plan: { gateFile: routineGate, readyFile: routineReady, reply: "Routine finished" } },
+    ],
+  };
+  f.save();
+  if (relay) {
+    await f.api(`/api/bots/${f.chief.id}`, { approvalMode: "ask", autoApprove: false }, "PATCH");
+    const snapshot = await f.api(`/api/threads/${f.chief.activeTaskId}/messages`);
+    await f.api(`/api/bots/${f.chief.id}/messages/guarded`, {
+      threadId: f.chief.activeTaskId, sendId: "provenance-guarded-person", text: "Delegate the provenance child",
+      expectedActiveLeafId: snapshot.activeLeafId, expectedApprovalMode: "ask", onBehalfOf: { name: "Sam" },
+    });
+  } else await f.start();
+  try {
+    await expect.poll(() => f.nodes().find((node: { parentId?: string }) => node.parentId)?.status, { timeout: 30_000 }).toBe("running");
+    const child = f.nodes().find((node: { parentId?: string }) => node.parentId);
+    const root = f.nodes().find((node: { id: string }) => node.id === child.parentId);
+    await expect.poll(() => f.nodes().find((node: { id: string }) => node.id === root.id)?.status, { timeout: 20_000 }).toBe("waiting");
+    if (!relay) {
+      expect((await f.messages(root.threadId)).some((message: { peerAsk?: { botId: string } }) => message.peerAsk?.botId === f.chief.id)).toBe(true);
+      await f.api(`/api/bots/${f.chief.id}/tasks/${f.chief.activeTaskId}`, { archivedAt: Date.now() }, "PATCH");
+      expect((await f.api("/api/bots?messages=0")).bots.find((bot: { id: string }) => bot.id === f.chief.id).mainThreadId).toBe(root.threadId);
+    }
+    if (ingress.includes("restart")) await f.restart();
+    if (relay) {
+      const db = new DatabaseSync(join(f.session.info.dataDir, "runtime.db"), { readOnly: true });
+      try {
+        const stored = db.prepare("SELECT json FROM assignments WHERE id = ?").get(root.id);
+        expect(JSON.parse(String(stored!.json))).toMatchObject({ origin: { kind: "outside", source: "relay" }, capacity: "person" });
+      } finally { db.close(); }
+      expect(f.nodes().find((node: { id: string }) => node.id === root.id)).toMatchObject({ origin: { kind: "outside" }, capacity: "person" });
+      expect(f.nodes().find((node: { id: string }) => node.id === child.id).origin).toEqual({ kind: "outside" });
+    }
+    const routine = (await f.api("/api/routines", {
+      name: "Provenance capacity holder", prompt: "PROVENANCE_ROUTINE", target: "bot", botId: f.chief.id,
+      runOn: "maus", enabled: true, schedule: { type: "daily", time: "23:00" },
+    })).routine;
+    await f.api(`/api/routines/${routine.id}/run`, {});
+    await expect.poll(() => existsSync(routineReady), { timeout: 20_000 }).toBe(true);
+    writeFileSync(childGate, "finish");
+    await expect.poll(() => f.nodes().find((node: { id: string }) => node.id === child.id)?.status, { timeout: 30_000 }).toBe("completed");
+    const resumed = async () => (await f.messages(root.threadId)).some((message: { text?: string }) => message.text === "PROVENANCE_RESUMED");
+    if (!relay) {
+      await expect.poll(() => f.eventsOf(root.id)).toContain("resume_due");
+      expect(await resumed()).toBe(false);
+      expect(f.nodes().find((node: { id: string }) => node.id === root.id).status).toBe("resume");
+      expect(f.nodes().find((node: { id: string }) => node.id === root.id).capacity).toBeUndefined();
+      writeFileSync(routineGate, "release");
+    }
+    await expect.poll(resumed, { timeout: 30_000 }).toBe(true);
+    if (relay) expect((await f.api("/api/bots?messages=0")).bots.find((bot: { id: string }) => bot.id === f.chief.id)
+      .tasks.some((task: { threadId: string; busy: boolean }) => task.threadId !== root.threadId && task.busy)).toBe(true);
+  } finally {
+    writeFileSync(childGate, "finish");
+    writeFileSync(routineGate, "finish");
+  }
+}, {}, true), 120_000);
+
+it.each([false, true])("caps non-person main coordinator recovery with restart=%s", (restart) => fixture(async f => {
+  await f.api("/api/config", { threads: { maxConcurrentPerBot: 1 } }, "PATCH");
+  const childGate = join(f.session.info.dataDir, "admin-child");
+  const routineGate = join(f.session.info.dataDir, "admin-routine");
+  const routineReady = join(f.session.info.dataDir, "admin-routine-ready");
+  f.plan[f.lead.id] = { gateFile: childGate, reply: "Admin child finished" };
+  f.plan[f.chief.id] = {
+    steps: [{ arguments: { bot_ids: [f.lead.id], message: "ADMIN_CHILD" } }],
+    reply: "Delegated", resumeReply: "ADMIN_RESUMED",
+    byPrompt: [{ promptIncludes: "ADMIN_ROUTINE", plan: { gateFile: routineGate, readyFile: routineReady, reply: "Routine finished" } }],
+  };
+  f.save();
+  await f.api(`/api/bots/${f.chief.id}`, { approvalMode: "ask", autoApprove: false }, "PATCH");
+  const snapshot = await f.api(`/api/threads/${f.chief.activeTaskId}/messages`);
+  await f.api(`/api/bots/${f.chief.id}/messages/guarded`, {
+    threadId: f.chief.activeTaskId, sendId: "admin-capacity-root", text: "Delegate admin work",
+    expectedActiveLeafId: snapshot.activeLeafId, expectedApprovalMode: "ask",
+  });
+  try {
+    await assigningTurnEnded(f);
+    const child = f.nodes().find((node: { parentId?: string }) => node.parentId);
+    const root = f.nodes().find((node: { id: string }) => node.id === child.parentId);
+    if (restart) await f.restart();
+    expect(f.nodes().find((node: { id: string }) => node.id === root.id).capacity).toBeUndefined();
+    const routine = (await f.api("/api/routines", {
+      name: "Admin capacity holder", prompt: "ADMIN_ROUTINE", target: "bot", botId: f.chief.id,
+      runOn: "maus", enabled: true, schedule: { type: "daily", time: "23:00" },
+    })).routine;
+    await f.api(`/api/routines/${routine.id}/run`, {});
+    await expect.poll(() => existsSync(routineReady), { timeout: 20_000 }).toBe(true);
+    writeFileSync(childGate, "finish");
+    await expect.poll(() => f.eventsOf(root.id)).toContain("resume_due");
+    expect(f.nodes().find((node: { id: string }) => node.id === root.id).status).toBe("resume");
+    expect((await f.messages(root.threadId)).some((message: { text?: string }) => message.text === "ADMIN_RESUMED")).toBe(false);
+    expect((await f.api("/api/bots?messages=0")).bots.find((bot: { id: string }) => bot.id === f.chief.id)
+      .tasks.filter((task: { busy: boolean }) => task.busy).map((task: { threadId: string }) => task.threadId)).not.toContain(root.threadId);
+    writeFileSync(routineGate, "release");
+    await expect.poll(async () => (await f.messages(root.threadId)).some((message: { text?: string }) => message.text === "ADMIN_RESUMED"), { timeout: 30_000 }).toBe(true);
+  } finally {
+    writeFileSync(childGate, "finish");
+    writeFileSync(routineGate, "finish");
+  }
+}, {}, true), 120_000);
 
 /** A message sent while the Chief's assigning turn is still finishing is steered into that turn, so it is never parked or started on its own. */
 const assigningTurnEnded = (f: any) => expect.poll(async () => {

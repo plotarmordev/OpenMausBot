@@ -155,7 +155,7 @@ describe("createGateInterceptor", () => {
   const free: ControlState = { held: false, helpOpen: false };
   const person: ControlState = { held: true, helpOpen: false, reason: "person" };
 
-  function harness(check: () => Promise<ControlState>) {
+  function harness(check: (frame?: unknown) => Promise<ControlState>) {
     const forwarded: string[] = [];
     const refused: string[] = [];
     const intercept = createGateInterceptor({
@@ -176,6 +176,16 @@ describe("createGateInterceptor", () => {
     expect(refused).toEqual([]);
     expect(forwarded).toHaveLength(4);
     expect(forwarded[3]).toBe("not json at all");
+  });
+
+  it("hands the gate the tools/call frame it is checking, so a first ask can name what the call opens", async () => {
+    const seen: unknown[] = [];
+    const { forwarded, intercept } = harness(async (...args: unknown[]) => { seen.push(args[0]); return free; });
+    const call = JSON.stringify({ jsonrpc: "2.0", id: 7, method: "tools/call", params: { name: "launch_app", arguments: { bundle_id: "com.google.Chrome" } } });
+    intercept(call);
+    await drain();
+    expect(forwarded).toEqual([call]);
+    expect(seen).toEqual([JSON.parse(call)]);
   });
 
   it("refuses only tools/call while the person is driving", async () => {

@@ -11,7 +11,11 @@ import type { UsageTrigger } from "./usage-ledger.ts";
 import { MessageSearchWorker } from "./message-search-worker.ts";
 import { searchMessagesInDatabase, type SearchHit } from "./message-search-query.ts";
 import type { Notification, NotificationLogEntry } from "../shared/notification.ts";
+import { insertNotificationRow, markNotificationRowsRead, markThreadNotificationRowsRead, readNotificationLog } from "./notification-log-query.ts";
 export type { SearchHit } from "./message-search-query.ts";
+import type { QueuedAutomaticRecovery } from "./turn-options.ts";
+import { isNewInput, migrateInputOrder, nextInputOrder, queuedInputAfter, stampInputOrder } from "./input-order.ts";
+import type { OpenTransaction } from "./sqlite-transaction.ts";
 
 const DB_FILE = () => join(DATA_DIR, "messages.db");
 /** The rows the Today page reads, and among them the failed tool calls. JSON.stringify escapes every quote inside a
@@ -33,6 +37,7 @@ function open(): DatabaseSync {
     chmodSync(file, 0o600);
   } catch {}
   const db = new DatabaseSync(file);
+  db.exec("PRAGMA busy_timeout = 5000");
   db.exec("PRAGMA journal_mode = WAL");
   db.exec("PRAGMA synchronous = NORMAL");
   db.exec(`
@@ -90,8 +95,17 @@ function open(): DatabaseSync {
     );
     CREATE INDEX IF NOT EXISTS notification_log_at ON notification_log(at);
   `);
-  const notificationColumns = db.prepare("PRAGMA table_info(notification_log)").all() as Array<{ name: string }>;
-  if (!notificationColumns.some((column) => column.name === "for_person")) db.exec("ALTER TABLE notification_log ADD COLUMN for_person TEXT");
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    migrateInputOrder(db as OpenTransaction);
+    const notificationColumns = db.prepare("PRAGMA table_info(notification_log)").all() as Array<{ name: string }>;
+    if (!notificationColumns.some((column) => column.name === "for_person")) db.exec("ALTER TABLE notification_log ADD COLUMN for_person TEXT");
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    db.close();
+    throw error;
+  }
   ensureRecallIndex(db);
   ensureMemoryIndex(db);
   return db;
@@ -177,8 +191,8 @@ function db(): DatabaseSync {
 }
 
 let transactionDepth = 0;
-function transaction<T>(fn: (database: DatabaseSync) => T): T {
-  const database = db();
+function transaction<T>(fn: (database: OpenTransaction) => T): T {
+  const database = db() as OpenTransaction;
   if (transactionDepth > 0) {
     const savepoint = `command_${transactionDepth}`;
     database.exec(`SAVEPOINT ${savepoint}`);
@@ -223,6 +237,8 @@ export interface FollowupPayload {
   sender?: ResolvedSender;
   trigger?: UsageTrigger;
   origin?: WorkOrigin;
+  capacity?: "person";
+  recovery?: QueuedAutomaticRecovery;
   queuedAt?: number;
 }
 export type FollowupStatus = "pending" | "dispatching" | "interrupted" | "cancelled";
@@ -236,8 +252,8 @@ export interface ChatFollowup {
 }
 
 /** A 202/cancel/dispatch claim must reach disk (FULL sync) before its result is published. */
-function writeFollowups(write: (connection: DatabaseSync) => void): void {
-  const connection = db();
+function writeFollowups(write: (connection: OpenTransaction) => void): void {
+  const connection = db() as OpenTransaction;
   connection.exec("PRAGMA synchronous = FULL");
   try {
     connection.exec("BEGIN IMMEDIATE");
@@ -280,36 +296,7 @@ export function withCommandReceipt(
   });
 }
 
-const NOTIFICATION_LOG_LIMIT = 500;
-
-const rowToNotificationLogEntry = (row: {
-  id: string; at: number; kind: string; bot_id: string; bot_name: string; thread_id: string;
-  group_id: string | null; title: string; body: string; avatar_url: string | null; read: number; for_person: string | null;
-}): NotificationLogEntry => ({
-  id: row.id,
-  at: row.at,
-  kind: row.kind as NotificationLogEntry["kind"],
-  botId: row.bot_id,
-  botName: row.bot_name,
-  threadId: row.thread_id,
-  ...(row.group_id ? { groupId: row.group_id } : {}),
-  title: row.title,
-  body: row.body,
-  ...(row.avatar_url ? { avatarUrl: row.avatar_url } : {}),
-  ...(row.for_person ? { forPerson: row.for_person } : {}),
-  read: row.read !== 0,
-});
-
-export function insertNotificationLog(entry: NotificationLogEntry): void {
-  transaction((database) => {
-    database.prepare(
-      "INSERT INTO notification_log(id, at, kind, bot_id, bot_name, thread_id, group_id, title, body, avatar_url, for_person, read) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)",
-    ).run(entry.id, entry.at, entry.kind, entry.botId, entry.botName, entry.threadId, entry.groupId ?? null, entry.title, entry.body, entry.avatarUrl ?? null, entry.forPerson ?? null);
-    database.prepare(
-      "DELETE FROM notification_log WHERE id NOT IN (SELECT id FROM notification_log ORDER BY at DESC, rowid DESC LIMIT ?)",
-    ).run(NOTIFICATION_LOG_LIMIT);
-  });
-}
+export const insertNotificationLog = (entry: NotificationLogEntry): void => transaction((database) => insertNotificationRow(database, entry));
 
 /** A failed write is logged and the entry still returned, so the live frame is never lost to a full disk. */
 export function logNotification(notification: Notification): NotificationLogEntry {
@@ -322,27 +309,21 @@ export function logNotification(notification: Notification): NotificationLogEntr
   return entry;
 }
 
-export function recentNotificationLog(limit = NOTIFICATION_LOG_LIMIT): NotificationLogEntry[] {
-  const rows = db().prepare(
-    "SELECT id, at, kind, bot_id, bot_name, thread_id, group_id, title, body, avatar_url, for_person, read FROM notification_log ORDER BY at DESC, rowid DESC LIMIT ?",
-  ).all(limit) as Array<Parameters<typeof rowToNotificationLogEntry>[0]>;
-  return rows.map(rowToNotificationLogEntry);
-}
-
-export function markNotificationLogRead(ids: readonly string[]): void {
-  db().prepare("UPDATE notification_log SET read = 1 WHERE read = 0 AND id IN (SELECT value FROM json_each(?))").run(JSON.stringify(ids));
-}
-
+export const recentNotificationLog = (limit?: number): NotificationLogEntry[] => readNotificationLog(db(), limit);
+export const markNotificationLogRead = (ids: readonly string[]): void => markNotificationRowsRead(db(), ids);
 /** Opening a conversation reads its notifications, questions and approvals included. Returns the ids it flipped. */
-export function markThreadNotificationLogRead(threadId: string): string[] {
-  const rows = db().prepare("UPDATE notification_log SET read = 1 WHERE thread_id = ? AND read = 0 RETURNING id").all(threadId) as Array<{ id: string }>;
-  return rows.map((row) => row.id);
-}
+export const markThreadNotificationLogRead = (threadId: string): string[] => markThreadNotificationRowsRead(db(), threadId);
 
-export function saveChatFollowup(followup: Omit<ChatFollowup, "status">): void {
-  writeFollowups((connection) => connection.prepare(
-    "INSERT INTO chat_followups(id, kind, owner_id, thread_id, send_id, status, payload) VALUES (?, ?, ?, ?, ?, 'pending', ?)",
-  ).run(followup.id, followup.kind, followup.ownerId, followup.threadId, followup.payload.sendId ?? null, JSON.stringify(followup.payload)));
+/** `replaces` rows leave in the same transaction: the new row takes over their dispatch. */
+export function saveChatFollowup(followup: Omit<ChatFollowup, "status">, replaces: readonly string[] = []): void {
+  writeFollowups((connection) => {
+    const order = nextInputOrder(connection);
+    connection.prepare(
+      "INSERT INTO chat_followups(id, kind, owner_id, thread_id, send_id, status, payload, input_order) VALUES (?, ?, ?, ?, ?, 'pending', ?, ?)",
+    ).run(followup.id, followup.kind, followup.ownerId, followup.threadId, followup.payload.sendId ?? null, JSON.stringify(followup.payload), order);
+    const retire = connection.prepare("DELETE FROM chat_followups WHERE id = ? AND status = 'dispatching'");
+    for (const id of replaces) retire.run(id);
+  });
 }
 
 /** Cancellation tombstones remain so a retried sendId cannot resurrect a dispatch. */
@@ -370,6 +351,11 @@ export function chatFollowups(kind?: ChatFollowup["kind"]): ChatFollowup[] {
   return rows.map((row) => ({ id: row.id, kind: row.kind, ownerId: row.owner_id, threadId: row.thread_id,
     status: row.status, payload: JSON.parse(row.payload) as FollowupPayload }));
 }
+
+export const reserveInputOrder = (): number => transaction(nextInputOrder);
+
+export const hasQueuedInputAfter = (kind: ChatFollowup["kind"], ownerId: string, threadId: string, messageId: string | undefined, coordinatedInputOrder?: number): boolean =>
+  queuedInputAfter(db(), kind, ownerId, threadId, messageId, coordinatedInputOrder);
 
 export function cancelledChatFollowup(kind: ChatFollowup["kind"], ownerId: string, threadId: string, sendId: string): boolean {
   return Boolean(db().prepare(
@@ -477,8 +463,10 @@ export function importThread(threadId: string, messages: Message[], activeLeafId
 }
 
 export function appendMessage(threadId: string, message: Message): void {
-  transaction(() => {
+  transaction((database) => {
+    const newInput = isNewInput(database, threadId, message);
     insertMessage(threadId, message);
+    if (newInput) stampInputOrder(database, threadId, message.id);
     setActiveLeaf(threadId, message.id);
   });
 }
@@ -494,6 +482,17 @@ export function workingGoalRunMessages(): Array<{ threadId: string; message: Mes
     .prepare(
       "SELECT thread_id, json FROM messages " +
       "WHERE kind = 'goal.run' AND json_extract(json, '$.goalRun.status') = 'working'",
+    )
+    .all() as Array<{ thread_id: string; json: string }>;
+  return rows.map((row) => ({ threadId: row.thread_id, message: JSON.parse(row.json) as Message }));
+}
+
+/** First-reply rescue rows that never settled or ended: at boot, every one of them belongs to a turn that is gone. */
+export function openRescueMessages(): Array<{ threadId: string; message: Message }> {
+  const rows = db()
+    .prepare(
+      "SELECT thread_id, json FROM messages WHERE kind = 'activity' AND json_extract(json, '$.tool.rescue') IS NOT NULL " +
+      "AND json_extract(json, '$.tool.rescue.settled') IS NULL AND json_extract(json, '$.tool.rescue.over') IS NULL",
     )
     .all() as Array<{ thread_id: string; json: string }>;
   return rows.map((row) => ({ threadId: row.thread_id, message: JSON.parse(row.json) as Message }));
@@ -552,7 +551,7 @@ export function attentionRows(since: number): AttentionRow[] {
   return db().prepare(
     `${columns} FROM messages INDEXED BY messages_work_at WHERE ${WORK_KINDS} AND kind = 'options' AND at >= ? ` +
     "AND json_extract(json, '$.card.answered') IS NULL AND coalesce(json_extract(json, '$.card.dismissed'), 0) = 0 " +
-    "AND coalesce(json_extract(json, '$.card.expired'), 0) = 0 AND json_extract(json, '$.helperIntro') IS NULL " +
+    "AND coalesce(json_extract(json, '$.card.expired'), 0) = 0 AND json_extract(json, '$.helperIntro') IS NULL AND json_extract(json, '$.inbox') IS NULL " +
     `UNION ALL ${columns} FROM messages INDEXED BY messages_failed_at WHERE ${FAILED_CALL} AND at >= ? AND json_extract(json, '$.tool.ok') = 0 ` +
     `UNION ALL ${columns} FROM messages INDEXED BY messages_work_at WHERE ${WORK_KINDS} AND kind = 'digest' AND at >= ? ` +
     "AND json_extract(json, '$.turnSucceeded') = 1 ORDER BY at",

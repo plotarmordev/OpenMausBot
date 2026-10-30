@@ -9,6 +9,7 @@ import { accountAliasTaken, requiresAccountAlias } from "@/lib/connector-status"
 import { mcpSignInLink } from "@/lib/mcp-sign-in";
 import { cn } from "@/lib/cn";
 import { ASK_PRIMARY_BUTTON, ASK_QUIET_BUTTON, AskCard, AskSettledLine } from "./AskCard";
+import { CardHint } from "./CardHint";
 
 const STATUS_CHECK_MS = 4_000;
 /** Composio marks an unfinished account EXPIRED shortly after its link lapses; the card keeps asking until it can say so. */
@@ -195,6 +196,7 @@ export function ConnectorCard({ botId, threadId, message }: { botId: string; thr
         </>
       }
     >
+      <CardHint id="spot.connector" />
       <p className="text-[12px] text-ink-tertiary">{t("connectors.card.signInHint")}</p>
       {labelNeeded ? (
         <form

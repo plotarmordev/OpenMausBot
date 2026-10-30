@@ -43,6 +43,7 @@ export interface HandoffView {
   approvalGranted: boolean;
   kind: "work" | "assignment";
   origin?: WorkOrigin;
+  capacity?: "person";
   restarts: number;
   restart?: "rerun" | "cut" | "teammates";
   /** work: do it; consult: answer, act on nothing; notify: one-way. */
@@ -64,6 +65,7 @@ export interface BeginTurnRequest {
   level: Level;
   opener?: HandoffOpener;
   origin?: WorkOrigin;
+  capacity?: "person";
   goalRunId?: string;
 }
 

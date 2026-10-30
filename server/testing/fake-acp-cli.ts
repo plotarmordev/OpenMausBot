@@ -18,7 +18,8 @@
 //     | stall-after-text | stall-after-tool (then silent forever) | slow-tool (silent for FAKE_ACP_TOOL_MS, or until
 //       FAKE_ACP_TOOL_GATE exists when set)
 //     | quiet-then-answer (silent for FAKE_ACP_QUIET_MS; with QWEN_HOME, append FAKE_ACP_QWEN_LOG lines to
-//       Qwen's debug log every FAKE_ACP_LOG_EVERY_MS) | mcp-tools (list each mcpServers entry's tools with
+//       Qwen's debug log every FAKE_ACP_LOG_EVERY_MS; with XDG_DATA_HOME, append FAKE_ACP_OPENCODE_LOG lines once to
+//       OpenCode's shared log, {session} replaced by the session id) | mcp-tools (list each mcpServers entry's tools with
 //       grok 1.0.25's initialize, or FAKE_ACP_MCP_HANDSHAKE; FAKE_ACP_MCP_SCHEMA_BYTES=1 adds each schema's length)
 //     | lend-question (list_shared_computers around a question)
 //     | list-peers (list_bots through the agents MCP; keeps the first agents server it is offered, like Hermes)
@@ -54,6 +55,8 @@
 //   FAKE_ACP_IGNORE_CANCEL=1  session/cancel is ignored: a hanging prompt keeps running
 //   FAKE_ACP_TOOL_LIMIT  session/prompt lists the session's MCP tools and refuses, as OpenCode Zen does, past this many;
 //     under it the reply is "tools: <server>=<count>,…"
+//   FAKE_ACP_CANCEL_STOP_REASON  the stopReason a cancelled hanging prompt answers (default cancelled; OpenCode answers end_turn)
+//   FAKE_ACP_HANG_ONCE_FILE  with FAKE_ACP_HANG_ON, only the first matching prompt hangs; it writes this file
 import { AsyncLocalStorage } from "node:async_hooks";
 import { spawn } from "node:child_process";
 import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
@@ -568,7 +571,10 @@ function handle(msg: any) {
   if (msg.id !== undefined && (msg.result !== undefined || msg.error !== undefined) && msg.id === pendingAskQuestionId) {
     pendingAskQuestionId = null;
     if (process.env.FAKE_ACP_ASK_ANSWER) {
-      writeFileSync(process.env.FAKE_ACP_ASK_ANSWER, JSON.stringify(msg.error !== undefined ? { error: msg.error } : { result: msg.result }));
+      // Written aside and renamed in, so a test that sees the file never reads it half-written.
+      const partial = `${process.env.FAKE_ACP_ASK_ANSWER}.partial`;
+      writeFileSync(partial, JSON.stringify(msg.error !== undefined ? { error: msg.error } : { result: msg.result }));
+      renameSync(partial, process.env.FAKE_ACP_ASK_ANSWER);
     }
     onAskQuestionAnswered?.();
     return;
@@ -850,7 +856,10 @@ function handle(msg: any) {
         return;
       }
       const fullPrompt = (Array.isArray(msg.params?.prompt) ? msg.params.prompt : []).map((block: any) => block?.text ?? "").join("");
-      if (mode === "hang" || (process.env.FAKE_ACP_HANG_ON && fullPrompt.includes(process.env.FAKE_ACP_HANG_ON))) {
+      const hangOn = process.env.FAKE_ACP_HANG_ON, hangOnce = process.env.FAKE_ACP_HANG_ONCE_FILE;
+      const held = Boolean(hangOn) && fullPrompt.includes(hangOn!) && !(hangOnce && existsSync(hangOnce));
+      if (held && hangOnce) writeFileSync(hangOnce, String(Date.now()));
+      if (mode === "hang" || held) {
         hangingPromptId = msg.id;
         hangKeepAlive = setInterval(() => {}, 1_000);
         return;
@@ -891,6 +900,15 @@ function handle(msg: any) {
           let i = 0;
           logTimer = setInterval(() => {
             appendFileSync(`${dir}/${liveSession}.txt`, `${new Date().toISOString()} ${lines[Math.min(i++, lines.length - 1)]}\n`);
+          }, Number(process.env.FAKE_ACP_LOG_EVERY_MS ?? 100));
+        }
+        const openCodeLines: string[] = process.env.FAKE_ACP_OPENCODE_LOG ? JSON.parse(process.env.FAKE_ACP_OPENCODE_LOG) : [];
+        if (openCodeLines.length && process.env.XDG_DATA_HOME && liveSession) {
+          const dir = `${process.env.XDG_DATA_HOME}/opencode/log`;
+          mkdirSync(dir, { recursive: true });
+          const session = liveSession;
+          setTimeout(() => {
+            appendFileSync(`${dir}/opencode.log`, openCodeLines.map((line) => `${line.replaceAll("{session}", session)}\n`).join(""));
           }, Number(process.env.FAKE_ACP_LOG_EVERY_MS ?? 100));
         }
         setTimeout(() => {
@@ -1318,7 +1336,7 @@ function handle(msg: any) {
     }
     case "session/cancel":
       if (hangingPromptId !== null && process.env.FAKE_ACP_IGNORE_CANCEL !== "1") {
-        result(hangingPromptId, { stopReason: "cancelled", _meta: {} });
+        result(hangingPromptId, { stopReason: process.env.FAKE_ACP_CANCEL_STOP_REASON ?? "cancelled", _meta: {} });
         if (hangKeepAlive) clearInterval(hangKeepAlive);
         hangingPromptId = null;
         hangKeepAlive = null;

@@ -5,7 +5,7 @@ import type { UpdaterState } from "@/lib/updater";
 
 const fixture = vi.hoisted(() => ({ state: null as UpdaterState | null }));
 vi.mock("@/lib/updater", () => ({ useUpdaterState: () => fixture.state }));
-import { UpdatesRow } from "./SettingsModal";
+import { UpdatesRow } from "./AppSettingsRows";
 
 afterEach(() => vi.unstubAllGlobals());
 function render(state: UpdaterState | null) {

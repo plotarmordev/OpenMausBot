@@ -1963,7 +1963,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
           reject(new Error(NO_ANTHROPIC_KEY));
           return;
         }
-        const model = named ?? config.managedModels?.[0] ?? "claude-haiku-4-5";
+        const model = named ?? config.managedModels?.[0] ?? "claude-haiku-5-5";
         const env = environment(model);
         const args = backgroundCallArgs({ model, outputFormat: onUsage ? "json" : "text", supports: (flag) => cliVersion !== null && claudeCliSupports(cliVersion, flag), isolated: !inheritsUserConfig(env) });
         const { child, removeCwd } = spawnBackgroundCall(config.cli, args, env);

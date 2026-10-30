@@ -1,6 +1,7 @@
 import type { KeyboardEvent, ReactNode } from "react";
 import { cn } from "@/lib/cn";
-import { Check, X } from "lucide-react";
+import { useAdvancedMode } from "@/lib/interface-mode";
+import { Check, Pencil, X } from "lucide-react";
 
 export function AskCard({
   icon,
@@ -29,6 +30,7 @@ export function AskCard({
   footer?: ReactNode;
   onKeyDown?: (event: KeyboardEvent<HTMLDivElement>) => void;
 }) {
+  const simple = !useAdvancedMode();
   return (
     <div
       role="group"
@@ -36,16 +38,20 @@ export function AskCard({
       data-tour={tour}
       data-ask-card="pending"
       onKeyDown={onKeyDown}
-      className="w-full max-w-[600px] rounded-2xl bg-composer px-4 py-3 text-start ring-1 ring-composer-ring"
+      className={simple
+        ? "w-full max-w-[560px] rounded-[24px] bg-composer px-[17px] pb-2 pt-[13px] text-start ring-[0.5px] ring-ink/10"
+        : "w-full max-w-[600px] rounded-2xl bg-composer px-4 py-3 text-start ring-1 ring-composer-ring"}
     >
-      <div className={cn("flex min-w-0 gap-2", plain ? "items-start" : "items-center")}>
-        {icon && <span aria-hidden="true" className="flex shrink-0 text-accent-text">{icon}</span>}
+      <div className={cn("flex min-w-0 gap-2", plain || simple ? "items-start" : "items-center")}>
+        {icon && <span aria-hidden="true" className={cn("flex shrink-0 text-accent-text", simple && "mt-[3px]")}>{icon}</span>}
         <div
           className={cn(
             "min-w-0 flex-1",
-            plain
-              ? "break-words text-[15px] font-semibold leading-6 text-ink"
-              : "truncate text-[14px] font-semibold text-accent-text",
+            simple
+              ? "break-words text-[16px] font-semibold leading-[22px] text-ink-secondary"
+              : plain
+                ? "break-words text-[15px] font-semibold leading-6 text-ink"
+                : "truncate text-[14px] font-semibold text-accent-text",
           )}
         >
           <bdi dir="auto">{title}</bdi>
@@ -66,9 +72,9 @@ export function AskCard({
           </button>
         )}
       </div>
-      {explanation && <div className="mt-1 text-[13px] leading-snug text-ink-secondary">{explanation}</div>}
-      {children && <div className={plain ? "mt-3" : "mt-2.5"}>{children}</div>}
-      {footer && <div className="mt-3 flex flex-wrap items-center justify-end gap-2">{footer}</div>}
+      {explanation && <div className={cn("mt-1 leading-snug text-ink-secondary", simple ? "text-[14px]" : "text-[13px]")}>{explanation}</div>}
+      {children && <div className={simple ? "mt-2" : plain ? "mt-3" : "mt-2.5"}>{children}</div>}
+      {footer && <div className={cn("flex flex-wrap items-center justify-end gap-2", simple ? "mb-1.5 mt-2" : "mt-3")}>{footer}</div>}
     </div>
   );
 }
@@ -113,7 +119,7 @@ const ASK_CONTROL =
   "inline-flex h-7 shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-full px-3 text-[13px] font-medium leading-5 transition-colors [&>svg]:shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus disabled:cursor-not-allowed disabled:opacity-40";
 
 export const ASK_PRIMARY_BUTTON =
-  `${ASK_CONTROL} bg-accent text-accent-ink hover:brightness-110`;
+  `${ASK_CONTROL} ui-button-primary bg-accent text-accent-ink hover:brightness-110`;
 
 export const ASK_CHIP = `${ASK_CONTROL} max-w-full border`;
 export const ASK_CHIP_IDLE = "border-transparent bg-ink/[0.07] text-ink hover:bg-ink/[0.12]";
@@ -124,6 +130,40 @@ export const ASK_QUIET_BUTTON = `${ASK_SMALL_PILL} -my-1 text-ink-tertiary hover
 
 export const ASK_FIELD =
   "h-7 rounded-full border border-hairline/60 bg-inset px-3 text-[13px] leading-5 text-ink outline-none placeholder:text-ink-tertiary focus:border-accent disabled:opacity-60";
+
+/** Simple mode's lettered choice: a full-width 40px row with a 24px key-cap and a 14px label. */
+export const ASK_CHOICE_ROW = "flex min-h-10 w-full items-center gap-[11px] rounded-[10px] px-2 py-2 text-start transition-colors focus-visible:bg-ink/[0.06] focus-visible:outline-none disabled:cursor-default";
+export const ASK_CHOICE_LABEL = "min-w-0 flex-1 break-words text-[14px] leading-5 [unicode-bidi:plaintext]";
+export const ASK_CHOICE_LIST = "-mx-2 flex flex-col";
+
+export function AskChoiceLetter({ letter, picked = false, quiet = false }: { letter: string; picked?: boolean; quiet?: boolean }) {
+  return (
+    <span
+      aria-hidden="true"
+      className={cn(
+        "flex size-6 shrink-0 items-center justify-center rounded-[7px] text-[12px] font-medium leading-none transition-colors",
+        picked ? "bg-ink/[0.16] text-ink" : quiet ? "bg-ink/[0.06] text-ink-tertiary" : "bg-ink/[0.06] text-ink-secondary",
+      )}
+    >
+      {letter}
+    </span>
+  );
+}
+
+/** Simple mode's last choice: "Something else", typed in place, on the same row as the lettered ones. */
+export function AskSomethingElse({ children }: { children: ReactNode }) {
+  return (
+    <label data-ask-something-else className="flex min-h-10 w-full cursor-text items-center gap-[11px] rounded-[10px] px-2 py-2 transition-colors focus-within:bg-ink/[0.06] hover:bg-ink/[0.04]">
+      <span aria-hidden="true" className="flex size-6 shrink-0 items-center justify-center rounded-[7px] bg-ink/[0.06] text-ink-secondary">
+        <Pencil size={12} />
+      </span>
+      {children}
+    </label>
+  );
+}
+
+/** The field inside AskSomethingElse. */
+export const ASK_SOMETHING_ELSE_FIELD = "block min-w-0 flex-1 resize-none bg-transparent text-[14px] leading-5 text-ink outline-none placeholder:text-ink-tertiary [field-sizing:content]";
 
 export function returnFocusToComposer(): void {
   if (typeof requestAnimationFrame !== "function") return;

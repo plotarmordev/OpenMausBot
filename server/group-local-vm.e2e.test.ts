@@ -6,12 +6,15 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import { z } from "zod";
 import { writeFileAtomic } from "./atomic.ts";
 import { cloudHomePrompt } from "./system-prompt.ts";
 import { CONTROL_BUSY, CONTROL_REFUSAL_PLAIN, controlRefusal, createControlClient } from "./control-client.ts";
 import { freePortBlock } from "./testing/ports.ts";
 import { readHandoffs } from "./testing/handoff-rows.ts";
 import { removeTempDir, waitForExit } from "./testing/cleanup.ts";
+import { appHandsItOver } from "./testing/your-computer.ts";
+import { THIS_COMPUTER_NOT_READY } from "../shared/your-computer.ts";
 
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
 const CALL_WAIT_MS = 3_000;
@@ -113,7 +116,9 @@ beforeAll(async () => {
   const port = await freePortBlock([0, 1]);
   base = `http://127.0.0.1:${port}`;
   startServer = async (computerWaitMaxMs) => {
-    child = spawn(process.execPath, ["--import", pathToFileURL(join(ROOT, "server/testing/group-local-vm-hooks.mjs")).href, join(ROOT, "server/index.ts")], {
+    // Started as the desktop app starts its own server, which hears the app's driver record over its parent port.
+    child = spawn(process.execPath, ["--import", pathToFileURL(join(ROOT, "server/testing/group-local-vm-hooks.mjs")).href,
+      "--import", pathToFileURL(join(ROOT, "server/testing/desktop-parent.mjs")).href, join(ROOT, "server/index.ts")], {
       cwd: ROOT, env: {
         PATH: dirname(process.execPath), ...(process.env.SystemRoot ? { SystemRoot: process.env.SystemRoot } : {}),
         HOME: fixtureHome, USERPROFILE: fixtureHome, OMB_DATA_DIR: data,
@@ -123,7 +128,7 @@ beforeAll(async () => {
         OMB_BOAT_API: `http://127.0.0.1:${boatPort}`,
         ...(computerWaitMaxMs ? { OMB_COMPUTER_WAIT_MAX_MS: String(computerWaitMaxMs) } : {}),
         OMB_COMPUTER_CALL_WAIT_MS: String(CALL_WAIT_MS),
-        OMB_USER_DATA: join(fixtureHome, "user-data"),
+        OMB_USER_DATA: join(fixtureHome, "user-data"), OMB_TEST_DESKTOP_CUA_CONNECTION: cuaDescriptor,
       }, stdio: ["ignore", "pipe", "pipe"],
     });
     child.stdout!.on("data", () => {});
@@ -599,6 +604,69 @@ describe("Group Local VM ownership on the real isolated server", () => {
     }
   });
 
+  it.each([true, false])("keeps computer continuation capacity provenance at saturation: %s", async person => {
+    vmState(); rmSync(dumpFile, { force: true }); rmSync(finishFile, { force: true });
+    await waitForExit(child, { signal: "SIGTERM" });
+    await startServer();
+    const { bot } = await api("POST", "/api/bots", { name: "Capacity computer selection" });
+    const holderGate = join(fixtureHome, `${bot.id}-holder`);
+    const prompts = join(fixtureHome, `${bot.id}-prompts.jsonl`);
+    const wrapper = join(fixtureHome, `${bot.id}-cli.mjs`);
+    writeFileSync(wrapper, ["#!/usr/bin/env node", 'import { basename } from "node:path";',
+      `if (basename(process.cwd()) === ${JSON.stringify(bot.threadId)}) {`,
+      `process.env.FAKE_CLAUDE_PROMPTS = ${JSON.stringify(prompts)};`, "} else {",
+      `process.env.FAKE_CLAUDE_SLOW_FINISH_GATE = ${JSON.stringify(holderGate)};`,
+      "delete process.env.FAKE_CLAUDE_DUMP;", "}",
+      "// The fake CLI captures environment at module initialization.",
+      `await import(${JSON.stringify(pathToFileURL(join(ROOT, "server/testing/fake-claude-cli.ts")).href)});`].join("\n"), { mode: 0o700 });
+    const promptCount = () => existsSync(prompts) ? readFileSync(prompts, "utf8").split("\n").filter(Boolean).length : 0;
+    try {
+      await api("PATCH", "/api/instances/claude", { cli: wrapper });
+      await api("PATCH", "/api/config", { threads: { maxConcurrentPerBot: 2 } });
+      await api("PATCH", `/api/bots/${bot.id}`, { computer: "browser", browser: false });
+      const pairing = await api("POST", "/api/auth/pairing", {});
+      const paired = await api("POST", "/api/auth/pair", { code: pairing.code });
+      const sent = await fetch(base + `/api/bots/${bot.id}/messages`, { method: "POST",
+        headers: { "content-type": "application/json", ...(person ? { authorization: `Bearer ${paired.token}` } : {}) },
+        body: JSON.stringify({ text: "SELECT_COMPUTER_CAPACITY" }) });
+      expect(sent.status).toBe(202);
+      const before = z.object({ mcpConfig: z.object({ mcpServers: z.object({
+        agents: z.object({ env: z.object({ OMB_COMMS_TOKEN: z.string() }) }),
+      }) }) }).parse(await dump());
+      const { routine } = await api("POST", "/api/routines", { name: "Computer capacity holder", prompt: "Hold the slot.",
+        target: "bot", botId: bot.id, runOn: "maus", enabled: true, schedule: { type: "daily", time: "23:00" } });
+      await api("POST", `/api/routines/${routine.id}/run`);
+      const stateSchema = z.object({ bots: z.array(z.object({ id: z.string(), tasks: z.array(z.object({ threadId: z.string(), busy: z.boolean().optional() })) })) });
+      const pageSchema = z.object({ messages: z.array(z.object({ role: z.string(), text: z.string().optional(), tool: z.object({ name: z.string() }).optional() })) });
+      await until(() => api("GET", "/api/bots?messages=0"), state => stateSchema.parse(state).bots.find(entry => entry.id === bot.id)!.tasks.some(task => task.threadId !== bot.threadId && task.busy));
+      await api("PATCH", "/api/config", { threads: { maxConcurrentPerBot: 1 } });
+      const selected = await fetch(base + "/api/internal/computer/select", { method: "POST",
+        headers: { authorization: `Bearer ${before.mcpConfig.mcpServers.agents.env.OMB_COMMS_TOKEN}`, "content-type": "application/json" },
+        body: JSON.stringify({ surface: "vm" }) });
+      expect(await selected.json()).toMatchObject({ status: "pending", surface: "vm" });
+      writeFileSync(finishFile, "finish");
+      if (person) {
+        await expect.poll(promptCount, { timeout: 20_000 }).toBe(2);
+      } else {
+        await until(() => api("GET", `/api/threads/${bot.threadId}/messages?limit=100`),
+          page => pageSchema.parse(page).messages.some(message => message.tool?.name?.startsWith("Could not continue on")));
+        expect(promptCount()).toBe(1);
+      }
+      const page = pageSchema.parse(await api("GET", `/api/threads/${bot.threadId}/messages?limit=100`));
+      expect(page.messages.filter(message => message.role === "user" && message.text === "SELECT_COMPUTER_CAPACITY")).toHaveLength(1);
+      expect(readHandoffs(join(fixtureHome, "data")).filter(node => node.threadId === bot.threadId && !node.parentId).every(node => node.capacity === (person ? "person" : undefined))).toBe(true);
+      writeFileSync(holderGate, "");
+      await idle(bot.id);
+      expect(promptCount()).toBe(person ? 2 : 1);
+    } finally {
+      writeFileSync(holderGate, ""); writeFileSync(finishFile, "finish");
+      await api("POST", `/api/bots/${bot.id}/interrupt`, {}); await idle(bot.id);
+      await api("DELETE", `/api/bots/${bot.id}`);
+      await api("PATCH", "/api/instances/claude", { cli: join(ROOT, "server/testing/fake-claude-cli.ts") });
+      await api("PATCH", "/api/config", { threads: { maxConcurrentPerBot: 16 } });
+    }
+  }, 90_000);
+
   it.each(["stop", "failure", "off", "manual-selection", "new-request"])("does not continue a computer selection after %s", async failure => {
     vmState(); rmSync(dumpFile, { force: true }); rmSync(finishFile, { force: true });
     const { bot } = await api("POST", "/api/bots", { name: `Computer selection ${failure}` });
@@ -748,6 +816,7 @@ describe("Group Local VM ownership on the real isolated server", () => {
     const { bots, group } = await room();
     mkdirSync(dirname(cuaDescriptor), { recursive: true });
     writeFileSync(cuaDescriptor, JSON.stringify({ mode: "embedded", socketPath: "/fixture/cua.sock", mcpCommand: "/fixture/cua-driver", mcpArgs: ["mcp"], mcpEnv: {} }));
+    await appHandsItOver();
     try {
       await api("PATCH", `/api/bots/${bots[0].id}`, { computer: "local" });
       await send(group.id);
@@ -765,6 +834,7 @@ describe("Group Local VM ownership on the real isolated server", () => {
       expect(JSON.stringify(await api("GET", "/api/bots?messages=30"))).not.toContain("not available in channels yet");
     } finally {
       rmSync(cuaDescriptor, { force: true });
+      await appHandsItOver();
     }
   });
 
@@ -772,7 +842,7 @@ describe("Group Local VM ownership on the real isolated server", () => {
     const { bots, group } = await room();
     await api("PATCH", `/api/bots/${bots[0].id}`, { computer: "local" });
     await send(group.id);
-    await until(() => api("GET", "/api/bots?messages=30"), state => JSON.stringify(state).includes("CUA Driver is not ready for this computer"));
+    await until(() => api("GET", "/api/bots?messages=30"), state => JSON.stringify(state).includes(THIS_COMPUTER_NOT_READY));
     await idle(bots[0].id);
     expect(existsSync(dumpFile)).toBe(false);
   });
@@ -782,6 +852,7 @@ describe("Group Local VM ownership on the real isolated server", () => {
     const reason = "embedded host failed: Screen Recording required; grant access in System Settings and restart OpenMausBot";
     mkdirSync(dirname(cuaDescriptor), { recursive: true });
     writeFileSync(cuaDescriptor, JSON.stringify({ mode: "unavailable", reason }), { mode: 0o600 });
+    await appHandsItOver();
     try {
       await api("PATCH", `/api/bots/${bots[0].id}`, { computer: "local" });
       await send(group.id);
@@ -792,6 +863,7 @@ describe("Group Local VM ownership on the real isolated server", () => {
       expect(existsSync(dumpFile)).toBe(false);
     } finally {
       rmSync(cuaDescriptor, { force: true });
+      await appHandsItOver();
     }
   });
 

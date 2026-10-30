@@ -84,6 +84,7 @@ export interface Assignment {
   /** Edges from the root: a root is 0. */
   depth: number;
   origin: Origin;
+  capacity?: "person";
   requester: Requester;
   assignee: Assignee;
   mode: Mode;

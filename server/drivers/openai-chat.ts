@@ -712,7 +712,10 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
             usage.input += completion.usage.input;
             usage.output += completion.usage.output;
             hasUsage = true;
-            emit({ ...base(turn.threadId, turnId), type: "thread.token-usage.updated", ...usage });
+            const contextWindow = options.models().options.find((entry) => entry.id === model)?.contextWindow;
+            // Accounting sums the turn; context occupancy is the latest round only.
+            emit({ ...base(turn.threadId, turnId), type: "thread.token-usage.updated", ...usage,
+              contextTokens: completion.usage.input + completion.usage.output, ...(contextWindow ? { contextWindow } : {}) });
           }
           // Reasoning on a tool-call round belongs to the protocol, not a final reply.
           const reply = completion.text.trim() ? completion.text : completion.toolCalls.length ? "" : completion.reasoning;
@@ -802,8 +805,9 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
                 const shown = tools.view(call.function.name, args as Record<string, unknown>);
                 const shownPreview = shown.input === args ? inputPreview : preview(shown.input);
                 // This runtime has no provider reviewer, so Full access is honoured here.
-                const floored = approval.floored({ full: turn.approvalMode === "full", threadId: turn.threadId, botId: turn.botId, shown, summary: shownPreview });
-                const allowed = !floored && (turn.approvalMode === "full" || !shown.ask
+                const full = (turn.approvalModeNow?.() ?? turn.approvalMode) === "full";
+                const floored = approval.floored({ full, threadId: turn.threadId, botId: turn.botId, shown, summary: shownPreview });
+                const allowed = !floored && (full || !shown.ask
                   || await approval.ask(shown.title, shownPreview ?? "This tool has no arguments.", shown.grant));
                 abort.signal.throwIfAborted();
                 emit({ ...base(turn.threadId, turnId), type: "item.started", itemType: "tool", itemId: call.id,

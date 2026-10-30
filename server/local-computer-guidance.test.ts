@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { localComputerResultLine, OWN_PROFILE_UNAVAILABLE } from "./local-computer-guidance.ts";
+import { localComputerCallQuery, localComputerResultLine, OWN_PROFILE_UNAVAILABLE } from "./local-computer-guidance.ts";
 
 // cua-driver 0.28.2's answer to browser_prepare {strategy:{kind:"existing_profile"}} from a standard-mode daemon, verbatim.
 const EXISTING_PROFILE_REFUSAL = JSON.stringify({
@@ -36,6 +36,22 @@ describe("localComputerResultLine", () => {
     }
     expect(OWN_PROFILE_UNAVAILABLE).toContain("My Chrome");
     expect(OWN_PROFILE_UNAVAILABLE).not.toMatch(/--grant|authorization host/u);
+  });
+
+  it("puts the person's own screen last, and keeps the plumbing out of what the bot tells them", () => {
+    const ownBrowser = OWN_PROFILE_UNAVAILABLE.indexOf("use your own browser");
+    const cloud = OWN_PROFILE_UNAVAILABLE.indexOf("a cloud computer if select_computer offers one, or a connected app");
+    const screen = OWN_PROFILE_UNAVAILABLE.indexOf("Only when the task needs the person's own signed-in session and nothing else works");
+    expect(ownBrowser).toBeGreaterThan(-1);
+    expect(cloud).toBeGreaterThan(ownBrowser);
+    expect(screen).toBeGreaterThan(cloud);
+    expect(OWN_PROFILE_UNAVAILABLE).toContain("never mention DevTools, CDP, debugging ports, profiles, grants, binding, attaching, endpoints or drivers");
+  });
+
+  it("sends the gate what a screen call would open, so the person is asked about that", () => {
+    const frame = { jsonrpc: "2.0", id: 4, method: "tools/call", params: { name: "launch_app", arguments: { bundle_id: "com.google.Chrome", urls: ["https://calendar.google.com/"] } } };
+    expect(localComputerCallQuery(frame)).toEqual({ app: "Chrome", site: "calendar.google.com" });
+    expect(localComputerCallQuery({ jsonrpc: "2.0", id: 5, method: "tools/call", params: { name: "screenshot", arguments: {} } })).toEqual({});
   });
 
   it("passes every other frame through byte for byte", () => {

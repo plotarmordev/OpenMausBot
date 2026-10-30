@@ -40,7 +40,10 @@ describe("the widget tools in the catalog", () => {
       },
       required: ["widget"],
     });
-    expect(show.description).toMatch(/^Show an interactive widget in this chat\. Reach for it yourself/);
+    expect(show.description).toMatch(/^Show an interactive widget in this chat: one question answered with a tap instead of typing/);
+    expect(show.description).toContain("Ask only what you cannot find or sensibly default, one question per widget;");
+    expect(show.description).toContain("if they type something else instead, that is their answer");
+    expect(show.description).not.toMatch(/without being asked/);
     expect(show.description).toMatch(/Never ask for passwords here\. Not available in rooms\.$/);
     const update = tools.get("update_widget")!;
     expect(update.inputSchema).toEqual({
@@ -55,7 +58,7 @@ describe("the widget tools in the catalog", () => {
 });
 
 describe("show_widget", () => {
-  it("posts the tree as the model wrote it and tells the model to end its turn", async () => {
+  it("posts the tree as the model wrote it, and lets the model finish what does not wait on the answer", async () => {
     const { api, apiResponse, context } = harness();
     const result = await callTool("show_widget", { widget: WIDGET_SAMPLES.pullRequests }, context);
     expect(apiResponse).toHaveBeenCalledTimes(1);
@@ -65,7 +68,7 @@ describe("show_widget", () => {
     });
     expect(api).not.toHaveBeenCalled();
     expect(result).toEqual({
-      text: 'Shown as widget m42. If it asks the person something, end your turn now: their press arrives as their next message. To change it later, call update_widget with widget_id "m42".',
+      text: 'Shown as widget m42. Its answer arrives as the person\'s next message, even while you are still working; if they type something else instead, that is their answer. Do what does not depend on it, then end your turn without asking again in text. To change it later, call update_widget with widget_id "m42".',
     });
   });
 
@@ -83,7 +86,7 @@ describe("show_widget", () => {
     const confirm = { label: "Pick this", action: { type: "dinner.pick" } };
     const stuck = await callTool("show_widget", { widget: { type: "ListView", title: "Dinner", children: rows, confirm } }, context);
     expect(stuck.isError).toBeUndefined();
-    expect(stuck.text).toMatch(/ No row of this list can be chosen: the person can only confirm or cancel it as a whole\. If they are meant to pick one row, call update_widget and give the ListView a name \(and each row a value\), so the rows become selectable and confirm sends the pick\.$/);
+    expect(stuck.text).toMatch(/ For you only; never mention it to the person: No row of this list can be chosen: the person can only confirm or cancel it as a whole\. If they are meant to pick one row, call update_widget and give the ListView a name \(and each row a value\), so the rows become selectable and confirm sends the pick\.$/);
     const choice = await callTool("show_widget", { widget: { type: "ListView", name: "dish", title: "Dinner", children: rows, confirm } }, context);
     expect(choice.text).not.toContain("No row of this list can be chosen");
     const pressable = await callTool("show_widget", { widget: WIDGET_SAMPLES.pullRequests }, context);

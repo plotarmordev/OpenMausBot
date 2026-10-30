@@ -1,10 +1,13 @@
 import { byLanguage } from "./language.ts";
+import { greetingName } from "../shared/greeting-name.ts";
+
+type Greeting = (name: string, person?: string) => string;
 
 /** The first bot's seeded line is created by the server before the UI exists. */
-const GREETINGS: { en: (name: string) => string } & Record<string, (name: string) => string> = {
-  en: (name) => `Hi, I'm ${name}. What would you like me to do?`,
-  es: (name) => `Hola, soy ${name}. ¿Qué te gustaría que hiciera?`,
-  "pt-br": (name) => `Oi, eu sou ${name}. O que você gostaria que eu fizesse?`,
+const GREETINGS: { en: Greeting } & Record<string, Greeting> = {
+  en: (name, person) => `Hi${person ? ` ${person}` : ""}, I'm ${name}. What would you like me to do?`,
+  es: (name, person) => `Hola${person ? ` ${person}` : ""}, soy ${name}. ¿Qué te gustaría que hiciera?`,
+  "pt-br": (name, person) => `Oi${person ? ` ${person}` : ""}, eu sou ${name}. O que você gostaria que eu fizesse?`,
 };
 
 /** What the bot says the moment Set me up is pressed: no model is asked, so it is written here. */
@@ -14,8 +17,29 @@ const SETUP_REQUEST_LINES: { en: string } & Record<string, string> = {
   "pt-br": "Ótimo. Me conte com suas palavras em que você gostaria de ajuda e eu me preparo para isso. Por exemplo: \"organize minha caixa de entrada toda manhã\" ou \"pesquise nossos concorrentes toda semana\".",
 };
 
-export function initialGreeting(name: string, language?: string): string {
-  return byLanguage(GREETINGS, language)(name);
+/** The answers a blank bot's greeting offers on its setup card. Picking one sets the bot up for its words, as
+ * `/setup <words>` would; the client sends the words, never a position, so these may change freely. */
+const SETUP_CHOICES: { en: readonly string[] } & Record<string, readonly string[]> = {
+  en: ["Research and digging into topics", "Keeping an eye on things for me", "Email, calendar and messages",
+    "Bookings, shopping and errands", "Data, spreadsheets and reports"],
+  es: ["Investigar y profundizar en temas", "Estar pendiente de cosas por mí", "Correo, calendario y mensajes",
+    "Reservas, compras y recados", "Datos, hojas de cálculo e informes"],
+  "pt-br": ["Pesquisar e aprofundar temas", "Ficar de olho nas coisas para mim", "E-mail, agenda e mensagens",
+    "Reservas, compras e tarefas", "Dados, planilhas e relatórios"],
+};
+
+export function setupChoices(language?: string): string[] {
+  return [...byLanguage(SETUP_CHOICES, language)];
+}
+
+/** The fixed answers exist in this language, not only the English stand-in. */
+export function hasSetupChoices(language?: string): boolean {
+  return byLanguage(SETUP_CHOICES, language) !== SETUP_CHOICES.en || /^en(?:-|$)/i.test(language?.trim() || "en");
+}
+
+/** `person`: the name the person gave, greeted by greetingName; absent or blank, the greeting names no one. */
+export function initialGreeting(name: string, language?: string, person?: string): string {
+  return byLanguage(GREETINGS, language)(name, greetingName(person) || undefined);
 }
 
 export function setupRequestLine(language?: string): string {
@@ -23,8 +47,9 @@ export function setupRequestLine(language?: string): string {
 }
 
 /** The seeded message; a function language is read now, so a language changed in Settings reaches the next new bot.
- * `offerSetup`: the bot has no role or instructions yet, so its greeting carries Set me up. */
-export function initialGreetingMessage(name: string, language: string | (() => string), offerSetup = false) {
-  const text = initialGreeting(name, typeof language === "function" ? language() : language);
-  return { role: "bot", kind: "text", text, ...(offerSetup ? { setupOffer: true as const } : {}) } as const;
+ * `offerSetup`: the bot has no role or instructions yet, so its greeting carries the setup card and its answers. */
+export function initialGreetingMessage(name: string, language: string | (() => string), offerSetup = false, person?: string) {
+  const spoken = typeof language === "function" ? language() : language;
+  const text = initialGreeting(name, spoken, person);
+  return { role: "bot", kind: "text", text, ...(offerSetup ? { setupOffer: true as const, setupChoices: setupChoices(spoken) } : {}) } as const;
 }

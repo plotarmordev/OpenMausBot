@@ -29,6 +29,7 @@ import type { NotificationLogEntry } from "./notification.ts";
 import type { Routine, RoutineRun } from "./routines.ts";
 import type { WebhookAttempt, WebhookTrigger } from "./webhooks.ts";
 import type { PublishedPageCard } from "./published-page.ts";
+import type { InboxItem } from "./inbox.ts";
 import type { LiveCallRecord, LiveCallState } from "./live-call-wire.ts";
 export type { LiveCallRecord, LiveCallState, LiveCallStatus, LiveClient, LiveEndReason, LiveKeySource, LiveSettings } from "./live-call-wire.ts";
 
@@ -145,6 +146,8 @@ export interface WireTask {
   openedBy?: TaskOpenedBy;
   /** On a team's server: one person's conversation, seen by them alone (never by another member or an admin). */
   private?: true;
+  /** On a team's server: this person's inbox, the conversation with their Chief where everything for them arrives. */
+  inbox?: true;
   /** Set by close_thread; absent while the thread is open. */
   closedBy?: TaskClosedBy;
   archivedAt?: number;
@@ -473,9 +476,17 @@ export interface WireMessage extends HelperIntroField {
   serverCard?: true;
   /** A setup suggestion the device renders in its own words (server/host/helper-suggestion.ts); `text` is the English. */
   setupSuggestion?: { kind: "helperKey"; answer?: "notNow" };
-  /** A new bot's greeting while it has no role or instructions: clients that know it draw Set me up under the text
-   * (server/setup-request.ts); `text` reads on its own for older ones. Cleared once it is pressed or the person writes. */
+  /** A new bot's greeting while it has no role or instructions: clients that know it draw the setup card under the
+   * text (server/setup-request.ts); `text` reads on its own for older ones. It stays once the card is answered, so the
+   * card can show the answer; closing the card clears it. */
   setupOffer?: true;
+  /** The setup card's answers, in the app's language. Picking one sends its words; absent on older greetings, where a
+   * client offers its own. Replaced at most once, by personal answers, in the change that clears setupChoicesPending. */
+  setupChoices?: string[];
+  /** Personal answers for this card are being written (server/setup-suggestions.ts): clients show the card without
+   * answers until it clears. The server clears it within 6 s, in the same change that sets setupChoices if they came in
+   * time; a client still seeing it 8 s after showing the card, or on a greeting older than 20 s, shows setupChoices. */
+  setupChoicesPending?: true;
   /** A person's line Set me up turned into a setup request: the bot reads it as `/setup <text>`; the chat shows `text`. */
   setupRequest?: true;
   /** app rows (kind "app"): bot HTML or an MCP server's UI. `text` is always the readable fallback. */
@@ -499,8 +510,8 @@ export interface WireMessage extends HelperIntroField {
   tool?: {
     name: string; ok?: boolean; spoken?: string; setup?: boolean; terminal?: boolean; summary?: string; input?: string; output?: string;
     /** error rows: the installed Claude Code is too old for the model, and
-     * the UI can offer to update it in place. */
-    claudeUpdate?: boolean;
+     * the UI can offer to update it in place. notice rows: `rescue`, a turn that heard nothing from its AI for a while. */
+    claudeUpdate?: boolean; rescue?: import("./first-reply-rescue.ts").FirstReplyRescue;
   /** error rows: the place this turn could not use. */
     place?: PlaceRow;
     /** error rows: epoch ms when the usage limit that stopped the turn resets. */
@@ -590,12 +601,16 @@ export interface WireMessage extends HelperIntroField {
   reaction?: string;
   /** comm chips: "Messaged @X", linking to the bot-bot channel. */
   comm?: { groupId: string; threadId?: string; withBotId: string; withName: string; withColor: string };
-  /** On a Team Cloud, a message a bot passed between people (message_person): "told" on the chip in the asking
-   * conversation names who got it, "from" on the line it delivered names who asked, "reply" on an answer that came
-   * back names who answered. */
-  relay?: { kind: "told" | "from" | "reply"; email: string; name: string };
+  /** On a Team Cloud, a message passed between people: "told" on the chip in the asking conversation names whose inbox
+   * got it, "reply" on an answer that came back names who answered, "assistant" one their assistant answered for them. */
+  relay?: { kind: "told" | "reply" | "assistant"; email: string; name: string };
+  /** On a Team Cloud, a line in its person's inbox: who it is from and where it came from. */
+  inbox?: InboxItem;
   /** thread chips: "Opened thread #Title on @X". */
   threadRef?: { botId: string; threadId: string; title: string };
+  /** A "Sent to" row for work addressed into a room the bot `name` isn't in, so it went to the bot directly. `room`
+   * names that room when this row is not in it. Clients say it in their own words; `tool.name` is the English. */
+  sentDirectly?: { name: string; room?: string };
   /** A page the bot published to a public link (publish_page), or why it couldn't. `text` carries the link too. */
   publishedPage?: PublishedPageCard;
   /** A published Data result, linked to its bot's main viewer. */
@@ -701,6 +716,8 @@ export interface OptionCardData {
   /** The options are the whole answer: clients offer no free-text reply. */
   fixedOptions?: boolean;
   quotaSwitch?: QuotaSwitchCardData;
+  /** Asks before a bot uses the person's own computer; what its first call names, for the question in their language. */
+  yourComputer?: { app?: string; site?: string };
 }
 
 /** Kept on the card so the offer survives a restart. `engines` follow the card's options; `messageId` is the
@@ -924,6 +941,7 @@ export interface SkillsLibrarySkillWire {
   description: string;
   source: string;
   enabled: boolean;
+  everyBot: boolean;
   tags: string[];
   version: string | null;
   importedAt: string;

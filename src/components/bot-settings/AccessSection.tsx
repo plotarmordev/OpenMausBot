@@ -27,6 +27,8 @@ import {
   type ConnectorVerb,
 } from "@/lib/connector-grants";
 import { inputCls } from "./field";
+import { openKeySettings } from "../keys/key-focus";
+import { KeysLink } from "../keys/KeysLink";
 import type { ConnectorScope, ConnectorScopes } from "../../../shared/connector-scopes";
 import type { useBotSettingsDerived } from "./useBotSettingsDerived";
 
@@ -482,7 +484,7 @@ function ResearchCard({ bot, patch }: { bot: Bot; patch: (patch: { xResearch: bo
         <div className="text-[15px] font-medium text-ink">{t("research.title")}</div>
         <div className="mt-0.5 text-[13px] text-ink-secondary">{line}</div>
         {!available && !connecting && (
-          <button type="button" className="ui-button mt-2" onClick={() => dispatch({ type: "toggleAppSettings", open: true, section: "connections" })}>
+          <button type="button" className="ui-button mt-2" onClick={() => dispatch(openKeySettings("treg"))}>
             {t("research.openKeys")}
           </button>
         )}
@@ -557,7 +559,7 @@ export function VpsAliasField({ bot }: { bot: Bot }) {
       <div className="mt-0.5 text-[12px] text-ink-secondary">
         {defaultAlias
           ? t("botAccess.cloud.serverDefault", { alias: defaultAlias })
-          : t("botAccess.cloud.serverNoDefault")}
+          : t("botAccess.cloud.serverNoDefault")} <KeysLink id="vps" />
       </div>
       <form
         className="mt-2 flex items-center gap-2"

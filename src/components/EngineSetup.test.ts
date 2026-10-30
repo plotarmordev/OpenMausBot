@@ -3,7 +3,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { EngineSetup, EngineUpdateNotice, installCommandFor, needsCli, needsSignIn } from "./EngineSetup";
-import { engineStatus } from "./ModelPicker";
+import { engineStatus } from "./ModelPickerFull";
 import { StoreProvider, type InstanceInfo } from "@/state/store";
 
 afterEach(() => vi.unstubAllGlobals());
@@ -122,7 +122,7 @@ describe("engines set up with a key in Settings", () => {
     expect(missing).not.toContain("needs an API key");
     const keyless = renderToStaticMarkup(createElement(StoreProvider, null, createElement(EngineSetup, { instance: dsh({ state: "available", authenticated: false, version: "0.2.1" }) })));
     expect(keyless).toContain("DeepSeek Harness needs an API key");
-    expect(keyless).toContain("Open API keys");
+    expect(keyless).toContain('data-key-row="deepseek"');
     expect(keyless).not.toContain("Terminal");
     // No key is saved, so nothing was rejected.
     expect(keyless).not.toContain("rejected the saved key");
@@ -153,6 +153,18 @@ describe("install from Settings on the server", () => {
     expect(markup).toContain("Prefer a terminal?");
     expect(markup).toContain("npm install -g kimi-fixture");
     expect(markup).not.toContain("needs");
+  });
+
+  it("keeps a quiet setup's probe reason behind Details, in plain grey, never as an alert", () => {
+    vi.stubGlobal("window", { ogb: { platform: "linux" } });
+    const reason = "`kimi` isn't installed, or isn't on this app's PATH.";
+    const engine = npmEngine({ state: "unavailable", reason });
+    const quiet = renderToStaticMarkup(createElement(StoreProvider, null, createElement(EngineSetup, { instance: engine, quiet: true })));
+    expect(quiet).toMatch(/<details data-engine-setup-reason="true" class="[^"]*text-ink-tertiary"><summary[^>]*>Details<\/summary><p[^>]*>`kimi` isn&#x27;t installed/);
+    expect(quiet).not.toContain('role="alert"');
+    expect(quiet).not.toContain("text-danger");
+    expect(quiet).toContain("Install Kimi here");
+    expect(render(engine)).toMatch(/role="alert" class="[^"]*text-danger">`kimi` isn&#x27;t installed/);
   });
 
   it("falls back to the terminal command when the server cannot install", () => {
@@ -246,20 +258,27 @@ describe("API-key engine setup", () => {
     return renderToStaticMarkup(createElement(StoreProvider, null, createElement(EngineSetup, { instance: engine })));
   };
 
-  it("sends a missing key to Settings → API keys, not to a config file", () => {
+  it("takes a missing key in place, in the same key row as Settings, not in a config file", () => {
     const html = render(keyEngine("grok", { state: "unavailable", reason: "No xAI API key — open Settings → API keys." }));
     expect(html).toContain("data-engine-setup-api-key");
     expect(html).toContain("Grok (API) needs an API key");
-    expect(html).toContain("Open API keys");
+    expect(html).toContain("Paste it here. It saves and checks itself");
+    expect(html).toContain('data-key-row="xai"');
+    expect(html).not.toContain("Open API keys");
     expect(html).not.toContain("config.json");
   });
 
-  it("says so when the provider rejected the saved key", () => {
+  it("says so in the key row when the provider rejected the saved key", () => {
     const html = render(keyEngine("grok", { state: "available", authenticated: false, reason: "The provider rejected this key." }));
     expect(html).toContain("data-engine-setup-api-key");
-    expect(html).toContain("The provider rejected the saved key.");
-    expect(html).toContain("Open API keys");
+    expect(html).toContain("Didn&#x27;t work: The provider rejected this key.");
     expect(render(keyEngine("grok", { state: "unavailable" }))).not.toContain("rejected");
+  });
+
+  it("still sends an engine with no key row of its own to Settings → API keys", () => {
+    const html = render(keyEngine("openai-compat", { state: "unavailable" }));
+    expect(html).toContain("Open API keys");
+    expect(html).not.toContain("data-key-row");
   });
 
   it("has no button on a remote client, whose settings hide the keys", () => {

@@ -24,6 +24,8 @@ import { startFakeHttpMcp } from "./testing/fake-http-mcp-server.ts";
 import { startFakeOAuth } from "./testing/fake-oauth-server.ts";
 import { freePortBlock, withFreeSignInPort } from "./testing/ports.ts";
 import { openSse } from "./testing/sse.ts";
+import { STARTER_COLORS } from "./bot-look.ts";
+import { DEFAULT_MASCOT_BODY } from "../shared/mascot-bodies.ts";
 import { readHandoffs } from "./testing/handoff-rows.ts";
 import { FILE_MAX_BYTES, IMAGE_MAX_BYTES } from "./attachments.ts";
 import { computerPrompt, SIGN_IN_PROMPT } from "./system-prompt.ts";
@@ -162,6 +164,8 @@ let fakeClaudePrompts: string;
 let fakeClaudeRelease: string;
 let oneShotTextFile: string;
 let oneShotTextDump: string;
+let setupAnswersFile: string;
+let setupAnswersDump: string;
 let fakeDockerFixture: string;
 let fakeVpsFixture: string;
 let fakeDockerLog: string;
@@ -391,6 +395,8 @@ beforeAll(async () => {
   fakeClaudeRelease = join(home, "fake-claude-release");
   oneShotTextFile = join(home, "fake-claude-one-shot.txt");
   oneShotTextDump = join(home, "fake-claude-one-shot-dump.json");
+  setupAnswersFile = join(home, "fake-claude-setup-answers.txt");
+  setupAnswersDump = join(home, "fake-claude-setup-answers-dump.json");
   const fakeDockerDir = join(home, "fake-docker-bin");
   const fakeDockerProgram = join(fakeDockerDir, "docker-empty.mjs");
   fakeDockerFixture = join(home, ".openmausbot", "fake-unmanaged-container");
@@ -454,8 +460,8 @@ beforeAll(async () => {
   writeFileSync(
     join(home, ".openmausbot", "config.json"),
     JSON.stringify({
-      // generated titles are opt-in; this suite owns the one-shot's reply file (FAKE_CLAUDE_TEXT_FILE below)
-      features: { llmThreadTitles: true, browser: false },
+      // generated titles are opt-in; this suite owns the one-shot's reply file (FAKE_CLAUDE_TEXT_FILE below); one test turns the setup card's answers on
+      features: { llmThreadTitles: true, browser: false, smartSetupChoices: false },
       instances: {
         ghost: { driver: "not-a-real-driver", displayName: "Ghost" },
         claude: { driver: "claudeAgent", displayName: "Fixture Claude", config: { cli: FAKE_CLAUDE_CLI } },
@@ -1226,6 +1232,8 @@ beforeAll(async () => {
       // The one-shot text helper fails until a test writes its reply file, and its dump never overwrites a turn's.
       FAKE_CLAUDE_TEXT_FILE: oneShotTextFile,
       FAKE_CLAUDE_TEXT_DUMP: oneShotTextDump,
+      FAKE_CLAUDE_SETUP_FILE: setupAnswersFile,
+      FAKE_CLAUDE_SETUP_DUMP: setupAnswersDump,
       // the real CLI runs Manual for these even when asked for auto
       FAKE_CLAUDE_AUTO_UNAVAILABLE_MODELS: "claude-haiku-4-5",
       OMB_TEST_INTERNAL_CAPABILITY_KEY: TEST_CAPABILITY_KEY,
@@ -3535,7 +3543,6 @@ describe("harness HTTP API", () => {
     const waiterThreads: string[] = [];
     try {
       expect((await api("PUT", "/api/config", { box: { token: "box_route" } })).status).toBe(200);
-      // Four live threads on one bot: at the default cap of 3 the fourth would park in the send queue instead.
       expect((await api("PUT", "/api/config", { threads: { maxConcurrentPerBot: 6 } })).status).toBe(200);
       const bot = (await api("POST", "/api/bots", { name: "Queue probe", section,
         modelSelection: { instanceId: "claude", model: "claude-sonnet-5" } })).body.bot;
@@ -5629,8 +5636,8 @@ describe("harness HTTP API", () => {
     expect(exported.body).toMatchObject({ format: "openmaus.team", version: 2, team: { name: "Field Team" } });
     expect(exported.body.team.members.map((member: { name: string }) => member.name)).toEqual(visibleNames);
     expect(exported.body.team.members).toEqual(expect.arrayContaining([
-      expect.objectContaining({ key: "mira", name: "Mira", title: "Project Lead", appearance: { color: "purple", mascotExpression: "focused" } }),
-      expect.objectContaining({ key: "scout", name: "Scout", title: "Researcher", appearance: { color: "cyan" } }),
+      expect.objectContaining({ key: "mira", name: "Mira", title: "Project Lead", appearance: { color: "purple", mascotExpression: "focused", mascotBody: first.mascotBody } }),
+      expect.objectContaining({ key: "scout", name: "Scout", title: "Researcher", appearance: { color: "cyan", mascotBody: second.mascotBody } }),
     ]));
     expect(exported.body.team).not.toHaveProperty("room");
     expect(JSON.stringify(exported.body)).not.toMatch(/Archived|autoApprove|alwaysAllow|modelSelection|threadId/);
@@ -7670,7 +7677,7 @@ describe("harness HTTP API", () => {
     await api("DELETE", `/api/bots/${bot.id}`);
   });
 
-  it("refuses approval-level changes while a bot is working", async () => {
+  it("saves an approval-level change while a bot is working", async () => {
     const instances = (await api("GET", "/api/instances")).body.instances;
     const claude = instances.find((instance: { instanceId: string }) => instance.instanceId === "claude");
     const bot = (await api("POST", "/api/bots", {
@@ -7684,15 +7691,14 @@ describe("harness HTTP API", () => {
         return state.bots.find((candidate: { id: string }) => candidate.id === bot.id)?.busy;
       }, { timeout: 5_000 }).toBe(true);
 
-      const blocked = await api("PATCH", `/api/bots/${bot.id}`, { approvalMode: "auto" });
-      expect(blocked.status).toBe(409);
-      expect(blocked.body.error).toMatch(/stop this bot's turn before changing its approval level/i);
+      const changed = await api("PATCH", `/api/bots/${bot.id}`, { approvalMode: "auto" });
+      expect(changed.status, JSON.stringify(changed.body)).toBe(200);
       const stored = (await api("GET", "/api/bots?messages=0")).body.bots.find(
         (candidate: { id: string }) => candidate.id === bot.id,
       );
       expect(stored.busy).toBe(true);
-      expect(stored.approvalMode).toBe(bot.approvalMode);
-      expect(stored.autoApprove).toBe(bot.autoApprove);
+      expect(stored.approvalMode).toBe("auto");
+      expect(stored.autoApprove).toBe(true);
     } finally {
       await api("POST", `/api/bots/${bot.id}/interrupt`, {}).catch(() => undefined);
       await expect.poll(async () => {
@@ -7722,6 +7728,72 @@ describe("harness HTTP API", () => {
       expect(bot.messages.some((m: { kind: string }) => m.kind === "options")).toBe(false);
     } finally {
       await api("DELETE", `/api/bots/${bot.id}`);
+    }
+  });
+
+  it("a new bot greets its person by first name and is announced in its chosen look, or a fresh one, from the first frame", async () => {
+    const before = (await api("GET", "/api/config")).body.profile?.name ?? "";
+    expect((await api("PUT", "/api/config", { profile: { name: "Milind Soni" } })).status).toBe(200);
+    const stream = await openSse(`${BASE}/api/events`);
+    let id = "";
+    try {
+      await stream.until((frame) => frame.kind === "hello");
+      const bot = (await api("POST", "/api/bots", { name: "Scout", useDefaults: false, settings: { color: "purple", mascotBody: "star" } })).body.bot;
+      id = bot.id;
+      expect(bot.messages[0].text).toBe("Hi Milind, I'm Scout. What would you like me to do?");
+      const announced = await stream.until((frame) => frame.kind === "bot" && frame.bot?.id === id);
+      expect(announced.bot).toMatchObject({ color: "purple", mascotBody: "star" });
+      const plain = (await api("POST", "/api/bots", { name: "Wren", useDefaults: false })).body.bot;
+      await api("DELETE", `/api/bots/${plain.id}`);
+      const fresh = (await stream.until((frame) => frame.kind === "bot" && frame.bot?.id === plain.id)).bot;
+      expect(fresh.mascotBody).toBe(DEFAULT_MASCOT_BODY);
+      expect(STARTER_COLORS).toContain(fresh.color);
+    } finally {
+      stream.close();
+      if (id) await api("DELETE", `/api/bots/${id}`);
+      await api("PUT", "/api/config", { profile: { name: before } });
+    }
+  });
+
+  it("writes a new bot's setup answers with its own engine on Haiku 5.5 without thinking, and keeps the fixed ones when that fails", async () => {
+    const before = (await api("GET", "/api/config")).body.profile?.name ?? "";
+    const answers = ["Sort my receipts", "Check my unpaid invoices", "Draft a payment reminder", "Find a missing expense", "Remind me of tax deadlines"];
+    const ids: string[] = [];
+    const greeting = async (threadId: string) => (await api("GET", `/api/threads/${threadId}/messages?limit=50`)).body.messages[0];
+    const create = async (name: string) => {
+      const created = await api("POST", "/api/bots", { name, modelSelection: { instanceId: "claude", model: "claude-sonnet-5" }, requireAvailableModel: true });
+      expect(created.status).toBe(201);
+      ids.push(created.body.bot.id);
+      return created.body.bot;
+    };
+    expect((await api("PUT", "/api/config", { profile: { name: "Milind Soni" }, features: { smartSetupChoices: true } })).status).toBe(200);
+    try {
+      writeFileSync(setupAnswersFile, `${JSON.stringify(answers)}\n`);
+      rmSync(setupAnswersDump, { force: true });
+      const bot = await create("Bookkeeper");
+      expect(bot.messages[0]).toMatchObject({ setupOffer: true, setupChoicesPending: true });
+      await expect.poll(async () => (await greeting(bot.threadId)).setupChoicesPending ?? null, { timeout: 10_000 }).toBeNull();
+      expect((await greeting(bot.threadId)).setupChoices).toEqual(answers);
+      const seen = await readJsonFileWhenReady<{ argv: string[]; env: Record<string, string | undefined>; prompt: string }>(setupAnswersDump);
+      expect(seen.argv[seen.argv.indexOf("--model") + 1]).toBe("claude-haiku-5-5");
+      expect(JSON.parse(seen.argv[seen.argv.indexOf("--settings") + 1]!)).toEqual({ alwaysThinkingEnabled: false, disableAllHooks: true });
+      expect(seen.argv).not.toContain("--effort");
+      expect(seen.env.MAX_THINKING_TOKENS).toBeUndefined();
+      expect(seen.prompt).toContain("Bot name: Bookkeeper");
+      expect(seen.prompt).not.toContain("Milind");
+      const day = (offset: number) => new Date(Date.now() + offset * 86_400_000).toISOString().slice(0, 10);
+      const usage = await (await fetch(`${BASE}/api/usage.csv?from=${day(-1)}&to=${day(1)}`)).text();
+      expect(usage.split("\n").some((line) => line.includes("Bookkeeper") && line.includes(",setup-suggestions-"))).toBe(true);
+
+      rmSync(setupAnswersFile, { force: true });
+      const other = await create("Gardener");
+      expect(other.messages[0].setupChoicesPending).toBe(true);
+      await expect.poll(async () => (await greeting(other.threadId)).setupChoicesPending ?? null, { timeout: 10_000 }).toBeNull();
+      expect((await greeting(other.threadId)).setupChoices).toEqual(other.messages[0].setupChoices);
+    } finally {
+      rmSync(setupAnswersFile, { force: true });
+      for (const id of ids) await api("DELETE", `/api/bots/${id}`);
+      await api("PUT", "/api/config", { profile: { name: before }, features: { smartSetupChoices: false } });
     }
   });
 
@@ -8041,7 +8113,7 @@ describe("harness HTTP API", () => {
 
       const rotated = await api("PUT", "/api/config", { box: { token: " box_route_rotated " } });
       expect(rotated.status).toBe(200);
-      expect(rotated.body.box).toEqual({ configured: true });
+      expect(rotated.body.box).toEqual({ configured: true, last4: "ated" });
       expect(JSON.stringify(rotated.body)).not.toContain("box_route_rotated");
 
       expect((await api("POST", "/api/computers/boxes/bx_23456789/delete", { confirmName: name })).status).toBe(202);
@@ -8078,7 +8150,7 @@ describe("harness HTTP API", () => {
       managedBoatRejectedTokens.delete("Bearer box_route_rotated");
       const rotated = await api("PUT", "/api/config", { box: { token: "box_route_rotated" } });
       expect(rotated.status).toBe(200);
-      expect(rotated.body.box).toEqual({ configured: true });
+      expect(rotated.body.box).toEqual({ configured: true, last4: "ated" });
       if (provisioned) {
         const journal = readFileSync(join(home, ".openmausbot", "box-create-requests.json"), "utf8");
         expect(journal).toContain(managedBoatCreateId);
@@ -9116,7 +9188,7 @@ describe("harness HTTP API", () => {
         const pressed = await api("POST", `/api/bots/${bot.id}/setup-request`, { threadId: bot.threadId });
         expect(pressed.status).toBe(200);
         const rows = await messages(bot.threadId);
-        expect(rows.map((row) => [row.role, row.setupOffer ?? null])).toEqual([["bot", null], ["bot", null]]);
+        expect(rows.map((row) => [row.role, row.setupOffer ?? null])).toEqual([["bot", true], ["bot", null]]);
         expect(rows[1].text).toMatch(/^Great\. Tell me what you'd like help with/);
         expect(await task(bot.id, bot.threadId)).toMatchObject({ setupRequest: { at: rows[1].at } });
         expect((await api("POST", `/api/bots/${bot.id}/setup-request`, { threadId: bot.threadId })).body).toEqual({ ok: true, already: true });
@@ -10707,7 +10779,7 @@ describe("harness HTTP API", () => {
       });
       expect(unavailableCloud.status).toBe(409);
       expect(await unavailableCloud.json()).toMatchObject({
-        error: expect.stringMatching(/^A cloud desktop here needs your own Boat key, a paid service\. Add a Boat key in Settings → API keys\./),
+        error: expect.stringMatching(/^Bots here can get their own cloud desktops from Boat, a paid service\. Connect your Boat account in Settings → API keys\./),
       });
 
       const proposed = await fetch(`${BASE}/api/internal/trigger-requests`, {
@@ -11620,7 +11692,7 @@ describe("harness HTTP API", () => {
     });
     expect(saved.status).toBe(200);
     expect(saved.body.composio).toEqual({ configured: true, mode: "self-hosted" });
-    expect(saved.body.opencodeGo).toEqual({ configured: true, providerKeys: [] });
+    expect(saved.body.opencodeGo).toEqual({ configured: true, last4: "rnal", providerKeys: [] });
     expect(saved.body.profile).toEqual({ name: "External Store", email: "", aboutMe: "" });
     expect(JSON.stringify(saved.body)).not.toContain("ak_good");
 
@@ -12199,11 +12271,11 @@ describe("harness HTTP API", () => {
   it("stores OpenCode Go credentials as a configured-only status", async () => {
     const put = await api("PUT", "/api/config", { opencodeGo: { apiKey: "opencode-secret" } });
     expect(put.status).toBe(200);
-    expect(put.body.opencodeGo).toEqual({ configured: true, providerKeys: [] });
+    expect(put.body.opencodeGo).toEqual({ configured: true, last4: "cret", providerKeys: [] });
     expect(JSON.stringify(put.body)).not.toContain("opencode-secret");
 
     const after = await api("GET", "/api/config");
-    expect(after.body.opencodeGo).toEqual({ configured: true, providerKeys: [] });
+    expect(after.body.opencodeGo).toEqual({ configured: true, last4: "cret", providerKeys: [] });
     expect(JSON.stringify(after.body)).not.toContain("opencode-secret");
   });
 

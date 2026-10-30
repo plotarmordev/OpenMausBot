@@ -18,8 +18,8 @@ either thing up front.
 ## Where the code is today (main 922715f, 0.1.69)
 
 - **Threads exist and run independently.** #981 made Tasks the user-facing
-  Threads: one bot runs up to three direct threads at once (Settings →
-  General → Parallel threads, 1–10), each with its own model, approval
+  Threads: one bot defaults to sixteen direct threads at once (Settings →
+  General → Parallel threads, 1–16), each with its own model, approval
   preference, unread state, working directory and Stop. Extra messages queue
   above the composer until a slot frees. `docs/plans/2026-09-09-independent-threads.md`.
 - **Only a person can open one.** `POST /api/bots/:id/tasks` (server/index.ts
@@ -30,8 +30,8 @@ either thing up front.
   reads `store.bot(toBotId)?.threadId` (server/index.ts ~3816) and `ask_bot`
   dispatches to the same. Ten delegations to one bot are ten turns queued
   behind each other in whichever thread the person happens to be looking at,
-  interleaved with their own conversation. The three-slot concurrency that
-  #981 built is never used by bot-to-bot work.
+  interleaved with their own conversation. Peer and bot-originated work remains
+  capacity-limited and never inherits the person-main exemption.
 - **The delegation ledger is per delegation, not per thread.** `check_delegation`
   and `wait_delegation` key on the delegation's task id; a delegating bot can
   ask about one hand-off but cannot list "the QA threads I opened yesterday"

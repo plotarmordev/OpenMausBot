@@ -9,16 +9,30 @@ The guarded request includes `text`, `threadId`, a stable `sendId`, and the
 `expectedActiveLeafId` from the task's current message page. An empty task uses
 `null`; a newly created bot may already have a greeting and a non-null leaf.
 The runtime admits new work only while the task is idle, has a free slot, uses
-the exact expected approval mode, and still has that leaf. Omitted
+the exact expected approval mode, and still has that leaf. A send made for a
+person through permitted `onBehalfOf` to the bot's main chat needs
+no free slot, and neither does the coordinator resuming that main-chat turn
+after its teammates report back. Omitted
 `expectedApprovalMode` means Ask without automatic or remembered approvals.
 It returns the original receipt for an already accepted matching send.
 
 `capabilities.guardedOnBehalfOf: 1` additionally accepts
 `onBehalfOf: { email?, name? }` (at least one): the person a relay such as the
 Slack worker acts for. The turn is booked to them in the usage ledger instead
-of to this machine. It changes nothing else: not the transcript's sender, not
-permissions. The route stays admin-only, so a member's session cannot name
+of to this machine, and it lifts the free-slot requirement for the bot's main
+chat as above. It changes nothing else: not the transcript's sender, not
+permissions, and the work stays relayed content rather than the person's own
+request. The route stays admin-only, so a member's session cannot name
 someone else.
+
+The coordinator persists this capacity-only person marker separately from its
+outside/relay origin. Restart recovery retains the exemption without granting
+the relay or its delegated children direct-person authority. An admin owner
+token without `onBehalfOf` does not grant the exemption: at capacity the
+main-chat request returns `guarded_busy` without transcript or queue changes.
+The route derives `capacity: "person"` only after identifying the relay and main
+target. Provider recovery consumes that same marker; thread identity, trigger
+shape and inherited origin cannot create it.
 
 Every guarded send's user line is stored with `relayed: true`: an external
 interface relayed it, and nobody typed it in one of this workspace's clients.
@@ -32,10 +46,43 @@ It does not grant or change permissions. The exact task, not its bot default,
 must match; Ask callers never silently become Full. Retry receipts continue
 to return the original accepted action before rechecking admission conditions.
 
+Every response to an `/api/` or `/.well-known/openmausbot/` request, errors
+included, carries `OpenMausBot-Environment: <environmentId>`, the id
+`/.well-known/openmausbot/environment` serves, byte for byte. The server sets
+it once per request before any route runs, so the header on a page or receipt
+names the install that produced that body, also through a proxy that forwards
+responses. That covers the 500 an unexpected fault ends in, the answers Node
+gives itself to a parsed HTTP/1.1 request (400 without a Host header, 417 for an
+Expect other than `100-continue`), and WebSocket upgrades: the upgrade gate's
+own refusals, the `101 Switching Protocols` of an accepted handshake, and a
+handshake the WebSocket server refuses, which otherwise stays exactly as `ws`
+writes it. Two answers carry no header: the interim `100 Continue`, which takes
+none (the final answer after it does), and Node's 400 for bytes that never
+parse as an HTTP request, which have no path to scope.
+
+The id a server creates is a lowercase UUID. An install that inherited an
+`environment-id` file written in uppercase keeps it exactly as written, in the
+file, the descriptor and the header: rewriting its case would change the bytes
+every saved copy of it holds. Both spellings name the same UUID, so compare ids
+case-insensitively, as the server does with `expectedEnvironmentId`.
+
+`capabilities.guardedEnvironment: 1` additionally accepts
+`expectedEnvironmentId`. Any other install answers `409` with
+`code: "guarded_environment"` and its own `environmentId` before anything else:
+no bot lookup, no `sendId` lookup or reservation, no stored line, no queue
+entry, no turn. The comparison runs synchronously once the body is parsed,
+against an id the process loads at start and never reloads, so no later wait
+can change its answer. Acceptance of a matching send may still wait on
+provider discovery afterwards; that wait cannot let another install's send
+through. The refused `sendId` stays free. Without the field a guarded
+send behaves as before. A retry is answered from the stored conversation
+(`messages.db`), so it returns the original message after a restart too; a
+message keeps its `sendId` until its conversation is deleted.
+
 Run the permanent isolated HTTP checks:
 
 ```sh
-pnpm exec vitest run server/guarded-messages-api.test.ts
+pnpm exec vitest run server/guarded-messages-api.test.ts server/install-attestation-api.test.ts
 ```
 
 Each case launches the prescribed `control-omb` verification server in a fresh
@@ -47,7 +94,13 @@ their child processes are closed by each fixture.
 The checks cover strict input and authentication, foreign task refusal, lost
 response recovery, changed-leaf rejection, Ask/automatic/remembered approval
 settings, busy/capacity refusal without enqueueing or steering, concurrent
-guarded admissions, and duplicate receipt identity. A running ordinary turn
+guarded admissions, duplicate receipt identity, and the install binding: the
+environment header on every response and another install's id refused without
+storing or reserving anything. `install-attestation-api.test.ts` adds the
+header on WebSocket upgrade refusals, on Node's own 400 and 417, and on a 500
+from a fault with no status,
+which a fixture launched with `OMB_TEST_ROUTE_FAULT=1` throws while
+`<data dir>/fail-thread-read` exists. A running ordinary turn
 remains unchanged when a guarded send is refused. Ordinary composer sends
 retain their existing behavior; this endpoint does not prohibit a later human
 message from steering or queueing through the ordinary route.
