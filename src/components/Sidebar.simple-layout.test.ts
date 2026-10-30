@@ -130,7 +130,7 @@ describe("Simple-mode sidebar layout", () => {
     expect(headers(tree).map((header) => header.props.name)).toEqual(["Group chats", "Work"]);
   });
 
-  it("fades the list's edges, with the top buttons and the tiles fixed above it, and keeps Advanced's glass", () => {
+  it("fades the list's edges in both modes, with the top buttons and the tiles fixed above it", () => {
     fixture.state = { ...fixture.state, bots: [bot("chief", { chiefOfStaff: true, pinned: true }), bot("atlas", { pinned: true }), bot("bea")] };
     const simple = render();
     expect(simple.tree.find((node) => node.type === GlassScrollFrame)!.props.fade).toBe(true);
@@ -141,8 +141,8 @@ describe("Simple-mode sidebar layout", () => {
     expect(simple.root.props.className).toContain("max-md:[--scroll-fade-surface:var(--color-app)]");
     fixture.advanced = true;
     const advanced = render();
-    expect(advanced.tree.find((node) => node.type === GlassScrollFrame)!.props.fade).toBe(false);
-    expect(advanced.root.props.className).not.toContain("--scroll-fade-surface");
+    expect(advanced.tree.find((node) => node.type === GlassScrollFrame)!.props.fade).toBe(true);
+    expect(advanced.root.props.className).toContain("max-md:[--scroll-fade-surface:var(--color-app)]");
   });
 
   it("keeps Advanced's Pinned heading and rows, with the Chief as a row", () => {
@@ -157,7 +157,7 @@ describe("Simple-mode sidebar layout", () => {
     expect(headers(tree).map((header) => header.props.name)).toContain("Pinned");
   });
 
-  it("draws a faint edge and the Simple footer in Simple mode, and keeps Advanced's divider and footer", () => {
+  it("draws the same faint edge in both modes, with the Simple footer in Simple mode and Advanced's footer in Advanced", () => {
     const footer = (tree: ReactElement<Props>[]) => (tree.find((node) => node.type === SidebarFooter)!.props as Parameters<typeof SidebarFooter>[0]).simple;
     const simple = render();
     expect(simple.root.props.className).toContain("border-r border-ink/[0.04]");
@@ -166,7 +166,7 @@ describe("Simple-mode sidebar layout", () => {
     fixture.values = [];
     fixture.advanced = true;
     const advanced = render();
-    expect(advanced.root.props.className).toContain("border-r border-hairline/40");
+    expect(advanced.root.props.className).toContain("border-r border-ink/[0.04]");
     expect(footer(advanced.tree)).toBe(false);
   });
 

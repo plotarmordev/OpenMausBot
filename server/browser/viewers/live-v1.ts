@@ -27,6 +27,8 @@ export interface LiveOpenOptions {
   owner: string;
   isCurrent: () => boolean;
   res: ServerResponse;
+  /** The panel's size in CSS pixels, which the page fills from the start. */
+  size?: { width: number; height: number } | null;
 }
 
 interface V1Viewer {
@@ -192,7 +194,7 @@ export class LiveV1 {
     }, WAITING_AFTER_MS);
     waiting.unref?.();
     try {
-      const core = await this.#service.attachViewer(target, { owner: options.owner, canOperate: true, ...LO_TIER, pace: "lo", pointer: false }, (output) => this.#output(viewer, output));
+      const core = await this.#service.attachViewer(target, { owner: options.owner, canOperate: true, ...LO_TIER, pace: "lo", pointer: false, ...(options.size ? { size: options.size } : {}) }, (output) => this.#output(viewer, output));
       (viewer as { id: string }).id = core.id;
       viewer.core = core;
       if (!this.#current(viewer)) { this.#close(viewer); return; }
@@ -259,6 +261,10 @@ export class LiveV1 {
         viewer.sent = null;
         this.#flushFrame(viewer);
       }
+      return { ok: true };
+    }
+    if (action.type === "resize") {
+      if (action.size) await core.input({ type: "resize", ...action.size });
       return { ok: true };
     }
     if (action.type === "restart") {

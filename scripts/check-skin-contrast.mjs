@@ -39,17 +39,8 @@ function parseSkins(source) {
   }
   // The phone block re-declares some tokens of a skin under a width query, so
   // that skin is measured twice: as it renders on desktop and as "<id> (phone)".
-  const phoneTokens = new Map();
   for (const [, id, body] of phone.matchAll(/\[data-skin="([a-z-]+)"\]\)?\s*\{([^}]*)\}/g)) {
-    phoneTokens.set(id, declarations(body));
-    skins.set(`${id} (phone)`, { ...skins.get(id), ...phoneTokens.get(id) });
-  }
-  // Advanced mode re-declares some tokens of a skin, measured as "<id> (advanced)",
-  // and with the phone block over it as "<id> (advanced, phone)".
-  for (const [, id, body] of desktop.matchAll(/\[data-skin="([a-z-]+)"\]:where\(:root\[data-interface="advanced"\][^{]*\{([^}]*)\}/g)) {
-    const advanced = { ...skins.get(id), ...declarations(body) };
-    skins.set(`${id} (advanced)`, advanced);
-    if (phoneTokens.has(id)) skins.set(`${id} (advanced, phone)`, { ...advanced, ...phoneTokens.get(id) });
+    skins.set(`${id} (phone)`, { ...skins.get(id), ...declarations(body) });
   }
   return skins;
 }
@@ -202,12 +193,12 @@ for (const [id, tokens] of skins) {
     continue;
   }
   for (const { fg, bg, ratio } of problems) {
-    const floor = BASELINE_FLOORS.get(`${id.replace(/ \(.*\)$/, "")}|${fg}|${bg}`);
+    const floor = BASELINE_FLOORS.get(`${id.replace(/ \(phone\)$/, "")}|${fg}|${bg}`);
     if (floor === undefined || ratio < floor - BASELINE_DRIFT) skinFailed = true;
   }
   console.log(`${skinFailed ? "✗" : "~"} ${id}${skinFailed ? "" : " (known upstream gaps)"}`);
   for (const { fg, bg, ratio, min } of problems) {
-    const floor = BASELINE_FLOORS.get(`${id.replace(/ \(.*\)$/, "")}|${fg}|${bg}`);
+    const floor = BASELINE_FLOORS.get(`${id.replace(/ \(phone\)$/, "")}|${fg}|${bg}`);
     const baseline = floor === undefined ? "" : `; baseline ${floor.toFixed(2)}:1`;
     console.log(`    ${fg} on ${bg}: ${ratio.toFixed(2)}:1 (needs ${min}:1${baseline})`);
   }

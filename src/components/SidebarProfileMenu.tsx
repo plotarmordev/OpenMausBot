@@ -599,7 +599,6 @@ export function SidebarProfileMenu({ iconOnly = false, rail = false, circle = fa
       <SidebarPopoverMenu
         items={items}
         ariaLabel={name}
-        compact={simple}
         onOpenChange={simple ? setMenuOpen : undefined}
         triggerClassName={iconOnly || simple ? cn("shrink-0", circle || simple ? "rounded-full" : "rounded-xl") : "w-full"}
         triggerTitle={iconOnly || simple ? label : undefined}

@@ -1041,6 +1041,17 @@ describe("config status frames", () => {
     expect(status.anthropic).toEqual({ configured: true, everyClaudeBot: false });
   });
 
+  it("keeps every saved key's hint through a live config update, so a masked key never empties", () => {
+    const status = configStatusFromFrame({
+      openai: { configured: true, last4: "a1b2" },
+      box: { configured: true, last4: "c3d4" },
+      savedKeys: { ttsKey: { configured: true, last4: "e5f6" }, openaiLiveKey: { configured: false } },
+    } as ConfigStatusFrame);
+    expect(status.openai).toEqual({ configured: true, last4: "a1b2" });
+    expect(status.box).toEqual({ configured: true, last4: "c3d4" });
+    expect(status.savedKeys).toEqual({ ttsKey: { configured: true, last4: "e5f6" }, openaiLiveKey: { configured: false } });
+  });
+
   it("keeps thread capacity and room timeout with the existing config fields", () => {
     expect(
       configStatusFromFrame({

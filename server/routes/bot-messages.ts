@@ -24,7 +24,7 @@ import type { ReplyTarget } from "../replies.ts";
 import type { RequestAuth } from "../request-auth.ts";
 import type { RoutineManager } from "../routines.ts";
 import { acceptedSendMatch, parseSendId } from "../send-idempotency.ts";
-import { cancelSteeredMessage, holdSteeredQueue, queuedSteeredMessage, restoreHeldSteeredQueue, settleHeldSteeredQueue } from "../steer-queue.ts";
+import { cancelSteeredMessage, holdSteeredQueue, isQueuedRecovery, queuedSteeredMessage, restoreHeldSteeredQueue, settleHeldSteeredQueue } from "../steer-queue.ts";
 import type { BotRecord, GroupRecord, Message, Store } from "../store.ts";
 import { extractSteerImages } from "../turn-images.ts";
 import { followupFacts, helperFollowup, helperFollowupBody, mayFollowUp } from "../helper-followup.ts";
@@ -73,7 +73,7 @@ export interface BotMessageRouteDeps {
   ): Promise<DirectSendReceipt>;
   directSendRefusal(botId: string, threadId: string): { status: number; body: Record<string, unknown> } | null;
   startTurn(botId: string, text: string, opts?: {
-    threadId?: string; replyTo?: Message; sendId?: string; sender?: ResolvedSender; trigger?: UsageTrigger; relayed?: boolean;
+    threadId?: string; replyTo?: Message; sendId?: string; sender?: ResolvedSender; trigger?: UsageTrigger; relayed?: boolean; capacity?: "person";
     dataContext?: DataContext; compactOnly?: boolean; cardContinuation?: boolean; editedMessageId?: string;
   }): Promise<Message>;
   usageTriggerFor(auth: RequestAuth): UsageTrigger;
@@ -86,7 +86,8 @@ export interface BotMessageRouteDeps {
   requestedTaskBot(botId: string, rawThreadId: unknown): BotRecord;
   botForThread(botId: string, threadId: string): BotRecord | null;
   threadBusy(botId: string, threadId: string): boolean;
-  botAtThreadCapacity(botId: string): boolean;
+  botAtThreadCapacity(botId: string, capacity?: "person"): boolean;
+  botMainThread(botId: string): string | undefined;
   parksBehindCoordination(botId: string, threadId: string): boolean;
   activeGroupTurnForBot(botId: string): { group: GroupRecord; threadId: string } | null;
   runningTurnInstance(bot: BotRecord | null | undefined, threadId: string): RunningInstance;
@@ -169,7 +170,7 @@ export function createBotMessageRoutes(deps: BotMessageRouteDeps): RouteHandler 
     desktopManaged: DESKTOP_MANAGED, cloudHome: CLOUD_HOME, environmentId, DirectSendRefused,
     acceptDirectSend, directSendRefusal, startTurn, usageTriggerFor, messageSender, cloudGuestSendRefusal, cloudThreadRefusal,
     cardAnswerRefusal, commandRememberRefusal, requestBehavior, requestedTaskBot, botForThread, threadBusy,
-    botAtThreadCapacity, parksBehindCoordination, activeGroupTurnForBot, runningTurnInstance, engineSteersImages, resolveReplyTarget,
+    botAtThreadCapacity, botMainThread, parksBehindCoordination, activeGroupTurnForBot, runningTurnInstance, engineSteersImages, resolveReplyTarget,
     turnSelection, policyModelRefusal, clearUnattended, drainQueuedSends, answeringCardAs, resolveAndSendTrust, resolveAndSendTeamSetup,
     resolveAndSendRoutine, resolveAndSendProfile, resolveAndSendModel, resolveSkillRequest, sendSkillResolution, answerRequest,
     deliverLateQuestionAnswer, stopThreadForPerson, cancelDirectTurnDispatch, revokeInternalCapabilitiesForThread,
@@ -236,10 +237,12 @@ export function createBotMessageRoutes(deps: BotMessageRouteDeps): RouteHandler 
         const accepted = goalSendId ? acceptedSendMatch(store.messagesFor(threadId), goalSendId, typed, undefined, "goal") : null;
         if (accepted?.kind === "conflict") return json(res, 409, { error: "sendId already belongs to another message" });
         if (accepted?.kind === "match") return json(res, 202, { ok: true, threadId, message: accepted.message });
-        const message = goals.start(bot.id, threadId, typed, { sendId: goalSendId, sender: messageSender(auth) });
+        const capacity = (auth.kind === "session" || DESKTOP_MANAGED) && threadId === botMainThread(bot.id) ? "person" : undefined;
+        const message = goals.start(bot.id, threadId, typed, { sendId: goalSendId, sender: messageSender(auth), capacity });
         return json(res, 202, { ok: true, threadId, message });
       }
       const onBehalfOf = guardedBody?.data?.onBehalfOf;
+      const capacity = onBehalfOf && threadId === botMainThread(bot.id) ? "person" : undefined;
       const trigger: UsageTrigger = onBehalfOf
         ? { kind: "user", ...(onBehalfOf.email ? { email: onBehalfOf.email } : {}), ...(onBehalfOf.name ? { label: onBehalfOf.name } : {}) }
         : usageTriggerFor(auth);
@@ -303,14 +306,15 @@ export function createBotMessageRoutes(deps: BotMessageRouteDeps): RouteHandler 
             const guardedAdmission = admit("guarded", {}, {
               botBusy: currentAtStart.busy,
               threadBusy: threadBusy(bot.id, threadId),
-              atCapacity: botAtThreadCapacity(bot.id),
+              atCapacity: botAtThreadCapacity(bot.id, capacity),
               parksBehindCoordination: parksBehindCoordination(bot.id, threadId),
               groupTurn: Boolean(activeGroupTurnForBot(bot.id)),
             });
             if (guardedAdmission.action === "refuse") {
               throw Object.assign(new Error("wait for a free thread slot before retrying this message"), { status: 409, code: "guarded_busy" });
             }
-            const message = await startTurn(bot.id, text, { threadId, replyTo, sendId, sender, trigger, relayed: true, dataContext });
+            const message = await startTurn(bot.id, text, { threadId, replyTo, sendId, sender, trigger, relayed: true,
+              capacity, dataContext });
             return { ok: true as const, threadId, message };
           }
         : undefined;
@@ -355,7 +359,10 @@ export function createBotMessageRoutes(deps: BotMessageRouteDeps): RouteHandler 
       const body = await readBody(req);
       requirePinnedClientThread(m[1], body?.threadId);
       const bot = requestedTaskBot(m[1], body?.threadId);
-      // Hold the whole queue atomically: a racing settle drains it or this request steers it, never both.
+      if (isQueuedRecovery(bot.id, bot.threadId, m[2])) {
+        return json(res, 409, { error: "An automatic recovery cannot be steered; cancel it instead", code: "recovery_not_steerable" });
+      }
+      // Hold the queue atomically: a racing settle drains it or this request steers it, never both.
       const held = holdSteeredQueue(bot.id, bot.threadId, m[2]);
       if (!held) return json(res, 404, { error: "no such queued message" });
       const currentAtStart = store.projectBotForTask(bot.id, bot.threadId);
@@ -492,8 +499,9 @@ export function createBotMessageRoutes(deps: BotMessageRouteDeps): RouteHandler 
       const quoted = source.replyToId ? resolveReplyTarget(bot.threadId, source.replyToId) : undefined;
       const replyTo: ReplyTarget | undefined = quoted && source.reaction && text === source.text ? { ...quoted, reactedWith: source.reaction } : quoted;
       const dataContext = parseDataContext(body.dataContext) ?? (text === source.text ? source.dataContext : undefined);
+      const capacity = (auth.kind === "session" || DESKTOP_MANAGED) && bot.threadId === botMainThread(bot.id) ? "person" : undefined;
       const message = await startTurn(bot.id, text, { threadId: bot.threadId, editedMessageId: messageId, replyTo, sendId, trigger: usageTriggerFor(auth), dataContext,
-        ...(CLOUD_HOME ? { sender: messageSender(auth) } : {}) });
+        capacity, ...(CLOUD_HOME ? { sender: messageSender(auth) } : {}) });
       return json(res, 202, { ok: true, message });
     }
 

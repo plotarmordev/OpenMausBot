@@ -40,7 +40,7 @@ export const AREA_CHECKS = {
  * process), with the Electron node tests, which compare their own copy of some
  * strings with every catalog. Docs tests: every test that reads the docs. */
 export const VITEST_SUBSETS = {
-  "locale-tests": { part: "locale tests", files: ["src/", "scripts/generate-locale.test.mjs"], shards: 2, nodeTests: true },
+  "locale-tests": { part: "locale tests", files: ["src/", "scripts/generate-locale.test.mjs", "scripts/testing/key-readback.e2e.test.ts"], shards: 2, nodeTests: true },
   "docs-tests": {
     part: "docs tests",
     files: ["scripts/testing/analytics-docs.test.ts", "server/model-providers-docs.test.ts", "src/locales/vocabulary.test.ts"],

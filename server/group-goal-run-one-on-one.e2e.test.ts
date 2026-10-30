@@ -92,6 +92,7 @@ beforeAll(async () => {
         ]),
       }),
       patient: fixture("patient", { FAKE_CLAUDE_MODE: "hang", FAKE_CLAUDE_FINISH_GATE: patientGate }),
+      capped: fixture("capped", { FAKE_CLAUDE_MODE: "hang" }),
       crash: fixture("crash", { FAKE_CLAUDE_MODE: "exit-early" }),
       routine: fixture("routine", {
         FAKE_CLAUDE_MODE: "happy",
@@ -238,6 +239,64 @@ describe("one-on-one goal runs (a room of one)", () => {
     const owner = (await api("GET", "/api/bots?messages=0")).body.bots.find((candidate: { id: string }) => candidate.id === bot.id);
     expect(owner.tasks.some((task: { threadId: string }) => task.threadId === run.threadId)).toBe(true);
     expect(await cardIn(run.threadId)).toMatchObject({ runId, status: "completed", coordinatorBotId: bot.id });
+  });
+
+  it.each(["non-person", "non-main", "routine"])("keeps %s goals capped while another thread holds the slot", async (kind) => {
+    expect((await api("PATCH", "/api/config", { threads: { maxConcurrentPerBot: 1 } })).status).toBe(200);
+    const bot = await newBot(`Capped ${kind}`, "capped");
+    const holdingRoutine = (await api("POST", "/api/routines", {
+      name: "Goal capacity holder", prompt: "Hold capacity", target: "bot", botId: bot.id, runOn: "maus",
+      schedule: { type: "once", at: Date.now() + 60_000 }, durationMinutes: 30,
+    })).body.routine;
+    const holdingRun = (await api("POST", `/api/routines/${holdingRoutine.id}/run`)).body.run;
+    const holderState = async () => (await api("GET", "/api/routines")).body.runs.find((run: { id: string }) => run.id === holdingRun.id);
+    await expect.poll(async () => (await holderState())?.status).toBe("running");
+    const holder = await holderState();
+    let routineId: string | undefined;
+    const goalThread = kind === "non-main"
+      ? (await api("POST", `/api/bots/${bot.id}/tasks`, { title: "Not main" })).body.task.threadId : bot.threadId;
+    expect((await api("POST", `/api/bots/${bot.id}/tasks/${bot.threadId}`, {})).status).toBe(200);
+    try {
+      if (kind === "routine") {
+        const created = await api("POST", "/api/routines", {
+          name: "Capped goal", prompt: "Do not bypass capacity", target: "room-goal", botId: bot.id, runOn: "maus",
+          schedule: { type: "once", at: Date.now() + 60_000 }, durationMinutes: 30,
+        });
+        expect(created.status).toBe(201);
+        routineId = created.body.routine.id;
+        const started = await api("POST", `/api/routines/${routineId}/run`);
+        expect(started.status).toBe(201);
+        await expect.poll(async () => (await api("GET", "/api/routines")).body.runs.find((run: { id: string }) => run.id === started.body.run.id)?.status)
+          .toBe("queued");
+      } else {
+        let token: string | undefined;
+        if (kind === "non-main") {
+          const pairing = await api("POST", "/api/auth/pairing", {});
+          const paired = await api("POST", "/api/auth/pair", { code: pairing.body.code });
+          expect(paired.status).toBe(200);
+          token = paired.body.token;
+        } else {
+          expect((await api("POST", `/api/bots/${bot.id}/tasks/${goalThread}`, {})).status).toBe(200);
+        }
+        const response = await fetch(`${base}/api/bots/${bot.id}/messages`, {
+          method: "POST",
+          headers: { "content-type": "application/json", ...(token ? { authorization: `Bearer ${token}` } : {}) },
+          body: JSON.stringify({ threadId: goalThread, mode: "goal", text: "Capped goal" }),
+        });
+        expect(response.status).toBe(202);
+        await expect.poll(() => cardIn(goalThread)).toMatchObject({ status: "working", turnCount: 0 });
+        expect((await cardIn(goalThread)).capacity).toBeUndefined();
+      }
+      const state = (await api("GET", "/api/bots?messages=0")).body.bots.find((entry: { id: string }) => entry.id === bot.id);
+      expect(state.tasks.filter((task: { busy: boolean }) => task.busy).map((task: { threadId: string }) => task.threadId)).toEqual([holder.threadId]);
+      if (kind !== "routine") expect(await cardIn(goalThread)).toMatchObject({ turnCount: 0 });
+    } finally {
+      await api("POST", `/api/bots/${bot.id}/interrupt`, { threadId: goalThread });
+      await api("POST", `/api/bots/${bot.id}/interrupt`, { threadId: holder.threadId });
+      if (routineId) await api("DELETE", `/api/routines/${routineId}`);
+      await api("DELETE", `/api/routines/${holdingRoutine.id}`);
+      await api("PATCH", "/api/config", { threads: { maxConcurrentPerBot: 16 } });
+    }
   });
 
   it("refuses a mode it does not know", async () => {

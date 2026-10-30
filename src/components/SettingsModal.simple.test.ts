@@ -47,13 +47,7 @@ const { marker } = vi.hoisted(() => ({
 }));
 vi.mock("./EnginesSettings", () => ({ EnginesSettings: marker("engines") }));
 vi.mock("./DecisionModelSettings", () => ({ DecisionModelSettings: marker("decisionModel") }));
-vi.mock("./ApiKeys", () => ({
-  ApiKeyRow: marker("apiKey"),
-  AnthropicEveryClaudeBot: marker("anthropicEvery"),
-  OpenAiCompatUrl: marker("compatUrl"),
-  OpenCodeProviderKeys: marker("opencodeProviderKeys"),
-  VpsConnection: marker("vps"),
-}));
+vi.mock("./keys/KeysPage", () => ({ KeysPage: marker("apiKey") }));
 vi.mock("./RemoteComputerSection", () => ({ RemoteComputerSection: marker("companion") }));
 vi.mock("./CustomDomainSettings", () => ({ CustomDomainSettings: () => null }));
 vi.mock("./CompanionSection", () => ({ CompanionSection: () => null }));
@@ -298,26 +292,26 @@ describe("Settings in Simple mode", () => {
     else expect(markers(html)).toContain(content);
   });
 
-  it("scrolls a later section of a stacked page into view, and starts a page at its top", () => {
-    const scrollIntoView = vi.fn();
-    const querySelector = vi.fn(() => ({ scrollIntoView }));
-    const scroller = { scrollTop: 320, querySelector };
+  it("scrolls a later section of a stacked page to the top of the scroller alone, and starts a page at its top", () => {
+    const block = { getBoundingClientRect: () => ({ top: 500 }) };
+    const querySelector = vi.fn(() => block);
+    const scroller = { scrollTop: 320, clientHeight: 600, getBoundingClientRect: () => ({ top: 100 }), querySelector };
     revealSettingsBlock(scroller, "connections", 1);
     expect(querySelector).toHaveBeenCalledWith('[data-settings-block="connections"]');
-    expect(scrollIntoView).toHaveBeenCalledWith({ block: "start" });
+    expect(scroller.scrollTop).toBe(720);
     revealSettingsBlock(scroller, "engines", 0);
     expect(scroller.scrollTop).toBe(0);
-    expect(scrollIntoView).toHaveBeenCalledTimes(1);
+    expect(querySelector).toHaveBeenCalledTimes(1);
   });
 });
 
 describe("Settings in Advanced mode", () => {
   beforeEach(() => { fixture.advancedMode = true; });
 
-  it("keeps the grouped rail, the glass pop-up and General as it was, Advanced mode switch first", () => {
+  it("keeps the grouped rail and General, Advanced mode switch first, on the same Settings look as Simple", () => {
     const html = render();
     expect(html).toContain("glass-surface");
-    expect(html).not.toContain("data-settings-look");
+    expect(html).toContain('data-settings-look="advanced"');
     expect(html).not.toContain("data-settings-page=");
     expect([...html.matchAll(/data-settings-group="([^"]+)"/g)].map((match) => match[1])).toEqual(["you", "ai", "computers", "account"]);
     expect(html.indexOf('aria-label="Advanced mode"')).toBeLessThan(html.indexOf("Language"));

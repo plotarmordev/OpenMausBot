@@ -9,6 +9,7 @@
 //     api_error_status; FAKE_CLAUDE_NO_TERMINAL_REASON=1: the result has no terminal_reason, only stop_reason "stop_sequence"
 //   FAKE_CLAUDE_RATE_LIMIT  JSON rate_limit_info reported in a `rate_limit_event` after init
 //   FAKE_CLAUDE_LIMITED_FILE  path: while it exists, every turn plays usage-limit with the file's JSON rate_limit_info
+//   FAKE_CLAUDE_LIMITED_GATE  path: a usage-limit refusal is held until it exists
 //   FAKE_CLAUDE_MCP_FAILED  comma list of MCP servers init reports as failed (`mcp_servers`)
 //   FAKE_CLAUDE_RELEASE  with hang: the turn ends normally once this file exists
 //   FAKE_CLAUDE_DUMP  path for the latest turn's {argv, env, cwd, prompt, systemPrompt, mcpConfig}
@@ -807,16 +808,25 @@ const playTurn = (prompt: JsonValue, late = false) => {
   const resumedError = process.env.FAKE_CLAUDE_RESUMED_API_ERROR === "1" && argv.includes("--resume") && !resumedErrorPlayed;
   if (resumedError) resumedErrorPlayed = true;
   if (mode === "usage-limit" || limited !== null) {
-    // captured from 2.1.295 for an account past its weekly limit
-    const text = process.env.FAKE_CLAUDE_API_ERROR ?? "You've hit your weekly limit \u00b7 resets Oct 12 at 2:30pm (Asia/Calcutta)";
-    out({
-      type: "assistant", message: { model: "<synthetic>", stop_reason: "stop_sequence", content: [{ type: "text", text }] },
-      error: "rate_limit", is_api_error_message: true, api_error: "usage_limit_reached",
-      ...(rateLimit ? { api_error_params: { rate_limit_info: rateLimit } } : {}),
-    });
-    out({ type: "result", subtype: "success", is_error: true, stop_reason: "stop_sequence", terminal_reason: "api_error", api_error: "usage_limit_reached", result: text });
-    turnRunning = false;
-    finishIfDone();
+    const refuse = () => {
+      // captured from 2.1.295 for an account past its weekly limit
+      const text = process.env.FAKE_CLAUDE_API_ERROR ?? "You've hit your weekly limit \u00b7 resets Oct 12 at 2:30pm (Asia/Calcutta)";
+      out({
+        type: "assistant", message: { model: "<synthetic>", stop_reason: "stop_sequence", content: [{ type: "text", text }] },
+        error: "rate_limit", is_api_error_message: true, api_error: "usage_limit_reached",
+        ...(rateLimit ? { api_error_params: { rate_limit_info: rateLimit } } : {}),
+      });
+      out({ type: "result", subtype: "success", is_error: true, stop_reason: "stop_sequence", terminal_reason: "api_error", api_error: "usage_limit_reached", result: text });
+      turnRunning = false;
+      finishIfDone();
+    };
+    const gate = process.env.FAKE_CLAUDE_LIMITED_GATE;
+    if (!gate || existsSync(gate)) { refuse(); return; }
+    const poll = setInterval(() => {
+      if (!existsSync(gate)) return;
+      clearInterval(poll);
+      refuse();
+    }, 10);
     return;
   }
   if (mode === "api-error" || resumedError) {

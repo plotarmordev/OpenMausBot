@@ -17,6 +17,7 @@ vi.mock("react", async (original) => ({
     }];
   },
   useEffect: () => {},
+  useId: () => "row",
   useRef: (current: unknown) => {
     const index = fixture.refIndex++;
     fixture.refs[index] ??= { current };
@@ -25,35 +26,33 @@ vi.mock("react", async (original) => ({
 }));
 vi.mock("@/state/store", async (original) => {
   const store = await original<typeof import("@/state/store")>();
-  return { ...store, api: fixture.api, useStore: () => ({ state: { ...store.initialState, config: fixture.config }, dispatch: fixture.dispatch }) };
+  return { ...store, api: fixture.api, useStore: () => ({ state: { ...store.initialState, config: fixture.config, instances: [] }, dispatch: fixture.dispatch }) };
 });
 vi.mock("@/lib/analytics", () => ({ track: fixture.track }));
 const { ApiError } = await import("@/state/store");
-const { ApiKeyRow } = await import("./ApiKeys");
+const { KeyRow } = await import("./KeyRow");
 
-type Props = { children?: ReactNode; type?: string; onChange?: (event: { target: { value: string } }) => void; onKeyDown?: (event: { key: string }) => void; onBlur?: () => void; onClick?: () => void };
+type Props = { children?: ReactNode; type?: string; onChange?: (event: { target: { value: string } }) => void; onKeyDown?: (event: { key: string; preventDefault: () => void }) => void; onClick?: () => void; "data-key-remove"?: boolean };
 function nodes(tree: ReactNode): Array<ReactElement<Props>> {
   return Children.toArray(tree).flatMap((child) => isValidElement<Props>(child) ? [child, ...nodes(child.props.children)] : []);
 }
-function render(props: Parameters<typeof ApiKeyRow>[0]) {
+function render(props: Parameters<typeof KeyRow>[0]) {
   fixture.index = 0;
   fixture.refIndex = 0;
-  return nodes(ApiKeyRow(props));
+  return nodes(KeyRow(props));
 }
 const flush = async () => { for (let i = 0; i < 20; i++) await Promise.resolve(); };
 const input = (tree: Array<ReactElement<Props>>) => tree.find((node) => node.type === "input")!;
 
-async function paste(props: Parameters<typeof ApiKeyRow>[0], { blurToo = false } = {}) {
+async function enterKey(props: Parameters<typeof KeyRow>[0]) {
   input(render(props)).props.onChange!({ target: { value: KEY } });
-  const typed = input(render(props));
-  typed.props.onKeyDown!({ key: "Enter" });
-  if (blurToo) typed.props.onBlur!();
+  input(render(props)).props.onKeyDown!({ key: "Enter", preventDefault: () => {} });
   await flush();
 }
 
 function expectNoKeyIn(calls: unknown) {
   const sent = JSON.stringify(calls);
-  for (const fragment of [KEY, KEY.slice(0, 6), KEY.slice(-6), String(KEY.length), "SECRET"]) expect(sent).not.toContain(fragment);
+  for (const fragment of [KEY, KEY.slice(0, 6), KEY.slice(-6), KEY.slice(-4), String(KEY.length), "SECRET"]) expect(sent).not.toContain(fragment);
 }
 
 beforeEach(() => {
@@ -62,6 +61,7 @@ beforeEach(() => {
   fixture.refs = [];
   fixture.config = { anthropic: { configured: false }, box: { configured: false } };
   vi.stubGlobal("window", {});
+  vi.stubGlobal("document", { activeElement: null });
 });
 afterEach(() => vi.unstubAllGlobals());
 
@@ -71,8 +71,8 @@ describe("a key saved in Settings → API keys", () => {
     ["rejected", { ok: false, reason: "rejected" }],
     ["unverified", { ok: false, reason: "unreachable" }],
   ])("reports one save whose result is the key test's verdict (%s), and never the key", async (result, verdict) => {
-    fixture.api.mockResolvedValueOnce({ ...fixture.config, anthropic: { configured: true } }).mockResolvedValueOnce(verdict);
-    await paste({ section: "anthropic", testProvider: "anthropic" }, { blurToo: true });
+    fixture.api.mockResolvedValueOnce({ ...fixture.config, anthropic: { configured: true, last4: KEY.slice(-4) } }).mockResolvedValueOnce(verdict);
+    await enterKey({ id: "anthropic" });
     expect(fixture.api.mock.calls.map(([path]) => path)).toEqual(["/api/config", "/api/keys/test"]);
     expect(fixture.track.mock.calls).toEqual([["api_key_saved", { provider: "anthropic", via: "settings", result }]]);
     expectNoKeyIn(fixture.track.mock.calls);
@@ -81,8 +81,7 @@ describe("a key saved in Settings → API keys", () => {
   it("still reports the verdict when typing again made the row stop showing it", async () => {
     let answer!: (value: unknown) => void;
     fixture.api.mockResolvedValueOnce({ anthropic: { configured: true } }).mockReturnValueOnce(new Promise((resolve) => { answer = resolve; }));
-    await paste({ section: "anthropic", testProvider: "anthropic" });
-    input(render({ section: "anthropic", testProvider: "anthropic" })).props.onChange!({ target: { value: "x" } });
+    await enterKey({ id: "anthropic" });
     answer({ ok: true });
     await flush();
     expect(fixture.track.mock.calls).toEqual([["api_key_saved", { provider: "anthropic", via: "settings", result: "ok" }]]);
@@ -90,7 +89,7 @@ describe("a key saved in Settings → API keys", () => {
 
   it("reports a refused save as an error even when the server's words echo the key", async () => {
     fixture.api.mockRejectedValueOnce(new ApiError(`Invalid key ${KEY}`, 400, { error: `Invalid key ${KEY}` }));
-    await paste({ section: "anthropic", testProvider: "anthropic" });
+    await enterKey({ id: "anthropic" });
     expect(fixture.track.mock.calls).toEqual([["api_key_saved", { provider: "anthropic", via: "settings", result: "error" }]]);
     expectNoKeyIn(fixture.track.mock.calls);
   });
@@ -98,7 +97,7 @@ describe("a key saved in Settings → API keys", () => {
   it("reports a Boat key boat.dev refused over the desktop bridge as rejected, from the Computer panel", async () => {
     const setCredential = vi.fn().mockRejectedValue(new Error(`Error invoking remote method 'credential:set': KeyRejected: That doesn't look like a Boat API key: ${KEY.slice(0, 12)}`));
     vi.stubGlobal("window", { ogb: { setCredential } });
-    await paste({ section: "box", via: "computer_panel" });
+    await enterKey({ id: "box", via: "computer_panel" });
     expect(setCredential).toHaveBeenCalledWith("boxToken", KEY);
     expect(fixture.api).not.toHaveBeenCalled();
     expect(fixture.track.mock.calls).toEqual([["api_key_saved", { provider: "boat", via: "computer_panel", result: "rejected" }]]);
@@ -107,38 +106,45 @@ describe("a key saved in Settings → API keys", () => {
 
   it("reports a Boat key the server checked as ok, without testing it again", async () => {
     fixture.api.mockResolvedValueOnce({ box: { configured: true } });
-    await paste({ section: "box" });
+    await enterKey({ id: "box" });
     expect(fixture.api).toHaveBeenCalledOnce();
     expect(fixture.track.mock.calls).toEqual([["api_key_saved", { provider: "boat", via: "settings", result: "ok" }]]);
   });
 
-  it("reports a cleared key as removed, once, and a failed clear not at all", async () => {
-    fixture.config = { anthropic: { configured: true } };
+  it("saves an xAI key through the desktop's encrypted store, so Remove clears the stored copy too", async () => {
+    const setCredential = vi.fn().mockResolvedValue({ xai: { configured: true } });
+    vi.stubGlobal("window", { ogb: { setCredential } });
+    fixture.api.mockResolvedValue({ ok: true });
+    await enterKey({ id: "xai" });
+    expect(setCredential).toHaveBeenCalledWith("xaiApiKey", KEY);
+    expect(fixture.api.mock.calls.map(([path]) => path)).toEqual(["/api/keys/test"]);
+  });
+
+  it("reports a removed key as removed, once, and a failed remove not at all", async () => {
+    fixture.config = { anthropic: { configured: true, last4: "6789" } };
     fixture.api.mockRejectedValueOnce(new ApiError("busy", 409, { error: "busy" })).mockResolvedValueOnce({ anthropic: { configured: false } });
-    const clear = () => render({ section: "anthropic", testProvider: "anthropic" }).find((node) => node.type === "button" && JSON.stringify(node.props.children).includes("Clear"))!;
-    clear().props.onClick!();
+    const remove = () => render({ id: "anthropic" }).find((node) => node.type === "button" && node.props["data-key-remove"])!;
+    remove().props.onClick!();
     await flush();
     expect(fixture.track).not.toHaveBeenCalled();
-    clear().props.onClick!();
-    clear().props.onClick!();
+    remove().props.onClick!();
+    remove().props.onClick!();
     await flush();
     expect(fixture.api).toHaveBeenCalledTimes(2);
     expect(fixture.track.mock.calls).toEqual([["api_key_removed", { provider: "anthropic", via: "settings" }]]);
   });
 
-  it("offers Clear for a Composio project key of the person's own, and none for the managed connection", async () => {
-    const row = () => render({ section: "composio" });
-    const clear = () => row().find((node) => node.type === "button" && JSON.stringify(node.props.children).includes("Clear"));
+  it("offers Remove for a Composio project key of the person's own, and none for the managed connection", async () => {
+    const remove = () => render({ id: "composio" }).find((node) => node.type === "button" && node.props["data-key-remove"]);
     fixture.config = { composio: { configured: true, mode: "managed" } };
-    expect(clear()).toBeUndefined();
-    expect(JSON.stringify(row().map((node) => node.props.children))).not.toContain("Configured");
+    expect(remove()).toBeUndefined();
     fixture.config = { composio: { configured: true, mode: "self-hosted" } };
     fixture.api.mockResolvedValue({ composio: { configured: true, mode: "managed" } });
-    clear()!.props.onClick!();
+    remove()!.props.onClick!();
     await flush();
     expect(fixture.api).toHaveBeenCalledOnce();
     expect(fixture.track.mock.calls).toEqual([["api_key_removed", { provider: "composio", via: "settings" }]]);
     fixture.config = { composio: { configured: true, mode: "managed" } };
-    expect(clear()).toBeUndefined();
+    expect(remove()).toBeUndefined();
   });
 });

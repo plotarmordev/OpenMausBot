@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { Archive, BellDot, CheckCheck, ChevronRight, ClipboardCopy, Copy, Crown, FolderOpen, FolderPlus, Loader2, MoreHorizontal, Pencil, Pin, PinOff, Plus, SquarePen, Trash2, Users } from "lucide-react";
+import { Archive, BellDot, CheckCheck, ChevronRight, ClipboardCopy, Copy, Crown, FolderOpen, FolderPlus, Loader2, MoreHorizontal, Pencil, Pin, PinOff, SquarePen, Trash2, Users } from "lucide-react";
 import { api, useStore, openBot, type Bot } from "@/state/store";
 import { cn } from "@/lib/cn";
 import { useHeldMenuMotion } from "./MenuMotion";
@@ -13,7 +13,7 @@ import { useOwnerOrAdmin } from "@/lib/use-owner-or-admin";
 import { botUnreadThreadIds, markBotRead } from "@/lib/folder-read";
 import { ownerMenuLabel, pickOwnerOf } from "./TeamOwner";
 import { mayChangeOwner, useTeamPeople } from "@/state/team-people";
-import { SIMPLE_MENU, SIMPLE_MENU_ITEM, SIMPLE_MENU_SEPARATOR } from "./SidebarSimpleTop";
+import { MENU_ITEM, MENU_ITEM_SEPARATOR, MENU_SHEET } from "./menu-recipe";
 import { useShowThreads } from "@/lib/thread-preferences";
 import { submenuPosition } from "./SidebarPopoverMenu";
 import { submenuIntent, type SubmenuIntent } from "@/lib/submenu-intent";
@@ -168,7 +168,7 @@ export function BotContextMenu({
       }}
       title={opts?.hint}
       className={cn(
-        simpleMenu ? SIMPLE_MENU_ITEM : "flex w-full items-center gap-3 px-3.5 py-2 text-left text-[14px]",
+        MENU_ITEM,
         opts?.danger ? "text-danger" : "text-ink",
         opts?.disabled ? "cursor-default opacity-40" : "hover:bg-menu-hover",
       )}
@@ -177,9 +177,7 @@ export function BotContextMenu({
       {label}
     </button>
   );
-  const divider = (key: string) => simpleMenu
-    ? <div key={key} role="separator" className={SIMPLE_MENU_SEPARATOR} />
-    : <div key={key} className="mx-2 my-1 border-t border-hairline/40" />;
+  const divider = (key: string) => <div key={key} role="separator" className={MENU_ITEM_SEPARATOR} />;
 
   if (simpleMenu) {
     const showMore = (focus: boolean) => {
@@ -231,16 +229,16 @@ export function BotContextMenu({
           event.preventDefault();
           showMore(true);
         }}
-        className={cn(SIMPLE_MENU_ITEM, "text-ink hover:bg-menu-hover", moreOpen && moreEngaged && "bg-menu-active")}
+        className={cn(MENU_ITEM, "text-ink hover:bg-menu-hover", moreOpen && moreEngaged && "bg-menu-active")}
       >
         <MoreHorizontal size={16} className="text-ink-secondary" />
         <span className="flex-1">{t("sidebar.bot.more")}</span>
         <ChevronRight size={15} aria-hidden="true" className="text-ink-secondary rtl:-scale-x-100" />
       </button>
     );
-    const leave = bot.defaultBot ? [<HideDefaultBotItem key="hide" bot={bot} onDone={onClose} className={SIMPLE_MENU_ITEM} />] : [
+    const leave = bot.defaultBot ? [<HideDefaultBotItem key="hide" bot={bot} onDone={onClose} className={MENU_ITEM} />] : [
       item(<Archive size={16} className="text-ink-secondary" />, t("sidebar.bot.archive"), () => onArchive(bot), { disabled: archiveBlocked, hint: archiveHint }),
-      <BotDeleteMenuItem key="delete" deleting={deleting} className={SIMPLE_MENU_ITEM} onClick={() => { onClose(); onDelete(bot); }} />,
+      <BotDeleteMenuItem key="delete" deleting={deleting} className={MENU_ITEM} onClick={() => { onClose(); onDelete(bot); }} />,
     ];
     return <>{clearThreads.dialog}{moveToTeam.dialog}{createPortal(
       <div
@@ -265,7 +263,7 @@ export function BotContextMenu({
           more.leaveMenu();
         }}
         style={{ top: shown.y, left: shown.x }}
-        className={cn("fixed z-40 max-h-[calc(100dvh-16px)] w-max min-w-[198px] max-w-[calc(100vw-16px)] overflow-y-auto overscroll-contain", SIMPLE_MENU, motion.className)} {...motion.exitProps}
+        className={cn("fixed z-40 max-h-[calc(100dvh-16px)] w-max min-w-[198px] max-w-[calc(100vw-16px)] overflow-y-auto overscroll-contain", MENU_SHEET, motion.className)} {...motion.exitProps}
       >
         {remoteClient ? [moveToSection, ...(rename ? [divider("rename"), rename] : []), divider("copy"), copyId, moreRow] : [
           item(
@@ -307,7 +305,7 @@ export function BotContextMenu({
           navigateThreadMenu(event);
         }}
         style={{ top: shown.y, left: shown.x }}
-        className={cn("fixed z-40 max-h-[calc(100dvh-16px)] w-max min-w-[180px] max-w-[calc(100vw-16px)] animate-pop-in overflow-y-auto overscroll-contain", SIMPLE_MENU)}
+        className={cn("fixed z-40 max-h-[calc(100dvh-16px)] w-max min-w-[180px] max-w-[calc(100vw-16px)] animate-pop-in overflow-y-auto overscroll-contain", MENU_SHEET)}
       >
         {moreItems}
       </div>,
@@ -324,10 +322,10 @@ export function BotContextMenu({
       aria-label={t("sidebar.bot.actions", { name: bot.name })}
       onKeyDown={navigateThreadMenu}
       style={{ top: shown.y, left: shown.x }}
-      className={cn("popover-surface fixed z-40 max-h-[calc(100dvh-16px)] w-[228px] max-w-[calc(100vw-16px)] overflow-y-auto overscroll-contain rounded-xl border border-hairline/50 bg-menu py-1.5 shadow-2xl shadow-black/60", motion.className)} {...motion.exitProps}
+      className={cn("fixed z-40 max-h-[calc(100dvh-16px)] w-max min-w-[198px] max-w-[calc(100vw-16px)] overflow-y-auto overscroll-contain", MENU_SHEET, motion.className)} {...motion.exitProps}
     >
       {showThreads && <>
-        {item(<Plus size={16} className="text-ink-secondary" />, t("task.newShort"), () => dispatch({ type: "newTask", botId: bot.id }))}
+        {item(<SquarePen size={16} className="text-ink-secondary" />, t("task.newShort"), () => dispatch({ type: "newTask", botId: bot.id }))}
         {canChooseFolder && item(<FolderOpen size={16} className="shrink-0 text-ink-secondary" />, t("task.folder.new"), () => onNewTaskFolder(bot.id))}
         {item(<FolderPlus size={16} className="text-ink-secondary" />, t("folder.new"), () => onNewFolder(bot.id))}
       </>}
@@ -387,12 +385,12 @@ export function BotContextMenu({
           void copyText(bot.threadId);
         }),
         divider("d3"), ...moveToTeam.items(bot, item),
-        ...(bot.defaultBot ? [<HideDefaultBotItem key="hide" bot={bot} onDone={onClose} />] : [
+        ...(bot.defaultBot ? [<HideDefaultBotItem key="hide" bot={bot} onDone={onClose} className={MENU_ITEM} />] : [
           item(<Archive size={16} className="text-ink-secondary" />, t("sidebar.bot.archive"), () => onArchive(bot), { disabled: archiveBlocked, hint: archiveHint }),
-          <BotDeleteMenuItem key="delete" deleting={deleting} onClick={() => { onClose(); onDelete(bot); }} />,
+          <BotDeleteMenuItem key="delete" deleting={deleting} className={MENU_ITEM} onClick={() => { onClose(); onDelete(bot); }} />,
         ]),
       ]}
-      {readError?.botId === bot.id && <p role="alert" className="px-3.5 py-2 text-[12px] text-danger">{readError.message}</p>}
+      {readError?.botId === bot.id && <p role="alert" className="px-2 py-1.5 text-[12px] text-danger">{readError.message}</p>}
     </div>,
     document.body,
   )}</>;

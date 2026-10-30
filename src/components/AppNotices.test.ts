@@ -34,6 +34,8 @@ vi.mock("@/components/EngineLibrary", () => ({ engineReady: (instance: { snapsho
 import { AppNotices } from "./AppNotices";
 import { CLOUD_PRO_UPDATE_NOTICE, PRODUCT_HUNT_NOTICE, PRODUCT_HUNT_UNTIL, PRODUCT_HUNT_URL, CLOUD_INTRO, localDay, STAR_NOTICE } from "@/lib/notices";
 import { identifyEmail, track } from "@/lib/analytics";
+import { ADVANCED_MODE_KEY, setAdvancedMode } from "@/lib/interface-mode";
+import { SIMPLE_MODE_PROMPT_KEY } from "@/lib/simple-mode-prompt";
 import { api } from "@/state/store";
 
 const DAY = 86_400_000, NOW = new Date(2026, 9, 9, 12).getTime();
@@ -124,7 +126,7 @@ const press = (label: string) => {
 const FIRST_REPLY = [{ tasks: [{ threadId: "first", usage: { turns: 1 } }] }];
 let session: Map<string, string>;
 const returning = () => { f.state.bots = [{ tasks: [{ threadId: "t", createdAt: 1, usage: { turns: 2 } }] }]; };
-const launchCardsSeen = () => { desk.saved = { seen: [CLOUD_PRO_UPDATE_NOTICE] }; storage.set(PRODUCT_HUNT_NOTICE, "1"); };
+const launchCardsSeen = () => { desk.saved = { seen: [CLOUD_PRO_UPDATE_NOTICE] }; storage.set(PRODUCT_HUNT_NOTICE, "1"); storage.set(SIMPLE_MODE_PROMPT_KEY, "1"); };
 const hints = () => f.state.config.onboarding.hintsSeen as string[];
 
 beforeEach(() => {
@@ -556,7 +558,7 @@ describe("the Cloud Pro popup after the update", () => {
     expect(popupEvents("see_plans")).toEqual([event("see_plans", "none", true, "local")]);
     expect(lastOrder(vi.mocked(identifyEmail))).toBeLessThan(lastOrder(vi.mocked(track)));
     expect(render()).toBe("");
-    storage.clear(); storage.set(PRODUCT_HUNT_NOTICE, "1");
+    storage.clear(); storage.set(PRODUCT_HUNT_NOTICE, "1"); storage.set(SIMPLE_MODE_PROMPT_KEY, "1");
     expect(await launch(), "the desktop keeps it, not the page's storage").not.toContain(POPUP);
 
     vi.clearAllMocks(); fresh(); await launch();
@@ -1006,5 +1008,95 @@ describe("main's Use my Mac popup, once the moment is right", () => {
     f.state.config.onboarding.hintsSeen = [...withTourFinished(undefined), "cloud-setup-hidden"]; showWindow(MY_CLOUD); wireLending();
     await launch();
     expect(asked).toEqual(["en"]);
+  });
+});
+
+describe("the Simple mode popup after the update", () => {
+  const TITLE = "Try the new Simple mode", ON = "You&#x27;re on Simple mode", POPUP = "MausBot Cloud Pro";
+  let modal: boolean;
+  const prompts = () => vi.mocked(track).mock.calls.filter(([event]) => event === "simple_mode_prompt").map(([, props]) => props);
+
+  beforeEach(() => {
+    modal = false;
+    vi.stubGlobal("document", { activeElement: null, body: null, documentElement: { dataset: {} }, getElementById: () => null, querySelector: () => null,
+      querySelectorAll: () => modal ? [{ closest: () => null, checkVisibility: () => true }] : [] });
+    setAdvancedMode(true);
+    storage.delete(SIMPLE_MODE_PROMPT_KEY);
+  });
+
+  it("shows once in each browser, claims the launch, and never comes back once it is closed", async () => {
+    const html = await launch();
+    expect(html).toContain(TITLE);
+    for (const part of ['role="dialog"', 'aria-modal="true"', 'role="switch"', 'aria-checked="false"', "Switch any time in Settings → General."]) expect(html).toContain(part);
+    expect(prompts()).toEqual([{ action: "shown", mode: "advanced" }]);
+    expect(launchDialogShown()).toBe("notices");
+    expect(await settle(), "shown is counted once").toContain(TITLE);
+    expect(prompts()).toHaveLength(1);
+    press("Done"); await flush();
+    expect(render(), "nothing else in this launch after it").toBe("");
+    expect(storage.get(SIMPLE_MODE_PROMPT_KEY)).toBe("1");
+    expect(prompts()).toEqual([{ action: "shown", mode: "advanced" }, { action: "closed", mode: "advanced" }]);
+    session.clear();
+    expect(await launch()).not.toContain(TITLE);
+    expect(prompts()).toHaveLength(2);
+  });
+
+  it("changes the mode live from the popup, both ways, while its words stay", async () => {
+    await launch();
+    press("Simple mode"); await flush();
+    expect(storage.get(ADVANCED_MODE_KEY)).toBe("0");
+    const on = render();
+    expect(on).toContain('aria-checked="true"'); expect(on).toContain(TITLE);
+    press("Simple mode"); await flush();
+    expect(storage.get(ADVANCED_MODE_KEY)).toBe("1");
+    expect(render()).toContain('aria-checked="false"');
+    expect(prompts().slice(1)).toEqual([{ action: "toggled", mode: "simple" }, { action: "toggled", mode: "advanced" }]);
+    expect(storage.has(SIMPLE_MODE_PROMPT_KEY), "flipping never closes it").toBe(false);
+  });
+
+  it("tells someone already on Simple mode so, with the switch on", async () => {
+    setAdvancedMode(false);
+    const html = await launch();
+    expect(html).toContain(ON); expect(html).toContain('aria-checked="true"');
+    expect(prompts()).toEqual([{ action: "shown", mode: "simple" }]);
+  });
+
+  it("asks on the Cloud's own page and in a plain browser too, not only on this computer's", async () => {
+    snapshot = { status: "none" }; viewer = { hosted: false, canSave: true, cloudHome: true }; f.state.config.cloudHome = true;
+    f.state.config.onboarding.hintsSeen = [...withTourFinished(undefined), "cloud-setup-hidden"]; showWindow(MY_CLOUD);
+    expect(await launch()).toContain(TITLE);
+    vi.stubGlobal("window", { addEventListener: vi.fn(), removeEventListener: vi.fn() });
+    viewer = { hosted: true, canSave: true }; f.state.config.cloudHome = false;
+    expect(await launch()).toContain(TITLE);
+  });
+
+  it("waits during the welcome, the tour, Settings, the quiet first chat, another dialog or a call, and skips the launch its welcome finished in", async () => {
+    const waits: Array<() => void> = [
+      () => { f.state.welcomeOpen = true; }, () => { f.state.tourOpen = true; }, () => { f.state.appSettingsOpen = true; }, () => { modal = true; },
+      () => { f.state.liveCall = { status: "live" }; }, () => { f.state.config.onboarding.completedAt = undefined; },
+      () => { f.state.config.onboarding.hintsSeen = [...withTourFinished(undefined), MET_CHIEF_HINT]; f.state.bots = [{ tasks: [{ threadId: "first", usage: { turns: 0 } }] }]; },
+    ];
+    for (const wait of waits) {
+      const saved = structuredClone(f.state); wait();
+      expect(await launch(), wait.toString()).not.toContain(TITLE);
+      f.state = saved; modal = false;
+    }
+    expect(prompts()).toEqual([]);
+    markWelcomeFinished();
+    expect(await launch(), "the launch the welcome finished in").not.toContain(TITLE);
+    session.clear();
+    expect(await launch()).toContain(TITLE);
+    expect(storage.has(SIMPLE_MODE_PROMPT_KEY)).toBe(false);
+  });
+
+  it("is one popup at a time: it comes before the Cloud Pro popup, which waits for a later launch", async () => {
+    desk.saved = null; storage.delete(CLOUD_PRO_UPDATE_NOTICE);
+    const first = await launch();
+    expect(first).toContain(TITLE); expect(first).not.toContain(POPUP);
+    press("Done"); await flush();
+    expect(render()).toBe("");
+    session.clear();
+    const later = await launch();
+    expect(later).toContain(POPUP); expect(later).not.toContain(TITLE);
   });
 });

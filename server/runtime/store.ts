@@ -22,6 +22,7 @@ const assignmentSchema = z.object({
   rootId: z.string().min(1),
   parentId: z.string().min(1).optional(),
   depth: z.number().int().nonnegative(),
+  capacity: z.literal("person").optional(),
   origin: z.object({
     kind: z.enum(["person", "routine", "outside"]),
     source: z.enum(["chat", "routine", "webhook", "relay", "external_runtime", "guest", "peer", "api"]),

@@ -113,7 +113,7 @@ const OTHER_DIALOGS = '[role="dialog"], [role="alertdialog"], [aria-modal="true"
 
 /** Any dialog on screen counts, modal or not, and the card that says a new Cloud is set up; never the queue's own popups. */
 export function otherDialogOpen(): boolean {
-  return [...document.querySelectorAll<HTMLElement>(OTHER_DIALOGS)].some(element => !element.closest(`${POPUP}, ${UPDATES_CONSENT_POPUP}`) && element.checkVisibility());
+  return [...document.querySelectorAll<HTMLElement>(OTHER_DIALOGS)].some(element => !element.closest(`${POPUP}, ${UPDATES_CONSENT_POPUP}, [data-simple-mode-prompt]`) && element.checkVisibility());
 }
 
 export function useOtherDialogOpen(watch: boolean): boolean {

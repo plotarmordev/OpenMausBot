@@ -19,12 +19,6 @@ export const KEY_PROVIDER = [
 ] as const;
 export type KeyProvider = (typeof KEY_PROVIDER)[number];
 
-export const SECTION_PROVIDER = {
-  composio: "composio", box: "boat", opencodeGo: "opencode_go", anthropic: "anthropic", openai: "openai",
-  openrouter: "openrouter", openaiCompat: "openai_compat", xai: "xai", mistral: "mistral", cerebras: "cerebras",
-  groq: "groq", meta: "meta", treg: "treg", deepseek: "deepseek",
-} as const satisfies Record<string, KeyProvider>;
-
 const CREDENTIAL_PROVIDER = new Map<string, KeyProvider>(Object.entries({
   boxToken: "boat", xaiApiKey: "xai", opencodeGoApiKey: "opencode_go", ttsKey: "elevenlabs", fishAudioKey: "fish_audio",
   openaiImageApiKey: "openai_image", onePasswordToken: "onepassword",
@@ -68,7 +62,7 @@ export const APP: readonly string[] = CURATED_CONNECTOR_SLUGS;
 export const BOT_TEMPLATE: readonly string[] = BOT_ROLES.map((role) => role.id);
 export const CLOUD_TIER = ["starter", "personal", "pro", "max"] as const;
 
-export const KEY_VIA = ["settings", "computer_panel", "chat_request", "apps"] as const;
+export const KEY_VIA = ["settings", "computer_panel", "chat_request", "apps", "model_picker"] as const;
 export type KeyVia = (typeof KEY_VIA)[number];
 export const KEY_RESULT = ["ok", "rejected", "unverified", "error"] as const;
 export type KeyResult = (typeof KEY_RESULT)[number];

@@ -164,7 +164,7 @@ describe("CI outputs", () => {
     expect(out.jobs).toEqual(["vitest"]);
     expect(out.vitest_matrix.include).toEqual([1, 2].map((shard) => ({
       os: "ubuntu-latest", part: `locale tests ${shard}/2`, shard, shards: 2,
-      files: "src/ scripts/generate-locale.test.mjs", e2e: "all", node_tests: shard === 1,
+      files: "src/ scripts/generate-locale.test.mjs scripts/testing/key-readback.e2e.test.ts", e2e: "all", node_tests: shard === 1,
     })));
     expect(ciOutputs(selectCiScope(["src/locales/de.json", "src/App.tsx"]), PR).vitest_matrix).toEqual(vitestMatrix(["ubuntu-latest"]));
   });

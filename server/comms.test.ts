@@ -914,12 +914,12 @@ describe("routine comms e2e on the job runtime (fake ACP fleet)", () => {
         return Boolean(approvalCard);
       }, 20_000, "initial ask_bot approval card never appeared");
 
-      const held: string[] = [];
-      for (let index = 0; index < 3; index++) {
+      const { maxConcurrentPerBot } = (await api("GET", "/api/config")).body.threads;
+      const held = await Promise.all(Array.from({ length: maxConcurrentPerBot }, async (_, index) => {
         const task = index === 0 ? { threadId: helper.threadId } : (await api("POST", `/api/bots/${helper.id}/tasks`, { title: `Held ${index}` })).body.task;
-        held.push(task.threadId);
         expect((await api("POST", `/api/bots/${helper.id}/messages`, { threadId: task.threadId, text: `hold until reload ${index}` })).status).toBe(202);
-      }
+        return task.threadId as string;
+      }));
       await waitUntil(async () => {
         const current = await bot(helper.id);
         return held.every((threadId) => current.tasks.find((task: any) => task.threadId === threadId)?.busy);

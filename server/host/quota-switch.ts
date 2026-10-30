@@ -22,7 +22,7 @@ export interface QuotaSwitchHostDeps extends Pick<QuotaSwitchDeps, "store" | "co
   directRequestOwners: { get(threadId: string): QuotaRequest | undefined };
   startOrQueueDirectMessage(
     botId: string, threadId: string, text: string, replyTo?: Message, sendId?: string, sender?: ResolvedSender,
-    trigger?: UsageTrigger, via?: "call", callId?: string, dataContext?: DataContext,
+    trigger?: UsageTrigger, via?: "call", callId?: string, dataContext?: DataContext, capacity?: "person",
   ): Promise<unknown>;
 }
 
@@ -40,7 +40,7 @@ export function createQuotaSwitchHost(deps: QuotaSwitchHostDeps) {
     reset: (from, to) => hostedModels?.resetTask(from, to),
     busy: threadBusy,
     request: threadId => directRequestOwners.get(threadId),
-    resend: (botId, threadId, message, replyTo, spoken) => startOrQueueDirectMessage(botId, threadId, message.text ?? "", replyTo, undefined, message.sender, undefined, spoken.via, spoken.callId, message.dataContext),
+    resend: (botId, threadId, message, replyTo, spoken, capacity) => startOrQueueDirectMessage(botId, threadId, message.text ?? "", replyTo, undefined, message.sender, undefined, spoken.via, spoken.callId, message.dataContext, capacity),
   });
 
   /** Settles a card the harness raised itself (a peer approval, a use-your-computer ask or a quota-switch offer); undefined for any other card. */

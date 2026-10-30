@@ -122,7 +122,7 @@ describe("engines set up with a key in Settings", () => {
     expect(missing).not.toContain("needs an API key");
     const keyless = renderToStaticMarkup(createElement(StoreProvider, null, createElement(EngineSetup, { instance: dsh({ state: "available", authenticated: false, version: "0.2.1" }) })));
     expect(keyless).toContain("DeepSeek Harness needs an API key");
-    expect(keyless).toContain("Open API keys");
+    expect(keyless).toContain('data-key-row="deepseek"');
     expect(keyless).not.toContain("Terminal");
     // No key is saved, so nothing was rejected.
     expect(keyless).not.toContain("rejected the saved key");
@@ -258,20 +258,27 @@ describe("API-key engine setup", () => {
     return renderToStaticMarkup(createElement(StoreProvider, null, createElement(EngineSetup, { instance: engine })));
   };
 
-  it("sends a missing key to Settings → API keys, not to a config file", () => {
+  it("takes a missing key in place, in the same key row as Settings, not in a config file", () => {
     const html = render(keyEngine("grok", { state: "unavailable", reason: "No xAI API key — open Settings → API keys." }));
     expect(html).toContain("data-engine-setup-api-key");
     expect(html).toContain("Grok (API) needs an API key");
-    expect(html).toContain("Open API keys");
+    expect(html).toContain("Paste it here. It saves and checks itself");
+    expect(html).toContain('data-key-row="xai"');
+    expect(html).not.toContain("Open API keys");
     expect(html).not.toContain("config.json");
   });
 
-  it("says so when the provider rejected the saved key", () => {
+  it("says so in the key row when the provider rejected the saved key", () => {
     const html = render(keyEngine("grok", { state: "available", authenticated: false, reason: "The provider rejected this key." }));
     expect(html).toContain("data-engine-setup-api-key");
-    expect(html).toContain("The provider rejected the saved key.");
-    expect(html).toContain("Open API keys");
+    expect(html).toContain("Didn&#x27;t work: The provider rejected this key.");
     expect(render(keyEngine("grok", { state: "unavailable" }))).not.toContain("rejected");
+  });
+
+  it("still sends an engine with no key row of its own to Settings → API keys", () => {
+    const html = render(keyEngine("openai-compat", { state: "unavailable" }));
+    expect(html).toContain("Open API keys");
+    expect(html).not.toContain("data-key-row");
   });
 
   it("has no button on a remote client, whose settings hide the keys", () => {

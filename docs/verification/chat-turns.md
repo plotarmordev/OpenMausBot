@@ -214,6 +214,34 @@ The fixture prints its server log and a retained `.log.json` evidence path with
 the exact control commands, wait results, and bounded transcripts. Its temporary
 home is removed after the test.
 
+The per-bot thread limit defaults to sixteen and accepts one through sixteen.
+A person's message in the bot's main chat, typed or relayed for a person
+through the guarded route, bypasses capacity, and so does the coordinator
+resuming that main-chat turn after delegated work returns. The coordinator root
+persists a capacity-only `capacity: "person"` marker in `runtime.db`; absent
+markers remain capped, including records written before this field existed.
+Delegation authority is separate: an inherited user origin never grants this
+exemption, and guarded relays retain outside/relay origin and outside child
+authority. Peer work, including Chief retries and self-opened `start_thread`
+roots, remains capped even when archiving an older main chat promotes its thread
+to main. Recovery preserves the marker rather than inferring it from origin.
+Trusted ingress derives the marker only when both person provenance and the main
+target are known; a message an app in the chat sends is never marked, so it
+queues at capacity like other work.
+Queued sends persist it; start, drain, coordinator admission,
+status and recursive recovery consume it without inferring provenance again.
+Manual one-on-one goals derive the same marker at authenticated main-chat
+ingress and retain it on their persisted goal cards and each continuation.
+Routine goals, unmarked goals, and goals outside main remain capped.
+Only a marked person message can pass a blocked queue head; peers and routines
+remain queued in order. Compact, routine and unattended work remain capped on
+main. Guarded admin input without `onBehalfOf` is refused at capacity without
+appending, queuing, or launching a provider.
+
+```sh
+pnpm exec vitest run --no-file-parallelism server/thread-capacity-api.test.ts server/steer-queue.test.ts server/direct-coordination.e2e.test.ts
+```
+
 See the [Threads renderer recipe](threads.md) for the real sidebar, composer,
 optional folders, and group-history navigation checks.
 

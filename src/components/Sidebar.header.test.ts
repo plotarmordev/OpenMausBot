@@ -242,9 +242,9 @@ describe("sidebar top row", () => {
   });
 });
 
-describe("sidebar glass head and foot", () => {
+describe("sidebar head and foot", () => {
   it.each(["comfortable", "compact", "icons"] as const)(
-    "puts the top row and search in the glass head, the places in the glass foot, and the list between at %s density",
+    "puts the top row and search in the head, the places in the foot, and the fading list between at %s density",
     (density) => {
       fixture.density = density;
       const html = render();
@@ -256,7 +256,7 @@ describe("sidebar glass head and foot", () => {
       const head = at('data-glass-bar="top"');
       const topRow = at("data-sidebar-top-row");
       const search = at('aria-label="Search bots and messages"');
-      const list = at('class="glass-scroller ');
+      const list = at('data-scroll-fade-frame=""');
       const foot = at('data-glass-bar="bottom"');
       const automations = at('data-sidebar-nav="automations"');
       const places = at('data-sidebar-nav="team-map"');

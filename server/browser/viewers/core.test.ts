@@ -7,8 +7,8 @@ import { removeTempDir } from "../../testing/cleanup.ts";
 import { BrowserService } from "../service.ts";
 import { FakeBackend, FakeChrome, type FakeDocument } from "../testing/fake-chrome.ts";
 import { personUrl } from "../dispatch.ts";
-import { ACK_PACE_MS, requestedSize, SETTLE_MS, type ViewerOutput } from "./core.ts";
-import { MIN_WINDOW_WIDTH, UNATTACHED_VIEWPORT, viewportFor } from "./viewport.ts";
+import { ACK_PACE_MS, SETTLE_MS, type ViewerOutput } from "./core.ts";
+import { fillPage, MIN_WINDOW_WIDTH, requestedSize, UNATTACHED_VIEWPORT, viewportFor } from "./viewport.ts";
 
 const folders: string[] = [];
 const services: BrowserService[] = [];
@@ -56,23 +56,35 @@ async function setup({ pageLimit = null, document = PAGE }: { pageLimit?: { widt
 }
 
 describe("the page fills the panel", () => {
-  it("is 1280x800 with nobody watching, the viewer's panel size while one watches, and 1280x800 again when it leaves", async () => {
+  it("is 1280x800 with nobody watching, the viewer's panel shape at a desktop's width at least while one watches, and 1280x800 again when it leaves", async () => {
     const { watch, chrome } = await setup();
     expect(chrome().viewport).toEqual(UNATTACHED_VIEWPORT);
     const { viewer, outputs } = await watch({ size: { width: 1600, height: 1000 } });
     await until(() => chrome().viewport, same({ width: 1600, height: 1000 }));
     await until(() => outputs, (seen) => seen.some((output) => output.type === "viewport" && output.width === 1600 && output.height === 1000));
     await viewer.input({ type: "resize", width: 1200, height: 900 });
-    expect(chrome().viewport).toEqual({ width: 1200, height: 900 });
+    expect(chrome().viewport).toEqual({ width: 1280, height: 960 });
     await viewer.close();
     await until(() => chrome().viewport, same(UNATTACHED_VIEWPORT));
+  });
+
+  it("gives a narrow panel a desktop page of its shape, never a phone's, and no taller than twice its width", async () => {
+    const { watch, chrome, call } = await setup();
+    const { viewer, outputs } = await watch({ size: { width: 400, height: 750 } });
+    await until(() => chrome().viewport, same({ width: 1280, height: 2400 }));
+    await until(() => outputs.filter((output) => output.type === "viewport").at(-1), (last) => last?.type === "viewport" && last.width === 1280 && last.height === 2400);
+    expect((await call("agent_browser_eval", { expression: "[innerWidth, innerHeight]" })).content[0]?.text).toBe("[1280,2400]");
+    await viewer.input({ type: "resize", width: 300, height: 900 });
+    expect(chrome().viewport).toEqual({ width: 1280, height: 2560 });
+    expect(fillPage({ width: 365, height: 686 })).toEqual({ width: 1280, height: 2406 });
+    expect(fillPage({ width: 1440, height: 819 })).toEqual({ width: 1440, height: 819 });
   });
 
   it("follows the latest request, keeps its size for a collapsed panel, and stops at 3840x2160", async () => {
     const { watch, chrome } = await setup();
     const first = await watch({ size: { width: 1400, height: 900 } });
     const second = await watch({ size: { width: 1000, height: 700 } });
-    await until(() => chrome().viewport, same({ width: 1000, height: 700 }));
+    await until(() => chrome().viewport, same({ width: 1280, height: 896 }));
     await first.viewer.input({ type: "resize", width: 1500, height: 950 });
     expect(chrome().viewport).toEqual({ width: 1500, height: 950 });
     await second.viewer.input({ type: "resize", width: 1800, height: 40 });
@@ -99,18 +111,21 @@ describe("the page fills the panel", () => {
     expect(chrome().viewport).toEqual(UNATTACHED_VIEWPORT);
     expect((await snapshot).isError).toBeUndefined();
     await resizing;
-    await until(() => chrome().viewport, same({ width: 1200, height: 900 }));
+    await until(() => chrome().viewport, same({ width: 1280, height: 960 }));
   });
 
-  it("never makes a window larger than its screen: a filled panel keeps its shape, a set size its width", async () => {
+  it("never makes a window larger than its screen: a filled panel keeps its shape, emulated past the screen, a set size its width", async () => {
     const { watch, chrome, page } = await setup({ pageLimit: { width: 1440, height: 757 } });
     expect(chrome().viewport).toEqual({ width: 1211, height: 757 });
     const { viewer, outputs } = await watch({ size: { width: 1600, height: 1000 } });
     await until(() => chrome().viewport, same({ width: 1211, height: 757 }));
-    await viewer.input({ type: "resize", width: 1000, height: 700 });
-    expect(chrome().viewport).toEqual({ width: 1000, height: 700 });
+    await viewer.input({ type: "resize", width: 400, height: 750 });
+    expect(chrome().viewport).toEqual({ width: 1280, height: 757 });
+    expect(page().emulated).toEqual({ width: 1280, height: 2400 });
+    expect(outputs.filter((output) => output.type === "viewport").at(-1)).toMatchObject({ width: 1280, height: 2400 });
     await viewer.input({ type: "resize", width: 2000, height: 800 });
     expect(chrome().viewport).toEqual({ width: 1440, height: 576 });
+    expect(page().emulated).toBeNull();
     await viewer.input({ type: "takeControl" });
     await viewer.input({ type: "viewport", setting: { mode: "preset", preset: "tablet" } });
     expect(chrome().viewport).toEqual({ width: 820, height: 757 });
@@ -164,9 +179,9 @@ describe("the page fills the panel", () => {
     const { watch, chrome, page } = await setup({ pageLimit: { width: 1440, height: 757 } });
     page().bar = 56;
     const { viewer, outputs } = await watch({ size: { width: 1600, height: 1000 } });
-    await viewer.input({ type: "resize", width: 1000, height: 900 });
+    await viewer.input({ type: "resize", width: 2000, height: 1100 });
     expect(chrome().window.height).toBe(757 + 143);
-    expect(outputs.filter((output) => output.type === "viewport").at(-1)).toMatchObject({ width: 841, height: 701 });
+    expect(outputs.filter((output) => output.type === "viewport").at(-1)).toMatchObject({ width: 1376, height: 701 });
   });
 
   it("emulates a page narrower than any window on a tab that opens later too", async () => {
@@ -266,7 +281,7 @@ describe("viewers of one browser", () => {
     expect(other.outputs.slice(beforeTake)).toContainEqual(expect.objectContaining({ type: "control", controller: "another-viewer", held: true, owned: false }));
     const seen = other.outputs.length;
     await other.viewer.input({ type: "resize", width: 1100, height: 800 });
-    expect(chrome().viewport).toEqual({ width: 1000, height: 700 });
+    expect(chrome().viewport).toEqual({ width: 1280, height: 896 });
     await holder.viewer.input({ type: "navigate", url: "example.org/next" });
     await sleep(30);
     const later = other.outputs.slice(seen);

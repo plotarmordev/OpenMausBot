@@ -263,10 +263,11 @@ describe("the Simple composer in a group chat", () => {
 });
 
 describe("the Advanced composer", () => {
-  it("keeps the paperclip, the approval shield and the split call button, with no +", () => {
+  it("keeps the paperclip, the approval shield and the split call button, with no +, on Simple's floating surface", () => {
     fixture.advanced = true;
     render({ bot });
     expect(plus()).toBeNull();
+    expect(container.querySelector('[data-tour="composer"]')!.className.split(" ")).toEqual(expect.arrayContaining(["rounded-2xl", "bg-composer", "ring-[0.5px]", "shadow-(--shadow-float)"]));
     expect(container.querySelector('button[aria-label="Attach a file"]')).not.toBeNull();
     expect(container.querySelector('[aria-haspopup="menu"][aria-label$="for Claude"]')).not.toBeNull();
     expect(fixture.call).toMatchObject({ placement: "composer" });

@@ -35,12 +35,12 @@ describe("glass surface", () => {
     }
   });
 
-  it("is an opaque sheet only for Simple Settings in Midnight and Daylight, 900 by 700 with radius 12", () => {
-    const sheet = rule(':root:is([data-skin="midnight"], [data-skin="daylight"]) [data-settings-look="simple"] .glass-surface');
+  it("is an opaque sheet for Settings in Midnight and Daylight in both modes, 900 by 700 with radius 12 in Simple", () => {
+    const sheet = rule(':root:is([data-skin="midnight"], [data-skin="daylight"]) [data-settings-look] .glass-surface');
     expect(sheet).toContain("background: var(--color-app)");
     expect(sheet).toContain("backdrop-filter: none");
     expect(sheet).toContain("box-shadow: none");
-    expect(css.indexOf('[data-settings-look="simple"] .glass-surface {')).toBeGreaterThan(css.indexOf(".glass-surface {"));
+    expect(css.indexOf("[data-settings-look] .glass-surface {")).toBeGreaterThan(css.indexOf(".glass-surface {"));
     const size = rule('.glass-popup-frame[data-settings-sheet][data-settings-look="simple"] > .glass-popup');
     expect(size).toContain("width: min(900px, 100%)");
     expect(size).toContain("height: min(700px, 100%)");

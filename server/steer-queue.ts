@@ -8,6 +8,7 @@ import { workOriginSchema, type WorkOrigin } from "./peer-provenance.ts";
 import type { ResolvedSender, SteerQueueReason } from "../shared/wire.ts";
 import type { BotRecord, Message } from "./store.ts";
 import type { UsageTrigger } from "./usage-ledger.ts";
+import type { QueuedAutomaticRecovery } from "./turn-options.ts";
 
 export interface SteerStore {
   bot(id: string): BotRecord | null;
@@ -30,6 +31,8 @@ interface QueueEntry {
     unattended?: boolean;
     peerAsk?: Message["peerAsk"];
     origin?: WorkOrigin;
+    capacity?: "person";
+    recovery?: QueuedAutomaticRecovery;
     sender?: ResolvedSender;
     trigger?: UsageTrigger;
     queuedAt: number;
@@ -41,14 +44,22 @@ interface QueueEntry {
   }>;
 }
 
-export type SteerQueueHead = Pick<QueueEntry["items"][number], "trigger" | "sender" | "peerAsk" | "origin">;
+/** `followupIds`: the durable rows this drained group answers for. */
+export type SteerQueueHead = Pick<QueueEntry["items"][number], "recovery" | "trigger" | "sender" | "peerAsk" | "origin" | "capacity"> & { messageId?: string; followupIds?: string[] };
 
 const queues = new Map<string, QueueEntry>();
+const recoveryCancellationListeners = new Set<(botId: string, id: string, threadId: string, recovery: QueuedAutomaticRecovery) => void>();
 
+export function onSteeredRecoveryCancelled(listener: (botId: string, id: string, threadId: string, recovery: QueuedAutomaticRecovery) => void): void {
+  recoveryCancellationListeners.add(listener);
+}
+
+/** `order`: every queued id as it stood when held, so a restore puts the held words back where they were. */
 export interface HeldSteerQueue {
   botId: string;
   threadId: string;
   items: QueueEntry["items"];
+  order: string[];
 }
 
 export function restoreSteeredMessages(): void {
@@ -101,7 +112,7 @@ export function queueSteeredMessage(
   botId: string,
   threadId: string,
   text: string,
-  options: { prompt?: string; replyToId?: string; sendId?: string; dataContext?: Message["dataContext"]; reason?: SteerQueueReason; unattended?: boolean; peerAsk?: Message["peerAsk"]; origin?: WorkOrigin; sender?: ResolvedSender; trigger?: UsageTrigger; callId?: string; via?: "call"; reaction?: string; fromApp?: Message["fromApp"]; relay?: Message["relay"] } = {},
+  options: { recovery?: QueuedAutomaticRecovery; prompt?: string; replyToId?: string; sendId?: string; dataContext?: Message["dataContext"]; reason?: SteerQueueReason; unattended?: boolean; peerAsk?: Message["peerAsk"]; origin?: WorkOrigin; capacity?: "person"; sender?: ResolvedSender; trigger?: UsageTrigger; callId?: string; via?: "call"; reaction?: string; fromApp?: Message["fromApp"]; relay?: Message["relay"]; replaces?: readonly string[] } = {},
 ): QueuedSteer {
   const id = newId();
   const entry = queues.get(threadId) ?? { botId, items: [] };
@@ -117,6 +128,8 @@ export function queueSteeredMessage(
     unattended: options.unattended,
     peerAsk: options.peerAsk,
     ...(options.origin ? { origin: options.origin } : {}),
+    ...(options.capacity ? { capacity: options.capacity } : {}),
+    ...(options.recovery ? { recovery: options.recovery } : {}),
     sender: options.sender,
     trigger: options.trigger,
     queuedAt: Date.now(),
@@ -125,7 +138,7 @@ export function queueSteeredMessage(
     ...(options.reaction ? { reaction: options.reaction } : {}),
     ...(options.relay ? { relay: options.relay } : {}),
   };
-  saveChatFollowup({ id, kind: "bot", ownerId: botId, threadId, payload: item });
+  saveChatFollowup({ id, kind: "bot", ownerId: botId, threadId, payload: item }, options.replaces);
   entry.items.push(item);
   queues.set(threadId, entry);
   changed();
@@ -152,6 +165,11 @@ export function isSteeredMessageQueued(botId: string, threadId: string, queueId:
   return entry?.botId === botId && entry.items.some((item) => item.messageId === queueId);
 }
 
+export function isQueuedRecovery(botId: string, threadId: string, queueId: string): boolean {
+  const entry = queues.get(threadId);
+  return entry?.botId === botId && entry.items.some((item) => item.messageId === queueId && item.recovery !== undefined);
+}
+
 /** Entries leave the map before running, so racing settles never fire one queue twice; one coalesced group drains per settle. */
 export function drainSteeredMessages(
   store: SteerStore,
@@ -163,7 +181,7 @@ export function drainSteeredMessages(
     excludeIds: string[],
     unattended: boolean,
     head: SteerQueueHead,
-  ) => void | Promise<void>,
+  ) => void | Promise<void | "retry">,
   isBlocked?: (botId: string, threadId: string, head: SteerQueueHead) => boolean,
 ): void {
   // deleting only the entry being visited is safe under Map iteration
@@ -177,18 +195,27 @@ export function drainSteeredMessages(
       changed();
       continue;
     }
-    if (bot.busy || isBlocked?.(entry.botId, threadId, entry.items[0])) continue;
+    if (bot.busy) continue;
+    let start = 0;
+    if (isBlocked?.(entry.botId, threadId, entry.items[0])) {
+      start = entry.items.findIndex(item => item.capacity === "person" && !isBlocked(entry.botId, threadId, item));
+      if (start < 0) continue;
+    }
     // isBlocked can re-enter this drain; if a nested drain took this entry, it is stale.
     if (queues.get(threadId) !== entry) continue;
-    const group = drainCoalesceHead(entry.items, coalesceIdentity, (item) => item.queuedAt);
+    const group = drainCoalesceHead(start ? entry.items.slice(start) : entry.items, coalesceIdentity, (item) => item.queuedAt);
     const ids = group.map((item) => item.messageId);
     settleChatFollowups(ids, "dispatching");
-    const rest = entry.items.slice(group.length);
+    const rest = start ? [...entry.items.slice(0, start), ...entry.items.slice(start + group.length)] : entry.items.slice(group.length);
     if (rest.length > 0) queues.set(threadId, { botId: entry.botId, items: rest });
     else queues.delete(threadId);
     changed();
     const appended: Message[] = [];
     for (const item of group) {
+      if (item.recovery) {
+        appended.push(item.recovery.userMessage);
+        continue;
+      }
       appended.push(
         store.appendMessage(threadId, {
           role: "user",
@@ -219,10 +246,16 @@ export function drainSteeredMessages(
       appended.map((message) => message.id),
       // One unattended line makes the turn unattended: a person's words in the group cannot re-attend a bot's own.
       group.some((item) => item.unattended === true),
-      { trigger: group[0].trigger, sender: group[0].sender, peerAsk: group[0].peerAsk, origin: group[0].origin },
+      { ...(group[0].recovery ? { messageId: group[0].messageId, recovery: group[0].recovery } : {}), followupIds: ids,
+        trigger: group[0].trigger, sender: group[0].sender, peerAsk: group[0].peerAsk, origin: group[0].origin, capacity: group[0].capacity },
     );
     void Promise.resolve(running).then(
-      () => settleChatFollowups(ids, null),
+      (result) => {
+        if (result === "retry") {
+          settleChatFollowups(ids, "pending");
+          restoreHeldSteeredQueue({ botId: entry.botId, threadId, items: group, order: ids });
+        } else settleChatFollowups(ids, null);
+      },
       () => settleChatFollowups(ids, "interrupted"),
     ).catch((error) => console.warn("steer-queue: could not settle durable follow-up", error));
   }
@@ -230,10 +263,11 @@ export function drainSteeredMessages(
 
 /** Who sent it, provenance included: a bot's own work never merges with a person's texts, nor a spoken line with a typed one. */
 function coalesceIdentity(item: QueueEntry["items"][number]): string {
+  if (item.recovery) return `recovery:${item.messageId}`;
   if (item.peerAsk?.incident) return "incident";
   if (item.peerAsk) return `peer:${item.peerAsk.botId}:${item.unattended === true ? "unattended" : "attended"}:${JSON.stringify(item.origin ?? null)}`;
   if (item.unattended === true) return "unattended";
-  const person = item.sender ? `person:${item.sender.id ?? item.sender.name}` : "person:local";
+  const person = `${item.capacity ?? "ordinary"}:${item.sender ? `person:${item.sender.id ?? item.sender.name}` : "person:local"}`;
   return item.via === "call" ? `call:${item.callId ?? ""}|${person}` : person;
 }
 
@@ -256,28 +290,57 @@ export function cancelSteeredMessage(botId: string, messageId: string, expectedT
     settleChatFollowups([messageId], "cancelled");
     if (items.length === 0) queues.delete(threadId);
     else queues.set(threadId, { botId: entry.botId, items });
+    for (const item of entry.items) {
+      if (item.messageId === messageId && item.recovery) {
+        for (const listener of recoveryCancellationListeners) listener(botId, messageId, threadId, item.recovery);
+      }
+    }
     changed();
     return true;
   }
   return false;
 }
 
-/** The entry leaves first, so a racing settle cannot also dispatch these words; the caller must restore or settle it. */
+/** Invariant: a stopped recovery leaves the queue before the Stop reaches its turn, so no drain can start it. */
+export function cancelQueuedRecoveries(botId: string, threadId: string): () => void {
+  const entry = queues.get(threadId);
+  const cancelled = entry?.botId === botId ? entry.items.filter((item) => item.recovery) : [];
+  if (!entry || !cancelled.length) return () => {};
+  const items = entry.items.filter((item) => !item.recovery);
+  if (items.length) queues.set(threadId, { botId, items });
+  else queues.delete(threadId);
+  changed();
+  return () => {
+    try {
+      settleChatFollowups(cancelled.map((item) => item.messageId), null);
+    } finally {
+      for (const item of cancelled) {
+        for (const listener of recoveryCancellationListeners) listener(botId, item.messageId, threadId, item.recovery!);
+      }
+    }
+  };
+}
+
+/** Invariant: held words are out of the queue, so a racing drain cannot also dispatch them. Recoveries are never held. */
 export function holdSteeredQueue(botId: string, threadId: string, queueId: string): HeldSteerQueue | null {
   const entry = queues.get(threadId);
-  if (!entry || entry.botId !== botId || !entry.items.some((item) => item.messageId === queueId)) return null;
-  queues.delete(threadId);
+  const target = entry?.botId === botId ? entry.items.find((item) => item.messageId === queueId) : undefined;
+  if (!entry || !target || target.recovery) return null;
+  const kept = entry.items.filter((item) => item.recovery);
+  if (kept.length) queues.set(threadId, { botId, items: kept });
+  else queues.delete(threadId);
   changed();
-  return { botId, threadId, items: entry.items };
+  return { botId, threadId, items: entry.items.filter((item) => !item.recovery), order: entry.items.map((item) => item.messageId) };
 }
 
 export function restoreHeldSteeredQueue(held: HeldSteerQueue): void {
   const existing = queues.get(held.threadId);
   if (existing && existing.botId !== held.botId) throw new Error("queued task belongs to another bot");
-  queues.set(held.threadId, {
-    botId: held.botId,
-    items: existing ? [...held.items, ...existing.items] : held.items,
-  });
+  const rank = new Map(held.order.map((id, index) => [id, index]));
+  const queued = existing?.items ?? [];
+  const earlier = [...held.items, ...queued.filter((item) => rank.has(item.messageId))]
+    .sort((a, b) => rank.get(a.messageId)! - rank.get(b.messageId)!);
+  queues.set(held.threadId, { botId: held.botId, items: [...earlier, ...queued.filter((item) => !rank.has(item.messageId))] });
   changed();
 }
 

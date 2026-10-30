@@ -79,6 +79,7 @@ beforeEach(() => {
     settled: vi.fn(async () => {}),
     launchReady: vi.fn(async () => {}),
     launched: vi.fn(async () => {}),
+    pageSizes: { resize: vi.fn(async () => {}) },
   } as unknown as BrowserRuntime;
   live = new BrowserLive({ runtime });
   SocketFixture.instances = [];
@@ -91,9 +92,9 @@ beforeEach(() => {
 });
 afterEach(() => { live.closeAll(); vi.unstubAllGlobals(); vi.unstubAllEnvs(); vi.useRealTimers(); });
 
-async function open({ botId = "bot-a", session = "profile-a", owner = "admin-a", current = () => true, resume }: { botId?: string; session?: string; owner?: string; current?: () => boolean; resume?: string } = {}) {
+async function open({ botId = "bot-a", session = "profile-a", owner = "admin-a", current = () => true, resume, size }: { botId?: string; session?: string; owner?: string; current?: () => boolean; resume?: string; size?: { width: number; height: number } } = {}) {
   const res = new ResponseFixture();
-  await live.open({ botId, session, owner, isCurrent: current, res: res as unknown as ServerResponse, ...(resume ? { resume } : {}),
+  await live.open({ botId, session, owner, isCurrent: current, res: res as unknown as ServerResponse, ...(resume ? { resume } : {}), ...(size ? { size } : {}),
     spec: { command: "/trusted/agent-browser", args: ["mcp", "--tools", "core"], env: { AGENT_BROWSER_SESSION: session, AGENT_BROWSER_SOCKET_DIR: "/isolated/socket" } } });
   return { res, socket: SocketFixture.instances.at(-1)!, action: (body: unknown) => live.action({ viewerId: res.id, botId, owner, body }) };
 }
@@ -120,10 +121,12 @@ describe("browser viewer protocol boundary", () => {
     expect(normalizeBrowserLiveMessage({ type: "tabs", tabs: [{ tabId: "t1", title: "Page", url: "https://user:secret@example.com/", active: true, targetId: "private" }] })).toEqual({ type: "tabs", tabs: [{ tabId: "t1", title: "Page", url: "https://example.com/", active: true }] });
     expect(normalizeBrowserLiveMessage({ type: "status", connected: true, engine: "private" })).not.toHaveProperty("engine");
   });
-  it("rejects corrupt, oversized and non-image frames", () => {
-    for (const patch of [{ seq: -1 }, { seq: 1.5 }, { data: "<script>" }, { data: "/9j/" + "A".repeat(3 * 1024 * 1024) }, { metadata: { deviceWidth: 100000, deviceHeight: 100000 } }]) {
+  it("rejects corrupt, oversized and non-image frames, and passes a busy page's frame at the largest size it sizes", () => {
+    for (const patch of [{ seq: -1 }, { seq: 1.5 }, { data: "<script>" }, { data: "/9j/" + "A".repeat(4 * 1024 * 1024) }, { metadata: { deviceWidth: 100000, deviceHeight: 100000 } }]) {
       expect(normalizeBrowserLiveMessage({ ...frame, ...patch })).toBeNull();
     }
+    // 2,768,256 characters: a 1280x2560 frame of a page of noise from agent-browser 0.37.0.
+    expect(normalizeBrowserLiveMessage({ ...frame, data: "/9j/" + "A".repeat(2_768_252), metadata: { ...frame.metadata, deviceWidth: 1280, deviceHeight: 2560 } })).toMatchObject({ type: "frame" });
   });
   it("requires a valid integer port from successful stream status, not a caller URL", () => {
     expect(browserStreamPort(ready)).toBe(43210);
@@ -319,40 +322,44 @@ describe("authenticated browser viewer relay", () => {
     await expect(reconnecting).rejects.toThrow("Reconnect to retry");
     expect(nativeClose).toHaveBeenCalledTimes(2);
   });
-  it("gives a headless browser it shows the standard page size, but never sizes an attached or headed one", async () => {
-    const view = (env: Record<string, string>, status = ready) => {
-      execute.mockReset().mockResolvedValueOnce(output(status)).mockResolvedValue(output({}));
-      const res = new ResponseFixture();
-      return live.open({ botId: "a", session: "s", owner: "a", isCurrent: () => true, res: res as unknown as ServerResponse,
-        spec: { command: "/engine", env: { AGENT_BROWSER_SESSION: "s", ...env } } });
-    };
-    await view({ AGENT_BROWSER_HEADLESS: "1" }, { ...ready, connected: false });
-    expect(execute.mock.calls.map((call) => call[1])).toEqual([
-      ["stream", "status", "--json", "--no-webmcp"], ["open", "--json", "--no-webmcp"], ["set", "viewport", "1280", "720", "--json", "--no-webmcp"],
-    ]);
-    expect(execute.mock.calls[2]?.[2]).toMatchObject({ timeout: 5_000 });
-    live.closeAll();
-    await view({ AGENT_BROWSER_HEADLESS: "1" });
-    expect(execute.mock.calls.map((call) => call[1].slice(0, 2))).toEqual([["stream", "status"], ["set", "viewport"]]);
-    live.closeAll();
-    await view({ AGENT_BROWSER_HEADLESS: "1", AGENT_BROWSER_CDP: "http://127.0.0.1:9222" });
-    expect(execute.mock.calls.map((call) => call[1][0])).toEqual(["stream"]);
-    live.closeAll();
-    await view({});
-    expect(execute.mock.calls.map((call) => call[1][0])).toEqual(["stream"]);
+  it("has the page fill the panel of the view that asked last, once the bot's call ends, and the standard page when no view is left", async () => {
+    const resize = vi.mocked(runtime.pageSizes.resize);
+    const first = await open({ size: { width: 400, height: 750 } });
+    expect(resize).toHaveBeenLastCalledWith("profile-a", { width: 400, height: 750 }, true);
+    expect(execute.mock.calls.map((call) => call[1][0])).not.toContain("set");
+    const second = await open({ owner: "admin-b", size: { width: 900, height: 700 } });
+    expect(resize).toHaveBeenLastCalledWith("profile-a", { width: 900, height: 700 }, true);
+    expect(await first.action({ type: "resize", width: 380, height: 760 })).toEqual({ ok: true });
+    expect(resize).toHaveBeenLastCalledWith("profile-a", { width: 380, height: 760 }, false);
+    const calls = resize.mock.calls.length;
+    expect(await first.action({ type: "resize", width: 380, height: 40 })).toEqual({ ok: true });
+    expect(resize).toHaveBeenCalledTimes(calls);
+    await expect(first.action({ type: "resize", width: "wide", height: 760 })).rejects.toThrow("Invalid browser action.");
+    first.res.destroy();
+    expect(resize).toHaveBeenLastCalledWith("profile-a", { width: 900, height: 700 }, false);
+    second.res.destroy();
+    expect(resize).toHaveBeenLastCalledWith("profile-a", null, false);
   });
-  it("still opens the view when sizing the page fails or the session is busy again", async () => {
-    execute.mockReset().mockResolvedValueOnce(output(ready))
-      .mockRejectedValueOnce(Object.assign(new Error("Command failed"), { killed: true, signal: "SIGKILL", code: null }));
-    const res = new ResponseFixture();
-    await live.open({ botId: "a", session: "s", owner: "a", isCurrent: () => true, res: res as unknown as ServerResponse,
-      spec: { command: "/engine", env: { AGENT_BROWSER_SESSION: "s", AGENT_BROWSER_HEADLESS: "1" } } });
+  it("leaves the page of the person holding the browser as it is when another view opens or resizes", async () => {
+    const resize = vi.mocked(runtime.pageSizes.resize);
+    const holder = await open({ size: { width: 1400, height: 900 } });
+    await holder.action({ type: "take" });
+    const other = await open({ owner: "admin-b", size: { width: 400, height: 750 } });
+    expect(resize).toHaveBeenLastCalledWith("profile-a", { width: 1400, height: 900 }, true);
+    await other.action({ type: "resize", width: 420, height: 800 });
+    expect(resize).toHaveBeenLastCalledWith("profile-a", { width: 1400, height: 900 }, true);
+    await holder.action({ type: "resize", width: 1500, height: 900 });
+    expect(resize).toHaveBeenLastCalledWith("profile-a", { width: 1500, height: 900 }, false);
+  });
+  it("still opens the view when sizing the page fails", async () => {
+    vi.mocked(runtime.pageSizes.resize).mockRejectedValue(new Error("engine without viewport"));
+    const { res } = await open({ size: { width: 400, height: 750 } });
     expect(res.id).toBeTruthy();
-    expect(res.events("waiting")).toHaveLength(0);
+    expect(res.events("ready")).toHaveLength(1);
   });
-  it("opens no stream socket when the viewer closes while the page is being sized", async () => {
+  it("opens no stream socket when the viewer closes while the browser is still starting", async () => {
     let finish!: (value: ReturnType<typeof output>) => void;
-    execute.mockReset().mockResolvedValueOnce(output(ready)).mockImplementationOnce(() => new Promise((resolve) => finish = resolve));
+    execute.mockReset().mockResolvedValueOnce(output({ ...ready, connected: false })).mockImplementationOnce(() => new Promise((resolve) => finish = resolve));
     const res = new ResponseFixture();
     const opening = live.open({ botId: "a", session: "s", owner: "a", isCurrent: () => true, res: res as unknown as ServerResponse,
       spec: { command: "/engine", env: { AGENT_BROWSER_SESSION: "s", AGENT_BROWSER_HEADLESS: "1" } } });

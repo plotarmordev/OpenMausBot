@@ -27,13 +27,15 @@ export interface RestartableServer {
   close(): Promise<void>;
 }
 
-export async function launchRestartableServer(options: { scripted?: boolean; dataDirRoot?: string } = {}): Promise<RestartableServer> {
+export async function launchRestartableServer(options: { scripted?: boolean; dataDirRoot?: string; frozenNow?: number } = {}): Promise<RestartableServer> {
   const port = await freePortBlock([0, 1]);
   // Native browser daemons use UNIX sockets, and a macOS temp home can exceed their path limit.
   const dataDir = mkdtempSync(join(options.dataDirRoot ?? tmpdir(), "omb-restartable-"));
   mkdirSync(join(dataDir, "tmp"), { recursive: true });
   const planPath = join(dataDir, "room-plan.json");
   if (options.scripted) writeFileSync(planPath, "{}");
+  const clockPath = join(dataDir, "frozen-clock.cjs");
+  if (options.frozenNow !== undefined) writeFileSync(clockPath, `const now = Date.now; Date.now = () => require("node:fs").existsSync(${JSON.stringify(join(dataDir, "clock-release"))}) ? now() : ${JSON.stringify(options.frozenNow)};`);
   writeFileSync(join(dataDir, "config.json"), JSON.stringify({ language: "en", instances: { claude: {
     driver: "claudeAgent", displayName: "Verification fixture", config: { cli: join(ROOT, "server", "testing", "fake-claude-cli.ts") },
     ...(options.scripted ? { environment: { FAKE_CLAUDE_ROOM_PLAN: planPath } } : {}),
@@ -48,7 +50,9 @@ export async function launchRestartableServer(options: { scripted?: boolean; dat
   const start = async () => {
     const env = verificationServerEnvironment(process.env, dataDir, port);
     const log = openSync(logPath, "a", 0o600);
-    child = spawn(process.execPath, verificationServerArgs(env), { cwd: ROOT, env, stdio: ["ignore", log, log] });
+    child = spawn(process.execPath, [
+      ...(options.frozenNow === undefined ? [] : ["--require", clockPath]), ...verificationServerArgs(env),
+    ], { cwd: ROOT, env, stdio: ["ignore", log, log] });
     closeSync(log);
     const deadline = Date.now() + 30_000;
     for (;;) {

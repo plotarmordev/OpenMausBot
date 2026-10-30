@@ -1,3 +1,5 @@
+import { spawn } from "node:child_process";
+import { once } from "node:events";
 import { existsSync, mkdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -5,6 +7,11 @@ import { beforeEach, describe, expect, it } from "vitest";
 
 import { DATA_DIR } from "./config.ts";
 import { closeMessageDb,
+  appendMessage,
+  hasQueuedInputAfter,
+  reserveInputOrder,
+  saveChatFollowup,
+  settleChatFollowups,
   deleteThread,
   deleteThreads,
   indexMemoryFile,
@@ -50,6 +57,122 @@ describe("message-db", () => {
     closeMessageDb();
     rmSync(DATA_DIR, { recursive: true, force: true });
     mkdirSync(DATA_DIR, { recursive: true });
+  });
+
+  it("cold-opens a legacy WAL database in 16 independent processes without reusing input orders", async () => {
+    insertMessage("legacy", msg("legacy", "preserved legacy transcript"));
+    closeMessageDb();
+    const setup = new DatabaseSync(join(DATA_DIR, "messages.db"));
+    try {
+      expect(setup.prepare("PRAGMA journal_mode").get()).toEqual({ journal_mode: "wal" });
+      setup.exec("ALTER TABLE messages DROP COLUMN input_order; ALTER TABLE chat_followups DROP COLUMN input_order; DROP TABLE input_order;");
+    } finally { setup.close(); }
+    const source = `
+      import { once } from "node:events";
+      import { DatabaseSync } from "node:sqlite";
+      import { join } from "node:path";
+      import { appendMessage, saveChatFollowup, settleChatFollowups, reserveInputOrder, closeMessageDb } from ${JSON.stringify(new URL("./message-db.ts", import.meta.url).href)};
+      const start = once(process, "message");
+      process.send("ready");
+      await start;
+      const id = String(process.pid);
+      const first = reserveInputOrder();
+      appendMessage(id, { id, role: "user", kind: "text", text: id, at: 1 });
+      saveChatFollowup({ id, kind: "bot", ownerId: id, threadId: id, payload: { text: id } });
+      const db = new DatabaseSync(join(process.env.OMB_DATA_DIR, "messages.db"), { readOnly: true });
+      const queued = Number(db.prepare("SELECT input_order FROM chat_followups WHERE id = ?").get(id).input_order);
+      db.close();
+      const last = reserveInputOrder();
+      settleChatFollowups([id], null);
+      closeMessageDb();
+      const reopened = reserveInputOrder();
+      closeMessageDb();
+      console.log(JSON.stringify({ id, first, queued, last, reopened }));
+      process.disconnect();
+    `;
+    const workers = Array.from({ length: 16 }, () => {
+      const child = spawn(process.execPath, ["--experimental-strip-types", "--input-type=module", "-e", source], {
+        env: { ...process.env, OMB_DATA_DIR: DATA_DIR }, stdio: ["ignore", "pipe", "pipe", "ipc"],
+      });
+      let stdout = "";
+      let stderr = "";
+      child.stdout!.setEncoding("utf8").on("data", chunk => { stdout += chunk; });
+      child.stderr!.setEncoding("utf8").on("data", chunk => { stderr += chunk; });
+      const exited = once(child, "close");
+      const ready = Promise.race([
+        once(child, "message"),
+        exited.then(() => { throw new Error(`Worker exited before ready: ${stderr}`); }),
+      ]);
+      return { child, ready, exited, output: () => ({ stdout, stderr }) };
+    });
+    try {
+      await Promise.all(workers.map(worker => worker.ready));
+      for (const worker of workers) worker.child.send("start");
+      const exits = await Promise.all(workers.map(worker => worker.exited));
+      for (const [index, exit] of exits.entries()) expect(exit, workers[index].output().stderr).toEqual([0, null]);
+      const results = workers.map(worker => JSON.parse(worker.output().stdout) as { id: string; first: number; queued: number; last: number; reopened: number });
+      const db = new DatabaseSync(join(DATA_DIR, "messages.db"));
+      try {
+        expect(db.prepare("PRAGMA integrity_check").all()).toEqual([{ integrity_check: "ok" }]);
+        expect(db.prepare("SELECT text, input_order FROM messages WHERE thread_id = 'legacy'").get()).toEqual({
+          text: "preserved legacy transcript", input_order: null,
+        });
+        expect(db.prepare("SELECT id FROM chat_followups").all()).toEqual([]);
+        const orders: number[] = [];
+        for (const result of results) {
+          const row = db.prepare("SELECT input_order FROM messages WHERE thread_id = ?").get(result.id)!;
+          const messageOrder = Number(row.input_order);
+          expect(messageOrder).toBeGreaterThan(result.first);
+          expect(result.queued).toBeGreaterThan(messageOrder);
+          expect(result.last).toBeGreaterThan(result.queued);
+          expect(result.reopened).toBeGreaterThan(result.last);
+          orders.push(result.first, messageOrder, result.queued, result.last, result.reopened);
+        }
+        expect(orders.sort((a, b) => a - b)).toEqual(Array.from({ length: 80 }, (_, index) => index + 1));
+        expect(db.prepare("SELECT value FROM input_order").get()).toEqual({ value: 80 });
+        expect(reserveInputOrder()).toBe(81);
+      } finally { db.close(); }
+    } finally {
+      for (const worker of workers) {
+        if (worker.child.exitCode === null && worker.child.signalCode === null) worker.child.kill("SIGKILL");
+      }
+      await Promise.all(workers.map(worker => worker.exited));
+    }
+  }, 30_000);
+
+  it("orders equal-ms input durably without reusing deleted queue positions", () => {
+    const original = msg("original", "original");
+    saveChatFollowup({ id: "older", kind: "bot", ownerId: "bot", threadId: "thread", payload: { text: "older", queuedAt: original.at } });
+    appendMessage("thread", original);
+    expect(hasQueuedInputAfter("bot", "bot", "thread", original.id)).toBe(false);
+    settleChatFollowups(["older"], null);
+    closeMessageDb();
+    saveChatFollowup({ id: "newer", kind: "bot", ownerId: "bot", threadId: "thread", payload: { text: "newer", queuedAt: original.at } });
+    expect(hasQueuedInputAfter("bot", "bot", "thread", original.id)).toBe(true);
+    updateMessage("thread", { ...original, text: "edited" });
+    closeMessageDb();
+    expect(hasQueuedInputAfter("bot", "bot", "thread", original.id)).toBe(true);
+    expect(hasQueuedInputAfter("bot", "other", "thread", original.id)).toBe(false);
+    settleChatFollowups(["newer"], null);
+    expect(hasQueuedInputAfter("bot", "bot", "thread", original.id)).toBe(false);
+  });
+
+  it("fails closed for saved user lines without durable admission proof", () => {
+    insertMessage("thread", msg("legacy", "legacy"));
+    closeMessageDb();
+    expect(hasQueuedInputAfter("bot", "bot", "thread", "legacy")).toBe(true);
+    expect(hasQueuedInputAfter("bot", "bot", "thread", "missing")).toBe(true);
+    expect(hasQueuedInputAfter("bot", "bot", "thread", undefined)).toBe(true);
+  });
+
+  it("persists ordering proof for coordinated work without a user line", () => {
+    const order = reserveInputOrder();
+    closeMessageDb();
+    expect(hasQueuedInputAfter("bot", "bot", "thread", undefined, order)).toBe(false);
+    saveChatFollowup({ id: "newer", kind: "bot", ownerId: "bot", threadId: "thread", payload: { text: "newer" } });
+    closeMessageDb();
+    expect(hasQueuedInputAfter("bot", "bot", "thread", undefined, order)).toBe(true);
+    expect(hasQueuedInputAfter("bot", "bot", "thread", "missing", order)).toBe(true);
   });
 
   it("persists inserts, updates, and the active leaf across a reopen", () => {
