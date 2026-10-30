@@ -259,6 +259,10 @@ export class ModelRequestService {
     if (!target || !sameSelection(target.modelSelection, payload.selection)) {
       return { claimed: true, state: "invalid", error: UNDO_STALE, status: 409, stale: true };
     }
+    if (payload.targetBotId !== payload.botId && this.validateTarget) {
+      const refusal = this.validateTarget(payload.botId, payload.targetBotId);
+      if (refusal) return cannot(refusal, 403);
+    }
     if (this.validateModel) {
       const refusal = this.validateModel(payload.before, target);
       if (refusal) return cannot(refusal);

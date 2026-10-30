@@ -1,4 +1,5 @@
-import type { ModelVariantOption } from "../../contracts.ts";
+import type { EffortLevel, ModelVariantOption } from "../../contracts.ts";
+import { EFFORT_LEVELS } from "../../../shared/wire.ts";
 import { acpModelOption, acpVariantOption } from "./config-options.ts";
 
 export interface AcpModelSelection {
@@ -63,6 +64,35 @@ export class SessionModelControls {
       throw new Error(`${this.input.displayName} does not advertise variant ${value} for this model`);
     }
     return option;
+  }
+
+  async selectVariant(request: Request, sessionId: string, value: string, timeoutMs: number): Promise<void> {
+    const option = this.variant(value);
+    await request(
+      "session/set_config_option",
+      { sessionId, configId: option.configId, value },
+      timeoutMs,
+      (result) => this.receive(result),
+    );
+    if (this.variant(value).currentValue !== value) {
+      throw new Error(`${this.input.displayName} did not apply variant ${value}`);
+    }
+  }
+
+  confirmBeforePrompt(value: string | undefined): void {
+    const model = this.input.model();
+    if (this.input.variants && model && !this.usesAgentDefault() && this.modelOf(this.input.state()) !== model) {
+      throw new Error(`${this.input.displayName} changed model before the prompt`);
+    }
+    if (value !== undefined && this.variant(value).currentValue !== value) {
+      throw new Error(`${this.input.displayName} changed variant before the prompt`);
+    }
+  }
+
+  nativeEffortReceipt(): { effort?: EffortLevel } {
+    const nativeEffort = acpVariantOption(this.input.state())?.currentValue;
+    return nativeEffort && EFFORT_LEVELS.includes(nativeEffort as EffortLevel)
+      ? { effort: nativeEffort as EffortLevel } : {};
   }
 
   async select(request: Request, sessionId: string, timeoutMs: number): Promise<string | null> {

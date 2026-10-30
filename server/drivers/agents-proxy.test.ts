@@ -80,6 +80,9 @@ let profileRequestResponse: unknown = DEFAULT_PROFILE_RESPONSE;
 let lastModelRequestBody: any = null;
 const DEFAULT_MODEL_RESPONSE = { requestId: "model-request-1", summary: "Default engine/model → codex gpt-5" };
 let modelRequestResponse: unknown = DEFAULT_MODEL_RESPONSE;
+let lastThreadModelRequestBody: unknown = null;
+const DEFAULT_THREAD_MODEL_RESPONSE = { requestId: "thread-model-1", summary: "#Fixture check → codex gpt-5" };
+let threadModelRequestResponse: unknown = DEFAULT_THREAD_MODEL_RESPONSE;
 const DEFAULT_TEAM_RESPONSE = { requestId: "team-request-1", title: "Requested team change" };
 let teamRequestResponse: unknown = DEFAULT_TEAM_RESPONSE;
 let lastTeamRequestBody: any = null;
@@ -375,6 +378,16 @@ beforeAll(async () => {
       });
       return;
     }
+    if (req.method === "POST" && req.url === "/api/internal/thread-model-requests") {
+      let data = "";
+      req.on("data", (c) => (data += c));
+      req.on("end", () => {
+        lastThreadModelRequestBody = JSON.parse(data);
+        res.writeHead(201, { "content-type": "application/json" });
+        res.end(JSON.stringify(threadModelRequestResponse));
+      });
+      return;
+    }
     if (req.method === "POST" && ["/api/internal/team-setup-requests", "/api/internal/bot-deletion-requests"].includes(req.url ?? "")) {
       let data = "";
       req.on("data", (c) => (data += c));
@@ -663,6 +676,8 @@ describe("agents-proxy MCP surface", () => {
       "manage_trigger",
       "propose_profile",
       "propose_model",
+      "get_thread_model",
+      "set_thread_model",
       "propose_team_memory",
       "skills_list",
       "skill_manage",
@@ -1956,6 +1971,18 @@ describe("agents-proxy MCP surface", () => {
     expect(lastModelRequestBody).toBeNull();
   });
 
+
+  it("set_thread_model refuses a missing thread or selection without calling the harness", async () => {
+    lastThreadModelRequestBody = null;
+    const noThread = await callTool("set_thread_model", { model_selection: { instanceId: "codex", model: "gpt-5" }, reason: "asked" });
+    expect(noThread.result.isError).toBe(true);
+    expect(noThread.result.content[0].text).toContain("needs thread_id");
+    const noSelection = await callTool("set_thread_model", { thread_id: "thread-ada-1", model_selection: { instanceId: "codex" }, reason: "asked" });
+    expect(noSelection.result.isError).toBe(true);
+    expect(noSelection.result.content[0].text).toContain("needs model_selection with instanceId and model");
+    expect(lastThreadModelRequestBody).toBeNull();
+  });
+
   it("rejects unknown tools with -32602", async () => {
     const res = await rpc("tools/call", { name: "made_up", arguments: {} });
     expect(res.error.code).toBe(-32602);
@@ -2077,7 +2104,7 @@ describe("standing external runtime", () => {
   it("sees the same one tool surface as every turn: the switches it sets change nothing", async () => {
     const list = await externalRpc("tools/list");
     // the main child is a Chief's turn; this one is not, so only the role differs
-    const chiefOnly = ["create_bot", "list_team_setup", "list_team_library", "propose_team_setup", "propose_bot_deletion", "create_room", "manage_room", "retry_thread"];
+    const chiefOnly = ["create_bot", "list_team_setup", "list_team_library", "propose_team_setup", "propose_bot_deletion", "create_room", "manage_room", "retry_thread", "set_thread_model", "get_thread_model"];
     const everyTurn = (await rpc("tools/list")).result.tools.filter((tool: any) => !chiefOnly.includes(tool.name));
     const names = list.result.tools.map((tool: any) => tool.name);
     expect(names).toEqual(everyTurn.map((tool: any) => tool.name));
@@ -2195,7 +2222,7 @@ describe("with computer sharing off and no Chief of Staff (the defaults)", () =>
   it("shows a bot that is not a Chief none of the Chief-only tools or parameters", async () => {
     type ListedTool = { name: string; description: string; inputSchema: { properties: Record<string, unknown> } };
     const tools = new Map(((await gatedRpc("tools/list")).result.tools as ListedTool[]).map((tool) => [tool.name, tool]));
-    for (const name of ["create_bot", "list_team_setup", "propose_team_setup", "propose_bot_deletion", "create_room", "manage_room", "retry_thread"]) {
+    for (const name of ["create_bot", "list_team_setup", "propose_team_setup", "propose_bot_deletion", "create_room", "manage_room", "retry_thread", "set_thread_model", "get_thread_model"]) {
       expect(tools.has(name), name).toBe(false);
     }
     for (const name of ["propose_profile", "propose_model"]) {
@@ -2330,7 +2357,7 @@ describe("tool bridge", () => {
 
   /** The main child's switches: a Chief with skills and shared computers. */
   const CHIEF = { OMB_SKILL_AUTHORING_ENABLED: "1", OMB_SHARED_COMPUTERS_ENABLED: "1", OMB_CHIEF_OF_STAFF: "1" };
-  const CHIEF_ONLY = ["create_bot", "list_team_setup", "propose_team_setup", "propose_bot_deletion", "create_room", "manage_room", "retry_thread"];
+  const CHIEF_ONLY = ["create_bot", "list_team_setup", "propose_team_setup", "propose_bot_deletion", "create_room", "manage_room", "retry_thread", "set_thread_model", "get_thread_model"];
   const HOT = ["tool_result_read", "list_room_targets", "coordinate_bots", "list_bots", "list_rooms", "select_computer", "attach_file", "publish_page", "post_to_room", "request_credential", "request_sign_in", "fill_login", "memory_update"];
   let chief: Rpc;
   let plain: Rpc;

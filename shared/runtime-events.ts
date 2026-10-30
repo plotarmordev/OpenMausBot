@@ -2,6 +2,7 @@
  * inspector log. */
 import type { AskQuestion } from "./ask-question.ts";
 import type { TurnProgressFields } from "./turn-progress.ts";
+import type { EffortLevel } from "./wire.ts";
 
 export type DriverKind = string;
 export type InstanceId = string;
@@ -40,6 +41,8 @@ export type RuntimeEvent = RuntimeEventBase &
   (
     | {
         type: "session.started"; sessionId: string | null; model?: string | null;
+        /** Present only when the native session confirms its reasoning setting. */
+        effort?: EffortLevel;
         /** the provider refused the turn's resumeCursor and this new session
          * was started from the turn's recoveryText */
         rebuilt?: boolean;

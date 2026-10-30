@@ -86,6 +86,7 @@ Use only mapped, tested commands:
 - [Preset bots](presets.md)
 - [Teams and shared instructions](teams.md)
 - [Full workspace backups](workspace-backups.md)
+- [Deployment controller: conditional soul writes and the maintenance lease](deployment-controller.md)
 - [Optional company cloud backups](company-backups.md)
 - [Organization library: the desktop channel](desktop-library.md)
 - [Fleet: many workspaces on one server](fleet.md)
@@ -226,6 +227,11 @@ per-thread models, simultaneous direct conversations and thread-scoped Stop.
 The [custom ACP model fixture](custom-acp-models.md) checks native model and
 thinking choices, independent bot defaults and thread overrides, and retained
 settings and catalogs after restart with an offline ACP engine.
+
+The [native task model-control fixture](thread-model-control.md) proves Chief
+authorization, quota-blocked model/effort changes without dispatch, explicit
+resume, self/default switch-back, Undo and busy current-versus-next-turn receipts
+against an isolated server and offline ACP process.
 
 The [mobile generated-image checks](mobile-generated-images.md) cover native image
 attachments and message-scoped download authorization using isolated fixtures.

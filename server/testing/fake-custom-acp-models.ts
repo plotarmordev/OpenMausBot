@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { createInterface } from "node:readline";
+import { setTimeout as delay } from "node:timers/promises";
 
 if (process.argv.includes("--version")) {
   console.log("custom-acp-models-fixture 1.0.0");
@@ -13,7 +14,7 @@ const directory = process.env.FAKE_CUSTOM_ACP_DIRECTORY;
 if (!directory) throw new Error("FAKE_CUSTOM_ACP_DIRECTORY is required");
 mkdirSync(directory, { recursive: true });
 const receiptPath = join(directory, "receipts.jsonl");
-type Session = { model: string; variant: string };
+type Session = { model: string; variant: string; cwd?: string };
 const models = [
   { id: "glm-5.3", label: "GLM-5.3", variants: ["low", "max"] },
   { id: "glm-5.3-flash", label: "GLM-5.3-Flash", variants: ["medium", "high"] },
@@ -60,7 +61,7 @@ for await (const line of createInterface({ input: process.stdin })) {
         agentCapabilities: { loadSession: true, mcpCapabilities: { http: true } }, authMethods: [] });
     } else if (method === "session/new") {
       const sessionId = randomUUID();
-      const session = { model: models[0].id, variant: "low" };
+      const session = { model: models[0].id, variant: "low", cwd: params.cwd };
       save(sessionId, session);
       receipt({ method, sessionId, ...session });
       respond({ sessionId, configOptions: configOptions(session) });
@@ -86,8 +87,16 @@ for await (const line of createInterface({ input: process.stdin })) {
       respond({ configOptions: configOptions(session) });
     } else if (method === "session/prompt") {
       const session = get(params.sessionId);
-      const marker = [...JSON.stringify(params.prompt).matchAll(/ACP_PICKER_[A-Z0-9_]+/g)].at(-1)?.[0] ?? "auxiliary";
-      receipt({ method, sessionId: params.sessionId, marker, ...session });
+      const markers = [...JSON.stringify(params.prompt).matchAll(/ACP_PICKER_[A-Z0-9_]+/g)].map((match) => match[0]);
+      const marker = markers.at(-1) ?? "auxiliary";
+      receipt({ method, sessionId: params.sessionId, marker, markers, ...session });
+      if (marker === "ACP_PICKER_QUOTA" && existsSync(join(directory, "quota"))) {
+        send({ jsonrpc: "2.0", id, error: { code: -32000, message: "Weekly limit reached: fixture quota exhausted" } });
+        continue;
+      }
+      if (marker === "ACP_PICKER_BUSY") {
+        while (!existsSync(join(directory, "release-busy"))) await delay(20);
+      }
       send({ jsonrpc: "2.0", method: "session/update", params: { sessionId: params.sessionId,
         update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: `fixture:${marker}:${session.model}:${session.variant}` } } } });
       respond({ stopReason: "end_turn" });

@@ -1,4 +1,4 @@
-import { chmodSync, mkdtempSync, readFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -119,6 +119,67 @@ describe("CustomAcpDriver turns (fake CLI)", () => {
     const seen = JSON.parse(readFileSync(dump, "utf8")) as { env: Record<string, string | undefined> };
     expect(seen.env.MY_AGENT_TOKEN).toBe("tok-123");
     expect(seen.env.XAI_API_KEY).toBeUndefined();
+  });
+
+  const thoughtConfig = JSON.stringify({
+    "model-one": { currentValue: "medium", options: [{ value: "medium", name: "Medium" }, { value: "high", name: "High" }] },
+    "model-two": { id: "reasoning_effort", currentValue: "low", options: [{ value: "low", name: "Low" }, { value: "high", name: "High" }] },
+  });
+
+  it("selects model and effort before prompting and switches back in the same conversation", async () => {
+    const dump = join(scratch, "selection");
+    await create({ FAKE_ACP_MODELS: "model-one,model-two", FAKE_ACP_VARIANTS: thoughtConfig, FAKE_ACP_DUMP: dump });
+    for (const selection of [
+      { model: "agent-default", effort: "high", actual: "model-one" },
+      { model: "model-two", effort: "low", actual: "model-two" },
+      { model: "model-one", effort: "medium", actual: "model-one" },
+    ] as const) {
+      const { turnId } = await instance.adapter.sendTurn({ threadId: "selection", text: "hi", model: selection.model, effort: selection.effort });
+      expect(await recorder.until((e) => e.type === "turn.completed" && e.turnId === turnId)).toMatchObject({ ok: true });
+      expect(recorder.events.find((e) => e.type === "session.started" && e.turnId === turnId))
+        .toMatchObject({ model: selection.actual, effort: selection.effort });
+    }
+    const calls = JSON.parse(readFileSync(`${dump}.config.json`, "utf8"));
+    expect(calls.map((call: { params: unknown }) => call.params)).toEqual([
+      { sessionId: "fake-acp-session", configId: "effort", value: "high" },
+      { sessionId: "fake-acp-session", configId: "model", value: "model-two" },
+      { sessionId: "fake-acp-session", configId: "reasoning_effort", value: "low" },
+      { sessionId: "fake-acp-session", configId: "model", value: "model-one" },
+      { sessionId: "fake-acp-session", configId: "effort", value: "medium" },
+    ]);
+    const prompts = readFileSync(`${dump}.prompts.jsonl`, "utf8").trim().split("\n").map((line) => JSON.parse(line));
+    expect(prompts.map((prompt) => prompt.model)).toEqual(["model-one", "model-two", "model-one"]);
+    expect(new Set(prompts.map((prompt) => prompt.sessionId)).size).toBe(1);
+  });
+
+  it.each([
+    { model: "agent-default", effort: "max" as const },
+    { model: "model-two", effort: "medium" as const },
+    { model: "model-one", effort: "high" as const, variant: "medium" },
+  ])("rejects unsupported or conflicting effort before prompt: %j", async (selection) => {
+    const dump = join(scratch, "unsupported");
+    await create({ FAKE_ACP_MODELS: "model-one,model-two", FAKE_ACP_VARIANTS: thoughtConfig, FAKE_ACP_DUMP: dump });
+    await instance.adapter.sendTurn({ threadId: "unsupported", text: "hi", ...selection });
+    expect(await recorder.until((e) => e.type === "turn.completed")).toMatchObject({ ok: false });
+    expect(existsSync(`${dump}.prompts.jsonl`)).toBe(false);
+  });
+
+  it("rejects an unconfirmed effort setter without claiming the requested effort", async () => {
+    const dump = join(scratch, "stuck");
+    await create({ FAKE_ACP_MODELS: "model-one", FAKE_ACP_VARIANTS: thoughtConfig, FAKE_ACP_VARIANT_STICKS: "1", FAKE_ACP_DUMP: dump });
+    await instance.adapter.sendTurn({ threadId: "stuck", text: "hi", model: "agent-default", effort: "high" });
+    expect(await recorder.until((e) => e.type === "turn.completed")).toMatchObject({ ok: false });
+    expect(recorder.events.find((e) => e.type === "session.started")).toMatchObject({ model: "model-one", effort: "medium" });
+    expect(existsSync(`${dump}.prompts.jsonl`)).toBe(false);
+  });
+
+  it("does not resolve agent-default without native model evidence", async () => {
+    await create();
+    await instance.adapter.sendTurn({ threadId: "unknown-model", text: "hi", model: "agent-default" });
+    await recorder.until((e) => e.type === "turn.completed");
+    const started = recorder.events.find((e) => e.type === "session.started");
+    expect(started).toMatchObject({ model: null });
+    expect(started).not.toHaveProperty("effort");
   });
 
   it("reports available with a working CLI and no sign-in requirement", async () => {

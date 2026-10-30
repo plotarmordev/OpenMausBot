@@ -52,6 +52,13 @@ instance at it:
   without sending a prompt. Only confirmed, model-specific thinking options
   are shown; a failed refresh keeps the last successful catalog. ZCode,
   CodeBuddy, Qoder and other custom ACP engines use the same mechanism.
+- **Native conversation control.** Chiefs can use `get_thread_model` and
+  `set_thread_model` to inspect or change their own tasks and managed delegated
+  tasks. Changes apply to the next turn and never resume work by themselves.
+  Custom ACP effort is checked against the selected model's advertised thinking
+  choices and confirmed through ACP before prompting. `agent-default` is a
+  passthrough, not proof of a resolved model; use an explicit model ID to restore
+  a particular model. See [the isolated model-control recipe](verification/thread-model-control.md).
 - **`environment`** is passed to the CLI child. Foreign provider keys
   (XAI_API_KEY, OPENAI_COMPAT_API_KEY, …) are deliberately stripped so a
   custom CLI can never bill against another engine's login.

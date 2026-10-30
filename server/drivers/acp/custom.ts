@@ -7,6 +7,7 @@
 // a terminal. Model selection uses ACP, never -m on argv, since conventions differ per CLI.
 import { createAcpDriver, type AcpSupport } from "./core.ts";
 import { resolveCustomAcpModels } from "./custom-model-catalog.ts";
+import { EFFORT_LEVELS } from "../../../shared/wire.ts";
 
 const CONFIGURE_HINT =
   'a custom ACP engine needs its command — add "config": { "cli": "<your-agent> acp" } to this instance in config.json, or use Settings → Engines → Set CLI…';
@@ -24,6 +25,8 @@ const support: AcpSupport = {
   resolveModelsOnCreate: false,
   selectModel: { configId: "model", agentDefault: "agent-default", allowLegacy: true },
   modelVariants: true,
+  effortLevels: EFFORT_LEVELS,
+  effortViaVariants: true,
   pickAuthMethod: () => null,
   authFailure: "continue",
   isAuthenticated: () => true,

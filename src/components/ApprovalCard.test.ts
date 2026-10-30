@@ -2,7 +2,7 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
-import { ApprovalCard } from "./ApprovalCard";
+import { ApprovalCard, approvalCardOutcome } from "./ApprovalCard";
 import { pendingApprovals, PendingApprovalPanel, spokenApprovalPrompt, type Pending } from "./PendingApproval";
 import type { Bot, Message } from "@/state/store";
 import { skillRequestBehavior } from "../../shared/skill-request";
@@ -600,6 +600,36 @@ describe("ApprovalCard for a change that applied on its own", () => {
     routineRequest: { ...routineRequest, operation, resultId: "routine-1", ...(undo ? { undo } : {}) } as NonNullable<Message["card"]>["routineRequest"],
   });
   const render = (message: Message) => renderToStaticMarkup(createElement(ApprovalCard, { bot: { name: "Scout" }, message, threadId: "thread-1" }));
+
+  it("offers Undo for an applied conversation model change and removes it after restoration", () => {
+    const message = applied({
+      tool: "set_thread_model",
+      threadModelRequest: {
+        version: 1, requestId: "routine-request", botId: "chief", threadId: "thread-1",
+        targetBotId: "worker", targetName: "Worker", targetThreadId: "work-thread", targetTitle: "Existing task",
+        createdAt: 1, reason: "Requested switch", beforeDefault: { instanceId: "custom", model: "first" },
+        selection: { instanceId: "custom", model: "second", effort: "medium" }, appliedAt: 2,
+      },
+    });
+    expect(render(message)).toContain(">Undo<");
+    expect(pendingApprovals([message])).toEqual([]);
+    message.card = { ...message.card!, undone: true };
+    expect(render(message)).not.toContain(">Undo<");
+  });
+
+  it("identifies a confirmed thread selection as a conversation change, not a default change", () => {
+    const message = applied({
+      autoApplied: false,
+      threadModelRequest: {
+        version: 1, requestId: "confirmed-model", botId: "chief", threadId: "thread-1",
+        targetBotId: "worker", targetName: "Worker", targetThreadId: "work-thread", targetTitle: "Existing task",
+        createdAt: 1, reason: "Requested switch", beforeDefault: { instanceId: "custom", model: "first" },
+        selection: { instanceId: "custom", model: "second" }, appliedAt: 2,
+      },
+    });
+    expect(approvalCardOutcome(message.card!)).toMatch(/conversation/i);
+    expect(approvalCardOutcome(message.card!)).not.toMatch(/default/i);
+  });
 
   // A create renders the live trigger card (TriggerCard.test.ts); every later change is this one line.
   const update = { action: "update" as const, routineId: "routine-1", expectedUpdatedAt: 1, changes: { name: "Renamed" } };

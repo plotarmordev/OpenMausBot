@@ -125,7 +125,11 @@ export async function resolveCustomAcpModels(
     const modelOption = acpModelOption(initial);
     if (!modelOption?.options.length) throw new Error("The ACP agent did not advertise any models. The previous catalog was kept.");
     if (modelOption.options.length > MAX_MODELS) throw new Error("The ACP model catalog exceeded the discovery limit.");
-    const options: ModelCatalog["options"] = [{ id: "agent-default", label: "Agent default", custom: true }];
+    const defaultVariants = acpVariantOption(initial)?.options;
+    const options: ModelCatalog["options"] = [{
+      id: "agent-default", label: "Agent default", custom: true,
+      ...(defaultVariants?.length ? { variants: defaultVariants } : {}),
+    }];
     for (const model of modelOption.options) {
       if (model.id === "agent-default") continue;
       if (failure) throw failure;

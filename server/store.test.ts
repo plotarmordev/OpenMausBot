@@ -20,7 +20,8 @@ import type { ModelSelection } from "./contracts.ts";
 import * as mdb from "./message-db.ts";
 import { peerAllowKey } from "./peer-approval-key.ts";
 import { hasTeamAuthority } from "./peer-roster.ts";
-import { Store, toWireTask, type BotRecord } from "./store.ts";
+import { SOUL_WRITE_RECEIPTS, Store, toWireTask, type BotRecord } from "./store.ts";
+import { soulRevision } from "./profile-revision.ts";
 import type { TeamSetupRequest } from "../shared/team-setup.ts";
 import { SECTION_CONTEXTS_FILE, readSectionContext, writeSectionContext } from "./section-context.ts";
 import { TeamComputers } from "./team-computers.ts";
@@ -2558,6 +2559,82 @@ describe("soul", () => {
     expect(() => store.patchBot(bot.id, { browser: false })).toThrow("disk full");
     expect(bot.browser).toBe(false);
     save.mockRestore();
+  });
+
+  it("writes a soul only against the revision it read; a later write of the same bytes still moves that revision", () => {
+    const store = new Store(selection);
+    const bot = store.createBot({ soul: "OLD" });
+    const read = soulRevision(bot);
+    store.patchBotProfile(bot.id, { name: "Renamed meanwhile" });
+    const applied = store.compareAndSetSoul(bot.id, { soul: "M", expectedRevision: read, requestId: "apply-0001" });
+    expect(applied).toMatchObject({ state: "applied", receipt: { from: read, to: soulRevision(bot), soulSha256: soulHash("M") } });
+    expect(bot).toMatchObject({ soul: "M", name: "Renamed meanwhile", soulDrift: false });
+    expect(readFileSync(soulFile(bot.id), "utf8")).toBe("M");
+    const appliedRevision = soulRevision(bot);
+
+    store.setSoul(bot.id, "M");
+    expect(soulRevision(bot)).not.toBe(appliedRevision);
+    expect(store.compareAndSetSoul(bot.id, { soul: "OLD", expectedRevision: appliedRevision, requestId: "rollback-0001" }))
+      .toEqual({ state: "conflict", currentRevision: soulRevision(bot) });
+    expect(bot.soul).toBe("M");
+    expect(store.compareAndSetSoul("no-such-bot", { soul: "x", expectedRevision: read, requestId: "apply-0002" })).toEqual({ state: "missing" });
+  });
+
+  it("never writes a settled request twice, across a restart, and refuses its id for another write", () => {
+    const store = new Store(selection);
+    const bot = store.createBot();
+    const read = soulRevision(bot);
+    const first = store.compareAndSetSoul(bot.id, { soul: "M", expectedRevision: read, requestId: "apply-0001" });
+    const produced = first.state === "applied" ? first.receipt.to : "";
+    store.setSoul(bot.id, "later edit");
+    const reloaded = new Store(selection);
+    const replay = reloaded.compareAndSetSoul(bot.id, { soul: "M", expectedRevision: read, requestId: "apply-0001" });
+    expect(replay).toMatchObject({ state: "replayed", receipt: { to: produced }, currentRevision: soulRevision(reloaded.bot(bot.id)!) });
+    expect(reloaded.bot(bot.id)?.soul).toBe("later edit");
+    expect(reloaded.compareAndSetSoul(bot.id, { soul: "N", expectedRevision: read, requestId: "apply-0001" })).toEqual({ state: "reused" });
+    expect(reloaded.soulWriteReceipt(bot.id, "apply-0001")).toMatchObject({ state: "applied", from: read, to: produced });
+  });
+
+  it("voids a request so a delayed original can never write, even once its receipt is dropped", () => {
+    const store = new Store(selection);
+    const bot = store.createBot({ soul: "OLD" });
+    const read = soulRevision(bot);
+    expect(store.voidSoulWrite(bot.id, "apply-0001")).toMatchObject({ state: "voided" });
+    expect(soulRevision(bot)).not.toBe(read);
+    expect(new Store(selection).compareAndSetSoul(bot.id, { soul: "M", expectedRevision: read, requestId: "apply-0001" })).toEqual({ state: "voided" });
+    for (let index = 0; index < SOUL_WRITE_RECEIPTS; index++) store.voidSoulWrite(bot.id, `other-${String(index).padStart(4, "0")}`);
+    expect(store.soulWriteReceipt(bot.id, "apply-0001")).toBeNull();
+    expect(bot.soulWritesTrimmedAt).toBeGreaterThan(0);
+    expect(store.compareAndSetSoul(bot.id, { soul: "M", expectedRevision: read, requestId: "apply-0001" })).toMatchObject({ state: "conflict" });
+    expect(bot.soul).toBe("OLD");
+    const current = soulRevision(bot);
+    store.compareAndSetSoul(bot.id, { soul: "M", expectedRevision: current, requestId: "apply-0002" });
+    expect(store.voidSoulWrite(bot.id, "apply-0002")).toMatchObject({ state: "applied", from: current });
+  });
+
+  it("keeps the soul, its revision and receipts unchanged when a conditional write cannot be saved", () => {
+    const store = new Store(selection);
+    const bot = store.createBot({ soul: "OLD" });
+    const read = soulRevision(bot);
+    const save = vi.spyOn(store as unknown as { saveBots(bots: BotRecord[]): void }, "saveBots")
+      .mockImplementationOnce(() => { throw new Error("disk full"); });
+    expect(() => store.compareAndSetSoul(bot.id, { soul: "M", expectedRevision: read, requestId: "apply-0001" })).toThrow("disk full");
+    expect(bot.soul).toBe("OLD");
+    expect(soulRevision(bot)).toBe(read);
+    expect(store.soulWriteReceipt(bot.id, "apply-0001")).toBeNull();
+    save.mockRestore();
+    expect(store.compareAndSetSoul(bot.id, { soul: "M", expectedRevision: read, requestId: "apply-0001" })).toMatchObject({ state: "applied" });
+  });
+
+  it(`keeps only the newest ${SOUL_WRITE_RECEIPTS} receipts`, () => {
+    const store = new Store(selection);
+    const bot = store.createBot();
+    for (let index = 0; index <= SOUL_WRITE_RECEIPTS; index++) {
+      store.compareAndSetSoul(bot.id, { soul: `v${index}`, expectedRevision: soulRevision(bot), requestId: `write-${String(index).padStart(4, "0")}` });
+    }
+    expect(store.soulWriteReceipt(bot.id, "write-0000")).toBeNull();
+    expect(store.soulWriteReceipt(bot.id, "write-0001")).toMatchObject({ state: "applied" });
+    expect(bot.soulWrites).toHaveLength(SOUL_WRITE_RECEIPTS);
   });
 
   it("gives a teammate a restricted Chief's reviewed setup creates the Chief's own audience", () => {

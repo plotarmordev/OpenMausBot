@@ -101,6 +101,8 @@ export interface AcpSupport {
   effortLevels?: readonly EffortLevel[];
   /** Discover and select opaque model variants through ACP config options. */
   modelVariants?: boolean;
+  /** Route canonical effort through the agent's advertised thought config, never CLI flags. */
+  effortViaVariants?: boolean;
   /** Default CLI binary name if the instance config doesn't override it. */
   defaultCli: string;
   /** Optional live model catalog; a failed lookup keeps the last usable one. `config` lets a
@@ -1171,7 +1173,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         }) : null;
         const asks = new Map<string, AcpAskFinish>();
         let reportedModel = turn.model;
-        let variant = turn.variant;
+        let variant = turn.variant ?? (support.effortViaVariants ? turn.effort : undefined);
         let staleProcess = false;
       // Still set if configuring throws: the pooled session may keep an earlier turn's looser mode.
         let approvalUnconfirmed = false;
@@ -1182,7 +1184,6 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
           report: (model, variants) => emit({ ...base(threadId, turnId), type: "session.model-variants", model, variants }),
         });
         const receiveModelVariants = (result: any, replace = false) => modelControls.receive(result, replace);
-        const requestedVariantOption = () => modelControls.variant(variant);
 
         const flushAssistantText = () => {
           const raw = state.text;
@@ -1363,12 +1364,18 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
                 ...base(threadId, turnId),
                 type: "session.started",
                 sessionId,
-                model: selectedModel ?? init?._meta?.modelState?.currentModelId ?? cliTurn.model ?? null,
+                model: support.effortViaVariants
+                  ? modelControls.modelOf(session.sessionConfigResult)
+                  : selectedModel ?? init?._meta?.modelState?.currentModelId ?? cliTurn.model ?? null,
+                ...(support.effortViaVariants ? modelControls.nativeEffortReceipt() : {}),
                 ...(rebuiltFromReplay ? { rebuilt: true } : {}),
               });
             };
 
             try {
+              if (support.effortViaVariants && turn.effort !== undefined && turn.variant !== undefined && turn.effort !== turn.variant) {
+                throw new Error(`${support.displayName} effort and variant must select the same value`);
+              }
               if (support.selectModel) {
                 const { configId } = support.selectModel;
                 selectedModel = modelControls.modelOf(session.sessionConfigResult);
@@ -1437,16 +1444,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
                 if (!selectedModel && cliTurn.model) selectedModel = cliTurn.model;
               }
               if (variant !== undefined) {
-                const option = requestedVariantOption();
-                await request(
-                  "session/set_config_option",
-                  { sessionId, configId: option.configId, value: variant },
-                  SESSION_CONFIG_TIMEOUT,
-                  receiveModelVariants,
-                );
-                if (requestedVariantOption().currentValue !== variant) {
-                  throw new Error(`${support.displayName} did not apply variant ${variant}`);
-                }
+                await modelControls.selectVariant(request, sessionId, variant, SESSION_CONFIG_TIMEOUT);
               }
             } catch (error) {
               // session.started is the only place the resume cursor is recorded.
@@ -1480,12 +1478,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             const imageBlocks = support.images === true && runtimeAcceptsImages
               ? await readAcpImageBlocks(turn.images ?? [])
               : [];
-            if (support.modelVariants && cliTurn.model && !modelControls.usesAgentDefault() && modelControls.modelOf(session.sessionConfigResult) !== cliTurn.model) {
-              throw new Error(`${support.displayName} changed model before the prompt`);
-            }
-            if (variant !== undefined && requestedVariantOption().currentValue !== variant) {
-              throw new Error(`${support.displayName} changed variant before the prompt`);
-            }
+            modelControls.confirmBeforePrompt(variant);
             if (state.settled || state.stopped || session.closing) throw new Error("turn stopped");
             state.promptSent = true;
             acknowledge();

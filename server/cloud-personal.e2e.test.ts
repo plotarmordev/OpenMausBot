@@ -23,6 +23,7 @@ let child: ChildProcess | undefined;
 let cloud = false;
 /** From the first (self-hosted) run: a device with full access, a chat-only one, and what each opened. */
 const before = { device: "", deviceId: "", chatOnly: "", bot: { id: "", threadId: "" }, roomBot: { id: "", threadId: "" }, conversation: "", theirs: "",
+  budgetBot: { id: "", threadId: "" }, budgetGuest: "",
   lead: { id: "", threadId: "" }, member: { id: "", threadId: "" }, room: "", launch: "", plan: "", friends: "", routine: "", approved: "", full: { id: "", threadId: "" }, fullShared: "", stale: "", moved: "", fullOld: "", fullApproved: "" };
 const project = () => join(home, "projects", "site");
 
@@ -147,6 +148,15 @@ await import(${JSON.stringify(pathToFileURL(join(SERVER_DIR, "testing", "fake-cl
   await api("POST", `/api/bots/${before.roomBot.id}/interrupt`, { token: before.device, body: { threadId: before.theirs } });
   await idle(before.roomBot, before.device);
   expect((await api("GET", "/api/bots", { token: before.device })).body.bots.find((bot: any) => bot.id === before.roomBot.id).threadId).toBe(before.theirs);
+  before.budgetBot = await newBot("Proposal budget bot");
+  before.budgetGuest = (await api("POST", `/api/bots/${before.budgetBot.id}/tasks`, {
+    token: before.chatOnly, body: { title: "Guest proposal budget" },
+  })).body.task.threadId;
+  await turn(() => api("POST", `/api/bots/${before.budgetBot.id}/messages`, {
+    token: before.chatOnly, body: { text: "Preserve this guest conversation.", threadId: before.budgetGuest },
+  }));
+  await api("POST", `/api/bots/${before.budgetBot.id}/interrupt`, { token: before.device, body: { threadId: before.budgetGuest } });
+  await idle(before.budgetBot, before.device);
   before.lead = await newBot("Lead");
   before.member = await newBot("Member");
   before.room = (await api("POST", "/api/groups", { token: before.device, body: { memberIds: [before.lead.id, before.member.id], name: "Team", setup: { bulletin: "", defaultResponder: { kind: "everyone" } } } })).body.group.id;
@@ -783,4 +793,100 @@ it("Undo on a Cloud home keeps who a routine is: back to the owner's only if it 
   expect(authors().writers[created.routineRequest.resultId]).toBeUndefined();
   expect(authors().routines[created.routineRequest.resultId]).toBeUndefined();
   for (const id of [ownersRoutine, nobodys]) await api("DELETE", `/api/routines/${id}`, { token: owner });
+}, 120_000);
+
+it("shares the pending proposal budget with thread models, restores it after settlement, and does not budget immediate applies", async () => {
+  const owner = await adminPairing();
+  await settleAll(owner);
+  const botId = before.budgetBot.id;
+  const threadId = before.budgetGuest;
+  const botNow = async () => (await api("GET", "/api/bots", { token: owner })).body.bots.find((bot: any) => bot.id === botId);
+  const originalBot = await botNow();
+  const cards = async (id: string) => ((await api("GET", `/api/threads/${id}/messages`, { token: owner })).body.messages as any[])
+    .map((message) => message.card).filter(Boolean);
+  const pending = async () => (await cards(threadId)).filter((card) =>
+    (card.profileRequest || card.modelRequest || card.threadModelRequest || card.teamSetupRequest || card.routineRequest) &&
+    !card.answered && !card.dismissed && !card.expired);
+  const cancel = async (requestId: string) => expect((await api("POST", `/api/threads/${threadId}/respond`, {
+    token: owner, body: { requestId, behavior: "deny" },
+  })).status).toBe(200);
+  const begin = async (id: string) => {
+    const text = `Exercise model proposal budget in ${id}`;
+    await turn(async () => expect((await api("POST", `/api/bots/${botId}/messages`, {
+      token: owner, body: { text, threadId: id },
+    })).status).toBe(202));
+    const dump = JSON.parse(readFileSync(held(), "utf8"));
+    expect(JSON.stringify(dump.prompt)).toContain(text);
+    const env = dump.mcpConfig.mcpServers.agents.env;
+    expect(env.OMB_BOT_ID).toBe(botId);
+    expect(env.OMB_THREAD_ID).toBe(id);
+    return env.OMB_COMMS_TOKEN as string;
+  };
+  const internal = async (token: string, route: string, body: Record<string, unknown>) => {
+    const response = await fetch(`${base}/api/internal/${route}`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    return { status: response.status, body: await response.json() };
+  };
+  const selection = { instanceId: "held", model: "claude-sonnet-5", effort: "high" };
+  try {
+    expect((await api("PATCH", `/api/bots/${botId}`, { token: owner, body: { chiefOfStaff: true } })).status).toBe(200);
+    for (const card of await pending()) await cancel(card.requestId);
+    const token = await begin(threadId);
+    const propose = (route: string, body: Record<string, unknown>) => internal(token, route, {
+      fromBotId: botId, fromThreadId: threadId, reason: "Exercise shared proposal capacity", ...body,
+    });
+    const model = () => propose("thread-model-requests", { targetThreadId: threadId, modelSelection: selection });
+    const profile = () => propose("profile-requests", { changes: { title: "Pending budget title" } });
+    expect(await profile()).toMatchObject({ status: 201, body: { state: "pending" } });
+    for (let index = 0; index < 7; index++) {
+      expect(await model()).toMatchObject({ status: 201, body: { state: "pending" } });
+    }
+    const full = await pending();
+    expect(full).toHaveLength(8);
+    expect(full.filter((card) => card.threadModelRequest)).toHaveLength(7);
+    expect(full.filter((card) => card.profileRequest)).toHaveLength(1);
+    const unchanged = await botNow();
+    for (const submit of [model, profile]) {
+      expect(await submit()).toMatchObject({ status: 429, body: { error: "confirm or cancel an existing proposal first" } });
+      expect(await pending()).toEqual(full);
+      const current = await botNow();
+      expect(current.modelSelection).toEqual(unchanged.modelSelection);
+      expect(current.tasks.find((task: any) => task.threadId === threadId).modelSelection)
+        .toEqual(unchanged.tasks.find((task: any) => task.threadId === threadId).modelSelection);
+    }
+    await cancel(full.find((card) => card.threadModelRequest).requestId);
+    expect(await pending()).toHaveLength(7);
+    expect(await profile()).toMatchObject({ status: 201, body: { state: "pending" } });
+    expect(await pending()).toHaveLength(8);
+    expect(await model()).toMatchObject({ status: 429 });
+    const profileCard = (await pending()).find((card) => card.profileRequest);
+    await cancel(profileCard.requestId);
+    expect(await model()).toMatchObject({ status: 201, body: { state: "pending" } });
+    expect(await pending()).toHaveLength(8);
+    await settleAll(owner);
+    for (const approvalMode of ["ask", "full"]) {
+      const created = await api("POST", `/api/bots/${botId}/tasks`, { token: owner, body: { title: `Immediate ${approvalMode}` } });
+      expect(created.status).toBe(201);
+      const id = created.body.task.threadId;
+      expect((await api("PATCH", `/api/bots/${botId}/tasks/${id}`, { token: owner, body: { approvalMode } })).status).toBe(200);
+      const sourceToken = await begin(id);
+      for (let index = 0; index < 9; index++) {
+        const modelSelection = { ...selection, effort: index % 2 === 0 ? "high" : "low" };
+        expect(await internal(sourceToken, "thread-model-requests", {
+          fromBotId: botId, fromThreadId: id, targetThreadId: id, modelSelection, reason: "Apply without pending capacity",
+        })).toMatchObject({ status: 201, body: { state: "applied", receipt: { taskOverride: modelSelection, dispatched: false } } });
+      }
+      const applied = (await cards(id)).filter((card) => card.threadModelRequest);
+      expect(applied).toHaveLength(9);
+      expect(applied.every((card) => card.autoApplied && card.answered === "allow")).toBe(true);
+      await settleAll(owner);
+    }
+  } finally {
+    await settleAll(owner);
+    for (const card of await pending()) await cancel(card.requestId);
+    await api("PATCH", `/api/bots/${botId}`, { token: owner, body: { chiefOfStaff: originalBot.chiefOfStaff ?? false } });
+  }
 }, 120_000);

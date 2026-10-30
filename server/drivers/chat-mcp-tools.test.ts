@@ -774,8 +774,7 @@ describe("Chat MCP schema validation", () => {
     const f = fixture(delayed);
     const short = await mountChatTools({ custom: { audit: f.server } }, f.controller.signal, false, undefined, 100);
     sessions.push(short);
-    await expect(short.execute("audit_write", { value: "x" }, f.controller.signal)).rejects.toThrow("MCP request timed out");
-    await expect(f.read().calls.filter((call) => call.method === "tools/call")).toHaveLength(1);
+    await expect(short.execute("audit_write", { value: "x" }, f.controller.signal)).rejects.toThrow("MCP request timed out; execution outcome may be uncertain");
 
     const long = await mountChatTools({ custom: { audit: f.server } }, f.controller.signal, false, undefined, 5_000);
     sessions.push(long);

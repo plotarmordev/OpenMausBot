@@ -24,3 +24,10 @@ export function profileRevision(
     .update(JSON.stringify({ ...profileSnapshot(bot), lastProfileRequestId: bot.lastProfileRequestId ?? "" }), "utf8")
     .digest("hex");
 }
+
+/** Unique per soul write, so a later write of the same bytes still moves it. `legacy` marks a soul last written before
+ * write ids existed; its hash part still moves when the bytes do. */
+export function soulRevision(bot: { soul?: string; soulWriteId?: string }): string {
+  const hash = createHash("sha256").update(bot.soul ?? "", "utf8").digest("hex");
+  return `${bot.soulWriteId ?? "legacy"}.${hash}`;
+}

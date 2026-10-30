@@ -8,6 +8,8 @@ import { HELPER_TOOL_DEFINITIONS } from "./agents-helper-tools.ts";
 import { MAUSBOT_TOOL_DEFINITIONS } from "./agents-mausbot-tools.ts";
 import { PERSON_TOOL_DEFINITIONS, PERSON_TOOL_NAMES } from "./agents-person-tools.ts";
 import { RESEARCH_TOOL_DEFINITIONS, RESEARCH_TOOL_NAMES } from "./agents-research-tools.ts";
+import { APPLIES_OUTCOME } from "./agents-catalog-copy.ts";
+import { MODEL_TOOL_DEFINITIONS } from "./agents-model-tools.ts";
 import type { CatalogProfile } from "./agents-catalog-profile.ts";
 export { catalogProfileFromEnv, type CatalogProfile } from "./agents-catalog-profile.ts";
 
@@ -157,7 +159,6 @@ const TRIGGER_FIELDS_SCHEMA = {
 } as const;
 
 const CHIEF_PROFILE_TARGET = " A Chief of Staff may pass for_bot_id (from list_bots) for a requested change to another bot in its section.";
-const APPLIES_OUTCOME = " Read the result: it applies immediately at every access level, and the person sees it with an Undo where possible. If applied, continue the work without another confirmation. Only a pending result (a Cloud conversation its owner did not drive) means ending the turn to wait for the owner. Never claim success without an applied result; report failures honestly. This does not elevate another bot's execution permissions.";
 
 const START_THREAD_SELF_ID = "Leave out, or use your own bot ID. For teammates use coordinate_bots.";
 
@@ -547,12 +548,12 @@ const TOOL_DEFINITIONS = [
   {
     name: "retry_thread",
     description:
-      "Chief of Staff only. Resume a teammate's thread whose last run failed, stalled or could not start — the one an incident report named — exactly where it stopped, keeping its conversation and files. The teammate gets a line saying you asked for the retry and why. Use it when the cause looks transient (a crash, a timeout, a busy service). Use coordinate_bots with a corrected brief instead when the request itself needs to change, and tell the person instead when only they can fix the cause (a sign-in, a missing credential, an unanswered question). Never retry the same thread more than twice.",
+      "Chief only. Explicitly resume your own or a managed teammate's failed task in place, preserving its conversation and files. Select a replacement model first with set_thread_model and inspect with get_thread_model; retry uses the saved selection and does not silently substitute an unavailable task engine. Changing a model alone never resumes work. Use coordinate_bots for a corrected brief; tell the person when a credential or decision blocks progress. Never retry the same thread more than twice.",
     inputSchema: {
       type: "object",
       additionalProperties: false,
       properties: {
-        bot_id: { type: "string", description: "The teammate's id, from the incident report or list_bots." },
+        bot_id: { type: "string", description: "The owning bot's id, including your own; from list_threads or list_bots." },
         thread_id: { type: "string", description: "The failed thread's id, from the incident report." },
         note: { type: "string", description: "Optional: one sentence for the teammate about what to watch for this time." },
       },
@@ -729,35 +730,7 @@ const TOOL_DEFINITIONS = [
       required: ["reason"],
     },
   },
-  {
-    name: "propose_model",
-    description:
-      "Submit a user-requested switch of this bot's default engine and model. Use the exact instance and model ids the person named, or for a Chief the ids from the team-setup catalog. The result warns about capabilities the switch gains or loses; existing threads keep their current models." + APPLIES_OUTCOME,
-    inputSchema: {
-      type: "object",
-      additionalProperties: false,
-      properties: {
-        model_selection: {
-          type: "object",
-          additionalProperties: false,
-          properties: {
-            instanceId: { type: "string", minLength: 1, description: "Engine instance id, for example codex or claude." },
-            model: { type: "string", minLength: 1, description: "Exact model id on that instance." },
-            effort: { type: "string", description: "Optional effort level the instance offers; omit for the engine default." },
-            variant: { type: "string", description: "Optional explicit model variant; choose this or effort, not both." },
-          },
-          required: ["instanceId", "model"],
-          description: "The new default selection.",
-        },
-        reason: { type: "string", minLength: 1, maxLength: 500, description: "One sentence the user will see explaining why." },
-        for_bot_id: {
-          type: "string",
-          description: "Chief of Staff only: the id of another bot in your section whose default model this changes. Omit to change your own.",
-        },
-      },
-      required: ["model_selection", "reason"],
-    },
-  },
+  ...MODEL_TOOL_DEFINITIONS,
   {
     name: "propose_team_memory",
     description:
@@ -911,7 +884,7 @@ const SKILL_TOOL_NAMES = new Set(["skills_list", "skill_manage"]);
 export const SHARED_COMPUTER_TOOL_NAMES = new Set(["list_shared_computers", "shared_computer"]);
 const VOICE_TOOL_NAMES = new Set(["send_voice_note"]);
 const CHIEF_ONLY_TOOL_NAMES = new Set([
-  "create_bot", "list_team_setup", "list_team_library", "propose_team_setup", "propose_bot_deletion", "create_room", "manage_room", "retry_thread",
+  "create_bot", "list_team_setup", "list_team_library", "propose_team_setup", "propose_bot_deletion", "create_room", "manage_room", "retry_thread", "set_thread_model", "get_thread_model",
 ]);
 const CHIEF_TARGET_TOOL_NAMES = new Set(["propose_profile", "propose_model"]);
 const WATCHER_TOOL_NAMES = new Set(["create_options_card"]);

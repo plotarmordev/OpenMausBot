@@ -13065,6 +13065,8 @@ describe("bot memory API", () => {
       expect(clean.body).toEqual({
         soul: "Be brief.",
         revision: expect.any(String),
+        soulRevision: expect.stringMatching(/^[\w-]+\.[0-9a-f]{64}$/),
+        readAt: expect.any(Number),
         bytes: 9,
         limit: 24_000,
         file: soulFileOf(bot.id),
