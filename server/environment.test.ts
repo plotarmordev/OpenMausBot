@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { environmentDescriptor, loadEnvironmentId, serverVersion } from "./environment.ts";
+import { ENVIRONMENT_HEADER, environmentAttestation, environmentDescriptor, loadEnvironmentId, serverVersion } from "./environment.ts";
 
 const dirs: string[] = [];
 
@@ -94,6 +94,24 @@ describe("environment identity", () => {
     expect(readFileSync(file, "utf8")).toBe("garbage\n");
   });
 
+  it("keeps an inherited uppercase id byte for byte and attests it as written", () => {
+    const dir = mkdtempSync(join(tmpdir(), "omb-env-"));
+    dirs.push(dir);
+    const file = join(dir, "environment-id");
+    const inherited = "5E0C9A1D-7B2F-4C3E-8D4A-1F2E3D4C5B6A";
+    writeFileSync(file, `${inherited}\n`);
+    const id = loadEnvironmentId(dir);
+    expect(id).toBe(inherited);
+    expect(loadEnvironmentId(dir)).toBe(inherited);
+    expect(readFileSync(file, "utf8")).toBe(`${inherited}\n`);
+    expect(environmentDescriptor({ environmentId: id, desktopManaged: false }).environmentId).toBe(inherited);
+    const attest = environmentAttestation(id);
+    expect(attest("/api/bots")).toEqual([[ENVIRONMENT_HEADER, inherited]]);
+    expect(attest("/.well-known/openmausbot/environment")).toEqual([[ENVIRONMENT_HEADER, inherited]]);
+    expect(attest("/api")).toEqual([]);
+    expect(attest("/.well-known/other")).toEqual([]);
+  });
+
   it("rejects UUID-shaped garbage and an unreadable identity path", () => {
     const malformedDir = mkdtempSync(join(tmpdir(), "omb-env-"));
     dirs.push(malformedDir);
@@ -129,15 +147,23 @@ describe("environment identity", () => {
     expect(environmentDescriptor({ environmentId: "abc", desktopManaged: true, sharedComputers: false }).capabilities)
       .not.toHaveProperty("sharedComputers");
     expect(environmentDescriptor({ environmentId: "abc", desktopManaged: true, sharedComputers: true }).capabilities)
-      .toEqual({ remoteSessions: true, sharedComputers: true, lendingDetails: true, selfUpdate: "desktop-managed", emailSignIn: false, jobs: true });
+      .toEqual({ remoteSessions: true, sharedComputers: true, lendingDetails: true, commandTimeouts: true, selfUpdate: "desktop-managed", emailSignIn: false, jobs: true });
     expect(environmentDescriptor({ environmentId: "abc", desktopManaged: false, cloudHome: true }).capabilities)
       .toEqual({ remoteSessions: true, cloudHome: true, move: 1, selfUpdate: "operator", emailSignIn: false, jobs: true });
     expect(environmentDescriptor({ environmentId: "abc", desktopManaged: false, cloudHome: false }).capabilities).not.toHaveProperty("cloudHome");
     expect(environmentDescriptor({ environmentId: "abc", desktopManaged: true }).capabilities, "only a Cloud home takes a move").not.toHaveProperty("move");
     // A lent computer may lend its internet connection only to a Cloud home that lends at all.
     expect(environmentDescriptor({ environmentId: "abc", desktopManaged: false, cloudHome: true, sharedComputers: true }).capabilities)
-      .toEqual({ remoteSessions: true, sharedComputers: true, lendingDetails: true, deviceLink: true, cloudHome: true, move: 1, selfUpdate: "operator", emailSignIn: false, jobs: true });
+      .toEqual({ remoteSessions: true, sharedComputers: true, lendingDetails: true, commandTimeouts: true, deviceLink: true, myChromeLink: true, cloudHome: true, move: 1, selfUpdate: "operator", emailSignIn: false, jobs: true });
     expect(environmentDescriptor({ environmentId: "abc", desktopManaged: true, sharedComputers: true }).capabilities).not.toHaveProperty("deviceLink");
+  });
+
+  it("advertises myChromeLink only on a personal Cloud home with lending", () => {
+    const base = { environmentId: "abc", desktopManaged: false };
+    expect(environmentDescriptor({ ...base, sharedComputers: true, cloudHome: true }).capabilities.myChromeLink).toBe(true);
+    expect(environmentDescriptor({ ...base, sharedComputers: true, cloudHome: true, cloudTeam: true }).capabilities).not.toHaveProperty("myChromeLink");
+    expect(environmentDescriptor({ ...base, sharedComputers: true, cloudHome: false }).capabilities).not.toHaveProperty("myChromeLink");
+    expect(environmentDescriptor({ ...base, sharedComputers: false, cloudHome: true }).capabilities).not.toHaveProperty("myChromeLink");
   });
 
   it("falls back to the checkout's package.json version, then to unknown", () => {

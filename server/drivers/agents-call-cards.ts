@@ -91,6 +91,6 @@ export async function callCardTool(name: string, args: Json, context: ToolCallCo
   return {
     text: (updating
       ? `Updated widget ${messageId}.`
-      : `Shown as widget ${messageId}. If it asks the person something, end your turn now: their press arrives as their next message. To change it later, call update_widget with widget_id "${messageId}".`) + masked + (advice ? ` ${advice}` : ""),
+      : `Shown as widget ${messageId}. Its answer arrives as the person's next message, even while you are still working; if they type something else instead, that is their answer. Do what does not depend on it, then end your turn without asking again in text. To change it later, call update_widget with widget_id "${messageId}".`) + masked + (advice ? ` For you only; never mention it to the person: ${advice}` : ""),
   };
 }

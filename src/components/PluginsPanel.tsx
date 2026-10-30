@@ -32,6 +32,7 @@ import { HighLevelCard } from "./HighLevelCard";
 import { X_CARD_SEARCH, XCard } from "./XCard";
 import { mergeCompleteConnectorStatus, mergeCurrentConnectorStatus, onlyLatestConnectorResponses } from "@/lib/connector-status-merge";
 import { openBotSettings } from "./bot-panel/panel-link";
+import { openKeySettings } from "./keys/key-focus";
 import { ServiceIcon, type ToolkitCard } from "./ServiceIcon";
 export { ServiceIcon, type ToolkitCard } from "./ServiceIcon";
 
@@ -504,7 +505,7 @@ export function PluginsPanel() {
         aria-modal="true"
         aria-labelledby="plugins-title"
         tabIndex={-1}
-        className="glass-surface glass-popup animate-pop-in relative flex max-w-[780px] flex-col overflow-hidden rounded-[24px]"
+        className="glass-surface glass-popup animate-pop-in relative flex max-w-[780px] flex-col overflow-hidden rounded-2xl"
       >
         <header className="flex flex-col gap-4 px-5 pb-4 pt-5 sm:px-7 sm:pt-6">
           <div>
@@ -602,7 +603,6 @@ export function PluginsPanel() {
             ))}
             {moreCategories.length > 0 && (
               <SidebarPopoverMenu
-                placement="below"
                 ariaLabel={t("apps.moreCategories")}
                 items={moreCategories.map((name) => ({ key: name, label: appCategoryLabel(name), active: category === name, onSelect: () => pickCategory(name) }))}
                 renderTrigger={({ open }) => (
@@ -618,7 +618,7 @@ export function PluginsPanel() {
 
         <div className="min-h-0 flex-1 overflow-y-auto px-5 pb-7 sm:px-7">
           {stale && (
-            <div className="mb-3 flex items-start gap-2 rounded-xl bg-warning/10 px-3 py-2 text-[12.5px] text-warning">
+            <div className="mb-3 flex items-start gap-2 rounded-xl bg-warning/10 px-3 py-2 text-[13px] text-warning">
               <TriangleAlert size={14} className="mt-px shrink-0" />
               <span>
                 {t("connectors.stale")}
@@ -639,17 +639,14 @@ export function PluginsPanel() {
                   setupNotice.tone === "info" && "text-ink",
                   remoteClient && "hidden",
                 )}
-                onClick={() => {
-                  close();
-                  dispatch({ type: "toggleAppSettings", open: true, section: "connections" });
-                }}
+                onClick={() => { close(); dispatch(openKeySettings("composio")); }}
               >
                 {t("connectors.openSettings")}
               </button>
             </div>
           )}
           {botsWithoutApps.length > 0 && (
-            <div className="mb-3 rounded-xl bg-control/50 px-4 py-3 text-[12.5px] leading-relaxed text-ink-secondary">
+            <div className="mb-3 rounded-xl bg-control/50 px-4 py-3 text-[13px] leading-relaxed text-ink-secondary">
               <span className="font-medium text-ink">{t("connectors.perBot.title")}</span>{" "}
               {t("connectors.perBot.body")}
               <div className="mt-2 flex flex-wrap gap-2">
@@ -742,7 +739,7 @@ export function PluginsPanel() {
                         <div className="text-[14px] font-medium text-ink">
                           {filter === "connected" ? connectedEmptyCopy.title : t("connectors.noAppsFound")}
                         </div>
-                        <div className="mt-1 text-[12.5px] text-ink-secondary">
+                        <div className="mt-1 text-[13px] text-ink-secondary">
                           {filter === "connected" ? connectedEmptyCopy.description : t("connectors.tryDifferentSearch")}
                         </div>
                         {filter === "connected" && inventoryPhase === "error" && (
@@ -844,7 +841,7 @@ export function PluginsPanel() {
                 </span>
               )}
             </div>
-            <div className="truncate text-[12.5px] leading-[18px] text-ink-secondary" title={description}>
+            <div className="truncate text-[13px] leading-[18px] text-ink-secondary" title={description}>
               {description}
             </div>
           </div>
@@ -957,7 +954,7 @@ export function PluginsPanel() {
               </span>
             ));
             return (
-              <div className="mt-1.5 text-[11.5px] leading-relaxed text-ink-secondary">
+              <div className="mt-1.5 text-[12px] leading-relaxed text-ink-secondary">
                 <span>{t("connectors.grants.limited", { count: limited.length })}</span>{" "}
                 {names}
                 {limited.length > 4 && <span>{t("connectors.grants.more", { count: limited.length - 4 })}</span>}
@@ -986,7 +983,7 @@ export function PluginsPanel() {
                 aria-label={accounts.length > 0
                   ? t("connectors.aliasAriaAnother", { service: card.label })
                   : t("connectors.aliasAriaNew", { service: card.label })}
-                className="h-8 min-w-0 flex-1 rounded-full bg-inset px-3 text-[12.5px] text-ink placeholder:text-ink-secondary focus:outline-none focus:ring-1 focus:ring-accent"
+                className="h-8 min-w-0 flex-1 rounded-full bg-inset px-3 text-[13px] text-ink placeholder:text-ink-secondary focus:outline-none focus:ring-1 focus:ring-accent"
               />
               <button
                 type="submit"

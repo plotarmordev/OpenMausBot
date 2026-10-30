@@ -81,12 +81,20 @@ describe("OptionCard", () => {
     createElement(StoreProvider, null, createElement(OptionCard, { botId: "atlas", message: msg({ id: "ask", kind: "options", card }) })),
   );
 
-  it("waits in the shared ask card with its title in the accent ink", () => {
+  it("waits in the shared ask card, its title then its question, with the choices as lettered rows in Simple mode", () => {
     const markup = render({ title: "Pick a region", subtitle: "Where should the bucket live?", options: ["us-east-1", "eu-west-1"], requestId: "r1" });
     expect(markup).toContain('data-ask-card="pending"');
-    expect(markup).toContain("text-accent-text");
     expect(markup).toContain("Pick a region");
+    expect(markup).toContain("Where should the bucket live?");
+    expect(markup).toMatch(/size-6[^"]*rounded-\[7px\][^"]*">B</);
     expect(markup).toContain("eu-west-1");
+  });
+
+  it("makes a bot's own question the title in Simple mode, without the generic heading", () => {
+    const markup = render({ title: "Your bot has a question", subtitle: "Which region should the bucket use?", options: ["us-east-1", "eu-west-1"], requestId: "r1", requestType: "question" });
+    expect(markup).not.toContain("Your bot has a question");
+    expect(markup).toMatch(/text-\[16px\] font-semibold leading-\[22px\] text-ink-secondary"><bdi dir="auto">Which region should the bucket use\?</);
+    expect(markup).toContain('placeholder="Something else…"');
   });
 
   it("offers a closed set of choices with no free-text box", () => {

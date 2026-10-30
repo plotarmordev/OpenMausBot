@@ -115,11 +115,11 @@ describe("the browser panel's connection", () => {
     expect(host.querySelector("[data-browser-transport]")!.getAttribute("data-browser-transport")).toBe("stream");
   });
 
-  it("uses the v1 live view on agent-browser, and when the stream is refused before it opens", async () => {
+  it("uses the v1 live view on agent-browser, sized to the panel, and when the stream is refused before it opens", async () => {
     fixture.state.config.browserEngine = { kind: "engine", engine: "agent-browser" };
     await render();
     expect(FakeSocket.instances).toHaveLength(0);
-    expect(FixtureEventSource.instances[0]!.url).toBe("/api/bots/pepper/browser/live");
+    expect(FixtureEventSource.instances[0]!.url).toBe("/api/bots/pepper/browser/live?width=1600&height=1000");
     act(() => root.unmount());
     root = createRoot(host);
     fixture.state.config.browserEngine = { kind: "engine", engine: "chrome" };
@@ -171,6 +171,39 @@ describe("the browser panel's connection", () => {
   });
 });
 
+describe("while nobody can see the panel", () => {
+  it("stops the stream while the page is hidden and reopens it when the page is back", async () => {
+    const visibility = vi.spyOn(document, "visibilityState", "get").mockReturnValue("visible");
+    const socket = await streaming("unclaimed");
+    await act(async () => {
+      visibility.mockReturnValue("hidden");
+      document.dispatchEvent(new Event("visibilitychange"));
+    });
+    await flush();
+    expect(socket.readyState).toBe(3);
+    expect(FakeSocket.instances).toEqual([socket]);
+    await act(async () => {
+      visibility.mockReturnValue("visible");
+      document.dispatchEvent(new Event("visibilitychange"));
+    });
+    await flush();
+    expect(FakeSocket.instances).toHaveLength(2);
+    expect(FakeSocket.instances[1]).not.toBe(socket);
+  });
+
+  it("keeps streaming for the viewer the page left holding the browser", async () => {
+    const visibility = vi.spyOn(document, "visibilityState", "get").mockReturnValue("visible");
+    const socket = await streaming("you");
+    await act(async () => {
+      visibility.mockReturnValue("hidden");
+      document.dispatchEvent(new Event("visibilitychange"));
+    });
+    await flush();
+    expect(FakeSocket.instances).toEqual([socket]);
+    expect(socket.readyState).not.toBe(3);
+  });
+});
+
 describe("a v1 live view whose stream dropped", () => {
   const live = () => FixtureEventSource.instances.at(-1)!;
   const emit = (name: string, data: unknown) => act(async () => live().emit(name, data));
@@ -183,7 +216,7 @@ describe("a v1 live view whose stream dropped", () => {
     expect(host.textContent).toContain("Browser disconnected");
     await act(async () => button("Reconnect").click());
     await flush();
-    expect(live().url).toBe("/api/bots/pepper/browser/live?resume=old-viewer");
+    expect(live().url).toBe("/api/bots/pepper/browser/live?resume=old-viewer&width=1600&height=1000");
     await emit("ready", { viewerId: "new-viewer" });
     expect(host.textContent).not.toContain("Browser disconnected");
   });
@@ -218,7 +251,7 @@ describe("a v1 live view whose stream dropped", () => {
     expect(host.textContent).toContain("Browser disconnected");
     await act(async () => { window.dispatchEvent(new Event("focus")); });
     expect(FixtureEventSource.instances).toHaveLength(7);
-    expect(live().url).toBe("/api/bots/pepper/browser/live?resume=old-viewer");
+    expect(live().url).toBe("/api/bots/pepper/browser/live?resume=old-viewer&width=1600&height=1000");
     await emit("ready", { viewerId: "back-viewer" });
     expect(host.textContent).not.toContain("Browser disconnected");
   });

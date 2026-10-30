@@ -43,7 +43,7 @@ jobs:
       # ci-scope reads whether the commit before a push got its own green run
       actions: read
     outputs:
-      runtime: ${{ steps.scope.outputs.runtime }}
+      jobs: ${{ steps.scope.outputs.jobs }}
       vitest_os: ${{ steps.scope.outputs.vitest_os }}
       vitest_matrix: ${{ steps.scope.outputs.vitest_matrix }}
     steps:
@@ -68,25 +68,32 @@ jobs:
         run: pnpm exec vitest run scripts/ci-scope.test.ts scripts/ci-workflow.test.ts scripts/testing/verification-docs.test.ts
       - name: Validate locale catalogs
         run: pnpm i18n:check
-      - run: pnpm typecheck
       - run: pnpm lint
-      - run: pnpm check:electron
+      # A pull request that changes only docs, tests under scripts/ or the
+      # control plane cannot change what these three check.
+      - if: steps.scope.outputs.build == 'true'
+        run: pnpm typecheck
+      - if: steps.scope.outputs.build == 'true'
+        run: pnpm check:electron
       - name: production UI build
+        if: steps.scope.outputs.build == 'true'
         run: pnpm exec vite build
 
   vitest:
     # Admit the expensive runner fan-out only after the quick checks pass.
     # A failing preflight still fails the required gates; nothing is waived.
     needs: static
-    if: needs.static.outputs.runtime == 'true'
+    if: contains(needs.static.outputs.jobs, '"vitest"')
     # scripts/ci-scope.mjs picks the platforms and their shards: PRs run Linux
     # and Windows (the account runs only five macOS jobs at a time); main
-    # pushes, merge groups and manual runs add macOS. Linux runs every file;
+    # pushes, merge groups and manual runs add macOS. A pull request that
+    # cannot affect a platform's results leaves it out, and one that changes
+    # only translations runs the locale tests alone. Linux runs every file;
     # Windows and macOS run every file but the e2e files that test only OMB's
     # own logic (OMB_VITEST_E2E=host, scripts/testing/host-e2e.ts). The split
     # is deterministic, so a failure names the same shard on every run, and
     # the same --shard and OMB_VITEST_E2E reproduce it locally.
-    name: vitest (${{ matrix.os }}, shard ${{ matrix.shard }}/${{ matrix.shards }})
+    name: vitest (${{ matrix.os }}, ${{ matrix.part }})
     strategy:
       fail-fast: false
       matrix: ${{ fromJSON(needs.static.outputs.vitest_matrix) }}
@@ -118,7 +125,8 @@ jobs:
           # that needed a retry here (the runner context is step-level only).
           OMB_VITEST_RETRY_LOG: ${{ runner.temp }}/vitest-retries.jsonl
           OMB_VITEST_E2E: ${{ matrix.e2e }}
-        run: pnpm exec vitest run --shard=${{ matrix.shard }}/${{ matrix.shards }} --reporter=default --reporter=github-actions
+          OMB_VITEST_SUBSET: ${{ matrix.files }}
+        run: pnpm exec vitest run ${{ matrix.files }} --shard=${{ matrix.shard }}/${{ matrix.shards }} --reporter=default --reporter=github-actions
       - name: Report flaky tests that needed a retry
         # Known flakes (scripts/testing/ci-retry-list.json) get two retries in
         # CI. A pass after a retry is still listed in the job summary, so the
@@ -128,7 +136,7 @@ jobs:
           OMB_VITEST_RETRY_LOG: ${{ runner.temp }}/vitest-retries.jsonl
         run: node scripts/testing/ci-retry-summary.mjs
       - name: Broker and Electron unit tests
-        if: matrix.shard == 1
+        if: matrix.node_tests
         # About half a minute; node --test has no overall deadline, so a file
         # that never exits would otherwise hold the job to its cap.
         timeout-minutes: 5
@@ -136,7 +144,7 @@ jobs:
 
   behavior-evals:
     needs: static
-    if: needs.static.outputs.runtime == 'true'
+    if: contains(needs.static.outputs.jobs, '"behavior-evals"')
     # The offline behavior-eval tiers (#1503): the evals' own vitest gate
     # (redaction, trace, golden replay), the tier-1 scenario runner, and the
     # tier-2 golden replay through the same entrypoint developers use. Tier
@@ -183,7 +191,7 @@ jobs:
 
   packaged-server:
     needs: static
-    if: needs.static.outputs.runtime == 'true'
+    if: contains(needs.static.outputs.jobs, '"packaged-server"')
     # `pnpm build:server`, then the bundle is copied out of the repo and run
     # with no node_modules in reach: every bare import must be inlined. The
     # macOS copy runs inside the macOS smokes job, so it takes no extra
@@ -207,7 +215,7 @@ jobs:
 
   windows-cua:
     needs: static
-    if: needs.static.outputs.runtime == 'true'
+    if: contains(needs.static.outputs.jobs, '"windows-cua"')
     name: Windows CUA host smoke
     runs-on: windows-latest
     timeout-minutes: 10
@@ -225,7 +233,7 @@ jobs:
 
   electron-smokes:
     needs: static
-    if: needs.static.outputs.runtime == 'true'
+    if: contains(needs.static.outputs.jobs, '"electron-smokes"')
     # Real Electron utility processes against disposable homes and fake CLIs.
     # Never the live app. Each script prints its own evidence lines. Every
     # PR's macOS checks live in this one job: macOS runners are the scarce
@@ -278,10 +286,11 @@ jobs:
             const needs = JSON.parse(process.env.NEEDS);
             const rows = Object.entries(needs).map(([job, { result }]) => `${result.padEnd(9)} ${job}`);
             console.log(rows.join("\n"));
-            const runtime = needs.static.outputs.runtime;
-            if (runtime !== "true" && runtime !== "false") throw new Error("Missing CI selection");
+            let selected;
+            try { selected = JSON.parse(needs.static.outputs.jobs); } catch { selected = null; }
+            if (!Array.isArray(selected) || !selected.every((job) => typeof job === "string")) throw new Error("Missing CI selection");
             const bad = Object.entries(needs).filter(([job, { result }]) => {
-              const expected = job === "static" || runtime === "true" ? "success" : "skipped";
+              const expected = job === "static" || selected.includes(job) ? "success" : "skipped";
               return result !== expected;
             });
             if (bad.length) { console.error(`\n${bad.length} required job(s) did not pass: ${bad.map(([job]) => job).join(", ")}`); process.exit(1); }
@@ -289,7 +298,7 @@ jobs:
 
   cloudflared-linux-arm64:
     needs: static
-    if: needs.static.outputs.runtime == 'true'
+    if: contains(needs.static.outputs.jobs, '"cloudflared-linux-arm64"')
     name: cloudflared installer (Linux ARM64)
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 5
@@ -311,7 +320,7 @@ jobs:
 
   foss:
     needs: static
-    if: needs.static.outputs.runtime == 'true'
+    if: contains(needs.static.outputs.jobs, '"foss"')
     # LICENSING.md promises that deleting enterprise/ leaves a working
     # open-source edition. Prove it on runtime changes: typecheck, the edition
     # tests, and a boot that reports "oss" even with a key set.
@@ -344,7 +353,7 @@ jobs:
 
   control-plane:
     needs: static
-    if: needs.static.outputs.runtime == 'true'
+    if: contains(needs.static.outputs.jobs, '"control-plane"')
     name: control-plane check + workerd tests + dry run
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -398,9 +407,13 @@ jobs:
           cache: pnpm
       - if: steps.token.outputs.present == 'true'
         run: pnpm install --frozen-lockfile
+      - if: steps.token.outputs.present == 'true'
+        run: pnpm broker:check
+      - if: steps.token.outputs.present == 'true'
+        run: pnpm broker:test
       - name: Deploy the composio broker Worker via Wrangler
         if: steps.token.outputs.present == 'true'
-        uses: cloudflare/wrangler-action@v3
+        uses: cloudflare/wrangler-action@9acf94ace14e7dc412b076f2c5c20b8ce93c79cd # v3.15.0
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           # Mirrors the local `pnpm broker:deploy` script so CI is the same
@@ -411,7 +424,7 @@ jobs:
 
   ui-smoke:
     needs: static
-    if: needs.static.outputs.runtime == 'true'
+    if: contains(needs.static.outputs.jobs, '"ui-smoke"')
     # Advisory, outside the required `test` matrix: the renderer recipe in
     # docs/verification/chat-ui.md run by a machine. It downloads the pinned
     # agent-browser release (digest verified) and its Chrome, drives the real
@@ -439,7 +452,7 @@ jobs:
         env:
           OMB_UI_E2E: "1"
           OMB_UI_EVIDENCE_DIR: .omb-scratch/verify-evidence
-        run: pnpm exec vitest run scripts/testing/control-omb-ui.e2e.test.ts scripts/testing/bot-tools-ui.e2e.test.ts scripts/testing/thinking-timer-ui.e2e.test.ts scripts/testing/team-share-ui.e2e.test.ts scripts/testing/org-library-ui.e2e.test.ts scripts/testing/presets-ui.e2e.test.ts scripts/testing/browser-evidence.e2e.test.ts scripts/testing/rich-table-composer-ui.e2e.test.ts scripts/testing/computer-panel-focus-ui.e2e.test.ts
+        run: pnpm exec vitest run scripts/testing/control-omb-ui.e2e.test.ts scripts/testing/bot-tools-ui.e2e.test.ts scripts/testing/thinking-timer-ui.e2e.test.ts scripts/testing/team-share-ui.e2e.test.ts scripts/testing/org-library-ui.e2e.test.ts scripts/testing/presets-ui.e2e.test.ts scripts/testing/browser-evidence.e2e.test.ts scripts/testing/browser-fill.e2e.test.ts scripts/testing/rich-table-composer-ui.e2e.test.ts scripts/testing/computer-panel-focus-ui.e2e.test.ts scripts/testing/mobile-code-blocks-ui.e2e.test.ts
       - name: Upload the renderer screenshot
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: always()
@@ -449,12 +462,13 @@ jobs:
             .omb-scratch/verify-evidence/chat-ui.png
             .omb-scratch/verify-evidence/thinking-timer-anchored.png
             .omb-scratch/verify-evidence/share-team-dialog.png
+            .omb-scratch/verify-evidence/mobile-code-blocks/
           if-no-files-found: warn
           retention-days: 7
 
   browser-identity:
     needs: static
-    if: needs.static.outputs.runtime == 'true'
+    if: contains(needs.static.outputs.jobs, '"browser-identity"')
     # Advisory, outside the required gate: the pinned agent-browser drives a
     # real Chrome for Testing through OMB's launcher and identity connection
     # (scripts/testing/browser-identity.e2e.test.ts): a 1280x720 page whose
@@ -493,7 +507,7 @@ jobs:
 
   package-linux:
     needs: static
-    if: needs.static.outputs.runtime == 'true'
+    if: contains(needs.static.outputs.jobs, '"package-linux"')
     name: package + smoke (Ubuntu 24.04 x64)
     runs-on: ubuntu-24.04
     timeout-minutes: 25
@@ -562,7 +576,7 @@ jobs:
 
   browser-driver:
     needs: static
-    if: needs.static.outputs.runtime == 'true'
+    if: contains(needs.static.outputs.jobs, '"browser-driver"')
     # Advisory, outside the CI gate until it has run green for a while: the
     # omb-cdp S4 conformance suites and the new browser's checklist and viewer
     # suites on the runner's own Google Chrome (PRs run Linux and Windows;

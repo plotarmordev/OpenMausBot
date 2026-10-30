@@ -5,6 +5,8 @@
 import { execFile } from "node:child_process";
 import { closeSync, fstatSync, openSync, readSync } from "node:fs";
 
+import { redactSecretsInText } from "../../redact.ts";
+
 // Prompt silence guard (0 disables). Healthy agents go quiet for minutes: Qwen Code 0.24 sends
 // nothing while it compresses history, backs off a rate limit (60 s up to 5 min per wait) or runs
 // one model request (its SDK waits up to 600 s); a wedged OpenCode turn goes silent forever.
@@ -18,14 +20,19 @@ export const promptIdleTimeoutMs = (): number => {
 export const formatQuietLimit = (ms: number): string =>
   ms >= 120_000 && ms % 60_000 === 0 ? `${ms / 60_000} min` : `${Math.round(ms / 1000)} s`;
 
+/** Silence before the first "what is it doing" notice (OMB_ACP_QUIET_NOTICE_MS overrides). */
+export const DEFAULT_QUIET_NOTICE_MS = 60_000;
+
 export type LogSignal =
   | { kind: "retry"; status: number | null; delayMs: number | null; attempt: number | null }
   | { kind: "compressing" }
-  | { kind: "context"; tokens: number; threshold: number };
+  | { kind: "context"; tokens: number; threshold: number }
+  | { kind: "provider-error"; message: string };
 
 export type QuietState =
   | { kind: "retrying"; status: number | null; delayMs: number | null; attempt: number | null }
   | { kind: "compressing" }
+  | { kind: "provider-error"; message: string }
   | { kind: "waiting-model"; nearFullContext: boolean }
   | { kind: "busy" }
   /** no connection, no CPU, briefly: an SDK sleeping between retries looks like this */
@@ -62,6 +69,16 @@ export function parseQwenLogLine(line: string): LogSignal | null {
   const gate = /\[compaction\] cheap-gate NOOP: effectiveTokens=(\d+), auto=(\d+)/.exec(line);
   if (gate) return { kind: "context", tokens: Number(gate[1]), threshold: Number(gate[2]) };
   return null;
+}
+
+/** OpenCode 1.18's shared log, one logfmt row per failed model call of any session or process, like
+ *  `level=ERROR … message="stream error" … session.id=ses_… small=false … error.error="AI_APICallError: Rate limit exceeded."`.
+ *  `small=true` is the session's title request, not the turn. */
+export function parseOpenCodeLogLine(line: string, sessionId: string): LogSignal | null {
+  const fields = line.split(" ");
+  if (!fields.includes("level=ERROR") || !fields.includes(`session.id=${sessionId}`) || fields.includes("small=true")) return null;
+  const error = /\berror\.error="((?:[^"\\]|\\.)*)"/.exec(line)?.[1];
+  return error ? { kind: "provider-error", message: redactSecretsInText(error.replace(/^AI_APICallError:\s*/, "")).slice(0, 200) } : null;
 }
 
 export class LogTail {
@@ -198,6 +215,7 @@ export function classifyQuiet(input: {
   const { logged, sample, previous } = input;
   if (logged?.kind === "retry") return { kind: "retrying", status: logged.status, delayMs: logged.delayMs, attempt: logged.attempt };
   if (logged?.kind === "compressing") return { kind: "compressing" };
+  if (logged?.kind === "provider-error") return { kind: "provider-error", message: logged.message };
   const nearFullContext = input.context !== null && input.context.threshold > 0
     && input.context.tokens >= input.context.threshold * 0.9;
   if (sample.connections !== null && sample.connections > 0) return { kind: "waiting-model", nearFullContext };
@@ -230,6 +248,8 @@ export function describeQuiet(name: string, state: QuietState, quietMs: number, 
       const attempt = state.attempt !== null ? ` (attempt ${state.attempt + 1})` : "";
       return `${name} ${why} and is retrying${attempt}.${next} It is still working.`;
     }
+    case "provider-error":
+      return `${name}'s model request failed: "${state.message}" ${name} may retry or stop; no reply for ${quiet} so far.`;
     case "compressing":
       return `${name} is compressing its conversation history to make room. This can take a few minutes; it is still working.`;
     case "waiting-model":
@@ -253,6 +273,7 @@ export function lastSeenPhrase(state: QuietState): string {
   switch (state.kind) {
     case "retrying": return "retrying a failed model request";
     case "compressing": return "compressing its history";
+    case "provider-error": return "a failed model request";
     case "waiting-model": return "waiting on its model with a request open";
     case "busy": return "busy on this computer";
     case "between-requests": return "no request open to its model";

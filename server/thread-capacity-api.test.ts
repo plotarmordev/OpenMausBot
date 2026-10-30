@@ -1,4 +1,5 @@
 // Real provider processes with independent per-thread gates, under the disposable-home launcher.
+import { randomBytes } from "node:crypto";
 import { existsSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { connect, type Socket } from "node:net";
 import { tmpdir } from "node:os";
@@ -8,6 +9,7 @@ import { pathToFileURL } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { launchVerificationServer, type VerificationServer } from "../scripts/control-omb.ts";
+import { APP_SAMPLES } from "../shared/app-samples.ts";
 import { removeTempDir } from "./testing/cleanup.ts";
 import { openSse } from "./testing/sse.ts";
 
@@ -17,11 +19,13 @@ describe("per-bot thread capacity through an isolated HTTP fixture", () => {
   let evidence: unknown[];
   const sockets: Socket[] = [];
   const projectDirs: string[] = [];
+  const ownerToken = randomBytes(32).toString("base64url");
+  const realFetch = globalThis.fetch;
 
   const api = async (method: string, path: string, body?: unknown) => {
     const response = await fetch(`${fixture.info.url}${path}`, {
       method,
-      headers: { "content-type": "application/json", origin: fixture.info.url },
+      headers: { "content-type": "application/json", origin: fixture.info.url, "x-openmausbot-desktop-owner": ownerToken },
       ...(body === undefined ? {} : { body: JSON.stringify(body) }),
     });
     const result = { status: response.status, body: await response.json() as any };
@@ -90,7 +94,9 @@ describe("per-bot thread capacity through an isolated HTTP fixture", () => {
 
   beforeEach(async () => {
     evidence = [];
-    fixture = await launchVerificationServer();
+    globalThis.fetch = (input, init = {}) => realFetch(input, { ...init,
+      headers: { ...Object.fromEntries(new Headers(init.headers)), "x-openmausbot-desktop-owner": ownerToken } });
+    fixture = await launchVerificationServer({ ...process.env, OMB_TEST_DESKTOP_OWNER_TOKEN: ownerToken });
     const wrapper = join(fixture.info.dataDir, "capacity-claude.mjs");
     writeFileSync(wrapper, [
       "#!/usr/bin/env node",
@@ -109,6 +115,7 @@ describe("per-bot thread capacity through an isolated HTTP fixture", () => {
   }, 30_000);
 
   afterEach(async () => {
+    globalThis.fetch = realFetch;
     for (const socket of sockets.splice(0)) socket.destroy();
     if (!fixture) return;
     const evidencePath = `${fixture.info.logPath}.capacity.json`;
@@ -118,12 +125,13 @@ describe("per-bot thread capacity through an isolated HTTP fixture", () => {
     for (const project of projectDirs.splice(0)) await removeTempDir(project);
   });
 
-  it("defaults to three, runs ten real turns after raising the limit, and safely queues and cancels overflow", async () => {
-    expect((await api("GET", "/api/config")).body.threads).toEqual({ maxConcurrentPerBot: 3 });
-    for (const maxConcurrentPerBot of [0, 11, 1.5, "2", null]) {
+  it("defaults to sixteen, runs ten real turns after raising an explicit limit, and safely queues and cancels overflow", async () => {
+    expect((await api("GET", "/api/config")).body.threads).toEqual({ maxConcurrentPerBot: 16 });
+    for (const maxConcurrentPerBot of [0, 17, 1.5, "2", null]) {
       expect((await api("PATCH", "/api/config", { threads: { maxConcurrentPerBot } })).status).toBe(400);
     }
-    expect((await api("GET", "/api/config")).body.threads.maxConcurrentPerBot).toBe(3);
+    expect((await api("GET", "/api/config")).body.threads.maxConcurrentPerBot).toBe(16);
+    await limit(3);
     const { botId, threads } = await botWithThreads(12);
     const firstThree = await Promise.all(threads.slice(0, 3).map((threadId, i) => send(botId, threadId, `ACTIVE_${i}`)));
     expect(firstThree.map((result) => result.status)).toEqual([202, 202, 202]);
@@ -222,6 +230,205 @@ describe("per-bot thread capacity through an isolated HTTP fixture", () => {
       await expect.poll(async () => (await busyThreads(botId)).length, { timeout: 15_000 }).toBe(0);
       await api("DELETE", `/api/routines/${routineId}`).catch(() => undefined);
       await api("DELETE", `/api/bots/${botId}`).catch(() => undefined);
+    }
+  }, 90_000);
+
+  it("runs the person's message in the main chat at once while task threads hold every slot", async () => {
+    await limit(1);
+    const { botId, threads: [main, task] } = await botWithThreads(2);
+    expect((await send(botId, main, "MAIN_WARM_UP")).body.queued).toBeUndefined();
+    await dump(main);
+    finish(main);
+    await expect.poll(() => busyThreads(botId), { timeout: 10_000 }).toEqual([]);
+    const created = await api("POST", "/api/routines", {
+      name: "Slot holder", prompt: "Write the scheduled digest.", target: "bot", botId, runOn: "maus", enabled: true,
+      schedule: { type: "daily", time: "23:00" },
+    });
+    expect(created.status).toBe(201);
+    const routineId = created.body.routine.id;
+    try {
+      const run = (await api("POST", `/api/routines/${routineId}/run`)).body.run;
+      await expect.poll(async () => (await api("GET", "/api/routines")).body.runs.find((entry: any) => entry.id === run.id)?.status, { timeout: 15_000 }).toBe("running");
+      expect(await busyThreads(botId)).toHaveLength(1);
+      expect((await send(botId, task, "TASK_THREAD_WAITS")).body).toMatchObject({ queued: true, reason: "capacity", threadId: task });
+      const direct = await send(botId, main, "MAIN_CHAT_RUNS");
+      expect(direct.status).toBe(202);
+      expect(direct.body.queued).toBeUndefined();
+      await expect.poll(() => busyThreads(botId), { timeout: 10_000 }).toContain(main);
+      expect(await busyThreads(botId)).not.toContain(task);
+    } finally {
+      for (const threadId of await busyThreads(botId)) finish(threadId);
+      await api("DELETE", `/api/routines/${routineId}`).catch(() => undefined);
+      await api("DELETE", `/api/bots/${botId}`).catch(() => undefined);
+    }
+  }, 90_000);
+
+  it("queues an app's message to the main chat behind a full bot like ordinary work", async () => {
+    await limit(1);
+    const { botId, threads: [main] } = await botWithThreads(1);
+    expect((await send(botId, main, "MAIN_APP_WARM_UP")).body.queued).toBeUndefined();
+    const launched = await dump(main);
+    const shown = await fetch(`${fixture.info.url}/api/internal/options-card`, {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: `Bearer ${launched.mcpConfig.mcpServers.agents.env.OMB_COMMS_TOKEN}` },
+      body: JSON.stringify({ tool: "show_html", ...APP_SAMPLES.counter }),
+    });
+    const app = await shown.json() as { messageId: string };
+    evidence.push({ showHtml: shown.status, app });
+    expect(shown.status).toBe(201);
+    finish(main);
+    await expect.poll(() => busyThreads(botId), { timeout: 10_000 }).toEqual([]);
+    const routine = (await api("POST", "/api/routines", {
+      name: "App slot holder", prompt: "Hold the capacity slot.", target: "bot", botId, runOn: "maus", enabled: true,
+      schedule: { type: "daily", time: "23:00" },
+    })).body.routine;
+    try {
+      await api("POST", `/api/routines/${routine.id}/run`);
+      await expect.poll(() => busyThreads(botId), { timeout: 15_000 }).toHaveLength(1);
+      const [holder] = await busyThreads(botId);
+      const sent = await api("POST", `/api/bots/${botId}/messages`, {
+        threadId: main, sendId: "app-capacity-send-0001", appMessage: { messageId: app.messageId, text: "APP_SENT_AT_CAPACITY" },
+      });
+      expect(sent.status, JSON.stringify(sent.body)).toBe(202);
+      expect(sent.body).toMatchObject({ queued: true, reason: "capacity", threadId: main });
+      expect(await busyThreads(botId)).toEqual([holder]);
+      expect((await messages(main)).some(message => message.text === "APP_SENT_AT_CAPACITY")).toBe(false);
+      finish(holder);
+      await expect.poll(async () => (await messages(main)).filter(message => message.role === "user" && message.text === "APP_SENT_AT_CAPACITY"),
+        { timeout: 15_000 }).toMatchObject([{ fromApp: { messageId: app.messageId } }]);
+    } finally {
+      for (const thread of await busyThreads(botId)) finish(thread);
+      await api("DELETE", `/api/routines/${routine.id}`);
+    }
+  }, 90_000);
+
+  it("caps main-thread compact while a routine holds the sole slot", async () => {
+    await limit(1);
+    const { botId, threads: [main] } = await botWithThreads(1);
+    await send(botId, main, "COMPACT_WARM_UP");
+    const initial = await dump(main);
+    finish(main);
+    await expect.poll(() => busyThreads(botId), { timeout: 10_000 }).toEqual([]);
+    const routine = (await api("POST", "/api/routines", {
+      name: "Compact slot holder", prompt: "HOLD_COMPACT_SLOT", target: "bot", botId, runOn: "maus", enabled: true,
+      schedule: { type: "daily", time: "23:00" },
+    })).body.routine;
+    try {
+      await api("POST", `/api/routines/${routine.id}/run`);
+      await expect.poll(async () => (await busyThreads(botId)).length, { timeout: 15_000 }).toBe(1);
+      const occupied = await busyThreads(botId);
+      const before = await messages(main);
+      const compact = await api("POST", `/api/bots/${botId}/compact`, { threadId: main });
+      expect(compact.status).toBe(409);
+      expect(compact.body.error).toContain("parallel threads");
+      expect(await busyThreads(botId)).toEqual(occupied);
+      expect(await messages(main)).toEqual(before);
+      expect((await dump(main)).pid).toBe(initial.pid);
+      expect((await api("GET", "/api/bots?messages=0")).body.botQueuedMessages[main]).toBeUndefined();
+    } finally {
+      for (const threadId of await busyThreads(botId)) finish(threadId);
+      await api("DELETE", `/api/routines/${routine.id}`);
+    }
+  }, 90_000);
+
+  it("runs a verified person's manual goal and its card continuation while a routine holds the slot", async () => {
+    await limit(1);
+    const { botId, threads: [main] } = await botWithThreads(1);
+    const routine = (await api("POST", "/api/routines", {
+      name: "Goal slot holder", prompt: "Hold the capacity slot.", target: "bot", botId, runOn: "maus", enabled: true,
+      schedule: { type: "daily", time: "23:00" },
+    })).body.routine;
+    try {
+      const wrapper = join(fixture.info.dataDir, "goal-claude.mjs");
+      writeFileSync(wrapper, [
+        "#!/usr/bin/env node",
+        'import { basename } from "node:path";',
+        `if (basename(process.cwd()) === ${JSON.stringify(main)}) {`,
+        'process.env.FAKE_CLAUDE_MODE = "happy";',
+        `process.env.FAKE_CLAUDE_REPLY_STATE = ${JSON.stringify(threadFile(main, "replies"))};`,
+        `process.env.FAKE_CLAUDE_REPLIES = ${JSON.stringify(JSON.stringify([
+          '<openmaus-goal>{"status":"continue","next":"Capacity fixture","instruction":"Finish the second card turn","detail":"Continue"}</openmaus-goal>',
+          '<openmaus-goal>{"status":"completed","detail":"Goal completed at capacity"}</openmaus-goal>',
+        ]))};`,
+        "}",
+        `const cli = basename(process.cwd()) === ${JSON.stringify(main)} ? ${JSON.stringify(pathToFileURL(join(process.cwd(), "server/testing/fake-claude-cli.ts")).href)} : ${JSON.stringify(pathToFileURL(join(fixture.info.dataDir, "capacity-claude.mjs")).href)};`,
+        "await import(cli);",
+      ].join("\n"), { mode: 0o700 });
+      expect((await api("PATCH", "/api/instances/claude", { cli: wrapper })).status).toBe(200);
+      await api("POST", `/api/routines/${routine.id}/run`);
+      await expect.poll(() => busyThreads(botId), { timeout: 15_000 }).toHaveLength(1);
+      const [holder] = await busyThreads(botId);
+      await dump(holder);
+      const sent = await api("POST", `/api/bots/${botId}/messages`, { threadId: main, mode: "goal", text: "PERSON_GOAL_AT_CAPACITY" });
+      expect(sent.status).toBe(202);
+      await expect.poll(async () => (await messages(main)).find(message => message.kind === "goal.run")?.goalRun,
+        { timeout: 15_000 }).toMatchObject({ status: "completed", turnCount: 2, capacity: "person" });
+      expect(await busyThreads(botId)).toEqual([holder]);
+      expect(existsSync(threadFile(holder, "gate"))).toBe(false);
+    } finally {
+      for (const thread of await busyThreads(botId)) finish(thread);
+      await api("DELETE", `/api/routines/${routine.id}`);
+    }
+  }, 60_000);
+
+  it.each(["Chief peer retry", "guarded admin", "guarded person relay"])("applies person-only main-chat admission at full capacity for %s", async (ingress) => {
+    await limit(1);
+    const { botId, threads: [main] } = await botWithThreads(1);
+    const { botId: chiefId, threads: [chiefThread] } = await botWithThreads(1);
+    expect((await api("PATCH", `/api/bots/${chiefId}`, { chiefOfStaff: true, managedSections: [], acknowledgePeerScope: true })).status).toBe(200);
+    expect((await api("PATCH", `/api/bots/${botId}`, { approvalMode: "ask", autoApprove: false })).status).toBe(200);
+    await send(botId, main, "MAIN_WARM_UP");
+    await dump(main);
+    finish(main);
+    await expect.poll(() => busyThreads(botId), { timeout: 15_000 }).toEqual([]);
+    const routine = (await api("POST", "/api/routines", {
+      name: "Retry slot holder", prompt: "Hold the capacity slot.", target: "bot", botId, runOn: "maus", enabled: true,
+      schedule: { type: "daily", time: "23:00" },
+    })).body.routine;
+    try {
+      await api("POST", `/api/routines/${routine.id}/run`);
+      await expect.poll(() => busyThreads(botId), { timeout: 15_000 }).toHaveLength(1);
+      if (ingress === "Chief peer retry") {
+        await send(chiefId, chiefThread, "CHIEF_RETRY_AUTHORITY");
+        const chief = await dump(chiefThread);
+        const response = await fetch(`${fixture.info.url}/api/internal/retry-thread`, {
+          method: "POST",
+          headers: { "content-type": "application/json", authorization: `Bearer ${chief.mcpConfig.mcpServers.agents.env.OMB_COMMS_TOKEN}` },
+          body: JSON.stringify({ toBotId: botId, toThreadId: main }),
+        });
+        const retry = await response.json();
+        evidence.push({ retryStatus: response.status, retry });
+        expect(response.status, JSON.stringify(retry)).toBe(409);
+        expect(retry).toMatchObject({ error: expect.stringContaining("parallel threads") });
+        expect((await messages(main)).some(message => message.peerAsk?.botId === chiefId)).toBe(false);
+        return;
+      }
+      const snapshot = await api("GET", `/api/threads/${main}/messages`);
+      const beforeLaunch = readFileSync(threadFile(main, "json"), "utf8");
+      if (ingress === "guarded admin") {
+        const refused = await api("POST", `/api/bots/${botId}/messages/guarded`, {
+          threadId: main, sendId: "guarded-capacity-admin", text: "ADMIN_MUST_WAIT",
+          expectedActiveLeafId: snapshot.body.activeLeafId, expectedApprovalMode: "ask",
+        });
+        expect(refused.status).toBe(409);
+        expect(refused.body).toMatchObject({ code: "guarded_busy" });
+        expect(await messages(main)).toEqual(snapshot.body.messages);
+        expect((await api("GET", "/api/bots?messages=0")).body.botQueuedMessages?.[main] ?? []).toEqual([]);
+        expect(readFileSync(threadFile(main, "json"), "utf8")).toBe(beforeLaunch);
+        return;
+      }
+      const relay = await api("POST", `/api/bots/${botId}/messages/guarded`, {
+        threadId: main, sendId: "guarded-capacity-person", text: "PERSON_RELAY_AT_CAPACITY",
+        expectedActiveLeafId: snapshot.body.activeLeafId, expectedApprovalMode: "ask",
+        onBehalfOf: { name: "Sam", email: "sam@example.test" },
+      });
+      expect(relay.status, JSON.stringify(relay.body)).toBe(202);
+      expect(relay.body.queued).toBeUndefined();
+      expect((await messages(main)).some(message => message.text === "PERSON_RELAY_AT_CAPACITY")).toBe(true);
+    } finally {
+      for (const thread of await busyThreads(botId)) finish(thread);
+      finish(chiefThread);
+      await api("DELETE", `/api/routines/${routine.id}`);
     }
   }, 90_000);
 
@@ -326,6 +533,95 @@ describe("per-bot thread capacity through an isolated HTTP fixture", () => {
       await expect.poll(async () => (await busyThreads(botId)).length, { timeout: 15_000 }).toBe(0);
       await api("DELETE", `/api/groups/${room.id}`).catch(() => undefined);
       await api("DELETE", `/api/routines/${routineId}`).catch(() => undefined);
+      await api("DELETE", `/api/bots/${botId}`).catch(() => undefined);
+    }
+  }, 120_000);
+
+  it("starts a person's 1:1 turn while the same bot's room turn is still running", async () => {
+    const { botId, threads } = await botWithThreads(1);
+    const threadId = threads[0];
+    const createdRoom = await api("POST", "/api/groups", {
+      name: "Direct overlap room",
+      memberIds: [botId],
+      setup: { bulletin: "Answer briefly.", defaultResponder: { kind: "member", botId } },
+    });
+    expect(createdRoom.status).toBe(201);
+    const room = createdRoom.body.group;
+    const roomWorking = async () =>
+      (await api("GET", "/api/bots?messages=0")).body.groups.find((group: any) => group.id === room.id)?.working;
+    try {
+      const sent = await api("POST", `/api/groups/${room.id}/messages`, { text: "Hold the room turn open." });
+      expect(sent.status).toBe(202);
+      // Room turns run in the member's shared workspace, so the gated fake holds under the bot id, not the room thread id.
+      await dump(botId);
+      await expect.poll(roomWorking, { timeout: 15_000 }).toBe(true);
+      expect(await busyThreads(botId)).toEqual([]);
+
+      const direct = await send(botId, threadId, "REACH_ME_NOW");
+      expect(direct.status).toBe(202);
+      expect(direct.body.queued).toBeUndefined();
+      // A second provider process for the same bot: proof the 1:1 turn started, not just a receipt.
+      await dump(threadId);
+      expect(JSON.stringify((await dump(threadId)).prompt)).toContain("REACH_ME_NOW");
+      expect(await busyThreads(botId)).toEqual([threadId]);
+      // The room turn is untouched: still live while the 1:1 turn runs.
+      expect(await roomWorking()).toBe(true);
+
+      finish(threadId);
+      await expect.poll(async () => (await busyThreads(botId)).length, { timeout: 15_000 }).toBe(0);
+      expect(await roomWorking()).toBe(true);
+    } finally {
+      // A drain can start the queued 1:1 turn only after the room turn ends, so release in a loop.
+      for (let attempt = 0; attempt < 40; attempt += 1) {
+        finish(botId);
+        for (const id of await busyThreads(botId)) finish(id);
+        if ((await busyThreads(botId)).length === 0) break;
+        await new Promise((resolve) => setTimeout(resolve, 250));
+      }
+      await api("DELETE", `/api/groups/${room.id}`).catch(() => undefined);
+      await api("DELETE", `/api/bots/${botId}`).catch(() => undefined);
+    }
+  }, 120_000);
+
+  it("drains a person's queued message beside the bot's room turn, so a newer send cannot overtake it", async () => {
+    await limit(1);
+    const { botId, threads } = await botWithThreads(3);
+    const [, first, second] = threads;
+    const createdRoom = await api("POST", "/api/groups", {
+      name: "Queued overlap room",
+      memberIds: [botId],
+      setup: { bulletin: "Answer briefly.", defaultResponder: { kind: "member", botId } },
+    });
+    expect(createdRoom.status).toBe(201);
+    const room = createdRoom.body.group;
+    const roomWorking = async () =>
+      (await api("GET", "/api/bots?messages=0")).body.groups.find((group: any) => group.id === room.id)?.working;
+    try {
+      expect((await api("POST", `/api/groups/${room.id}/messages`, { text: "Hold the room turn open." })).status).toBe(202);
+      await dump(botId);
+      await expect.poll(roomWorking, { timeout: 15_000 }).toBe(true);
+
+      expect((await send(botId, first, "FIRST_TASK")).body.queued).toBeUndefined();
+      await dump(first);
+      // The one slot is taken, so the next task thread queues for capacity, not for the room.
+      const queued = await send(botId, second, "QUEUED_TASK");
+      expect(queued.body).toMatchObject({ queued: true, reason: "capacity", threadId: second });
+
+      finish(first);
+      // The slot frees while the room turn still runs: the queued message starts now, not after the room.
+      expect(JSON.stringify((await dump(second)).prompt)).toContain("QUEUED_TASK");
+      expect(await busyThreads(botId)).toEqual([second]);
+      expect(await roomWorking()).toBe(true);
+      finish(second);
+      await expect.poll(async () => (await busyThreads(botId)).length, { timeout: 15_000 }).toBe(0);
+    } finally {
+      for (let attempt = 0; attempt < 40; attempt += 1) {
+        finish(botId);
+        for (const id of await busyThreads(botId)) finish(id);
+        if ((await busyThreads(botId)).length === 0) break;
+        await new Promise((resolve) => setTimeout(resolve, 250));
+      }
+      await api("DELETE", `/api/groups/${room.id}`).catch(() => undefined);
       await api("DELETE", `/api/bots/${botId}`).catch(() => undefined);
     }
   }, 120_000);

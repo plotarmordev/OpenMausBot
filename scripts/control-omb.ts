@@ -190,6 +190,9 @@ export function verificationServerEnvironment(parentEnv: NodeJS.ProcessEnv, data
     childEnv.OMB_CLOUD_X_URL = xUrl;
     if (parentEnv.OMB_CLOUD_X_TOKEN) childEnv.OMB_CLOUD_X_TOKEN = parentEnv.OMB_CLOUD_X_TOKEN;
   }
+  // @devs reports reach a loopback fake only, else a closed port: never the MausBot team.
+  const bugReportUrl = parentEnv.OMB_BUG_REPORT_URL?.trim() ?? "";
+  childEnv.OMB_BUG_REPORT_URL = /^http:\/\/127\.0\.0\.1:\d{1,5}\/[A-Za-z0-9/_-]*$/.test(bugReportUrl) ? bugReportUrl : "http://127.0.0.1:9/api/bug-reports";
   const tregUrl = parentEnv.OMB_TREG_URL?.trim() ?? "";
   if (/^http:\/\/127\.0\.0\.1:\d{1,5}$/.test(tregUrl)) childEnv.OMB_TREG_URL = tregUrl;
   // Loopback only, for harness mechanics: a fake ElevenLabs the measurement
@@ -206,6 +209,10 @@ export function verificationServerEnvironment(parentEnv: NodeJS.ProcessEnv, data
   if (parentEnv.OMB_TEST_APPROVAL_CLOCK === "1") childEnv.OMB_TEST_APPROVAL_CLOCK = "1";
   // The stall watchdog fires on a marker file, not after 20 minutes of silence.
   if (parentEnv.OMB_TEST_STALL_CLOCK === "1") childEnv.OMB_TEST_STALL_CLOCK = "1";
+  // A thread read throws an unexpected fault while a marker file exists.
+  if (parentEnv.OMB_TEST_ROUTE_FAULT === "1") childEnv.OMB_TEST_ROUTE_FAULT = "1";
+  // The first-reply rescue's delay in ms, so a check need not sit through 20 s of silence.
+  if (/^\d{1,6}$/.test(parentEnv.OMB_FIRST_REPLY_NOTICE_MS ?? "")) childEnv.OMB_FIRST_REPLY_NOTICE_MS = parentEnv.OMB_FIRST_REPLY_NOTICE_MS;
   // The UI checks drive this fixture from a real browser, as `pnpm dev` does; OMB_DEV_TRUST_LOCAL_BROWSER=0 tests the sign-in.
   if (parentEnv.OMB_DEV_TRUST_LOCAL_BROWSER !== "0") childEnv.OMB_DEV_TRUST_LOCAL_BROWSER = "1";
   // Desktop mode: the owner capability the app would hand the server.
@@ -214,6 +221,8 @@ export function verificationServerEnvironment(parentEnv: NodeJS.ProcessEnv, data
     childEnv.OMB_DESKTOP_PARENT = "1";
     if (parentEnv.OMB_TEST_DESKTOP_PAGES_ACCESS) childEnv.OMB_TEST_DESKTOP_PAGES_ACCESS = parentEnv.OMB_TEST_DESKTOP_PAGES_ACCESS;
   }
+  // The driver record the app hands its own server: without it, no server may use this computer.
+  if (parentEnv.OMB_TEST_DESKTOP_CUA_CONNECTION) childEnv.OMB_TEST_DESKTOP_CUA_CONNECTION = parentEnv.OMB_TEST_DESKTOP_CUA_CONNECTION;
   return childEnv;
 }
 
@@ -223,9 +232,10 @@ export function verificationServerArgs(childEnv: NodeJS.ProcessEnv): string[] {
   return [
     "--experimental-strip-types",
     ...(childEnv.OMB_TEST_FAIL_AUDIO_APPEND_ONCE === "1" ? hook("fail-audio-append-once.mjs") : []),
-    ...(childEnv.OMB_TEST_DESKTOP_OWNER_TOKEN ? hook("desktop-parent.mjs") : []),
+    ...(childEnv.OMB_TEST_DESKTOP_OWNER_TOKEN || childEnv.OMB_TEST_DESKTOP_CUA_CONNECTION ? hook("desktop-parent.mjs") : []),
     ...(childEnv.OMB_TEST_APPROVAL_CLOCK === "1" ? hook("approval-clock-hooks.mjs") : []),
     ...(childEnv.OMB_TEST_STALL_CLOCK === "1" ? hook("stall-clock-hooks.mjs") : []),
+    ...(childEnv.OMB_TEST_ROUTE_FAULT === "1" ? hook("route-fault-hooks.mjs") : []),
     join(ROOT, "server", "index.ts"),
   ];
 }
@@ -276,6 +286,8 @@ export async function launchVerificationServer(
   const logPath = join(evidenceDir, `server-${Date.now()}-${process.pid}.log`);
   writeFileSync(join(dataDir, "config.json"), JSON.stringify({
     ...(boatFixtureApi ? { box: { token: "box_verification_fixture" } } : {}),
+    // A setup card's answers would be one more engine call at every new bot, taking replies a test scripts for its turns.
+    features: { smartSetupChoices: false },
     instances: {
       ...(extraProviders.includes("codex") ? { codex: {
         driver: "codex", displayName: "Verification Codex", config: { cli: fileURLToPath(new URL("../server/testing/fake-codex-app-server.ts", import.meta.url)) },

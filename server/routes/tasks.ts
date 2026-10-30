@@ -70,6 +70,8 @@ export interface TaskRouteDeps {
   revokeInternalCapabilitiesForThread(threadId: string): void;
   stagedSkillCleanupsForThread(threadId: string): Array<{ botId: string; stagedId: string }>;
   rejectDeletedThreadSkillStages(cleanups: Array<{ botId: string; stagedId: string }>): void;
+  /** A person opened this conversation (a Team Cloud's Needs you lines for them there are done). */
+  threadRead?(auth: RequestAuth, threadId: string): void;
 }
 
 /** `deleteTasks`: the same deletion for the server's own use (a person leaving a Team Cloud, host/team-member-left.ts). */
@@ -229,6 +231,7 @@ export function createTaskRoutes(deps: TaskRouteDeps): RouteHandler & { deleteTa
       const switched = store.switchTask(bot.id, m[2]);
       if (!switched) return json(res, 404, { error: "no such task" });
       sawThread(m[2]);
+      deps.threadRead?.(auth, m[2]);
       readThreadNotifications(m[2], broadcast);
       const wiredSwitch = wireBot(switched);
       const switchedSettings = { ...wiredSwitch, tasks: wiredSwitch.tasks ?? [] };
@@ -271,6 +274,9 @@ export function createTaskRoutes(deps: TaskRouteDeps): RouteHandler & { deleteTa
         (body.approvalMode !== undefined || body.autoApprove !== undefined || body.acknowledgeLocalAuto !== undefined || body.updateBotDefault === true || body.refreshPermissions === true)) {
         return json(res, 403, { error: "On this Cloud only its owner can change how a bot asks for approval, or its default model." });
       }
+      if (body.updateBotDefault === true && !ownerOrAdmin(auth)) {
+        return json(res, 403, { error: "forbidden: this session may change this thread's model, not the bot's default (needs the admin scope)" });
+      }
       for (const key of ["requireAvailableModel", "acknowledgeLocalAuto", "updateBotDefault", "resetApprovalToAsk"] as const) {
         if (body[key] !== undefined && typeof body[key] !== "boolean") return json(res, 400, { error: `${key} must be a boolean` });
       }
@@ -289,7 +295,6 @@ export function createTaskRoutes(deps: TaskRouteDeps): RouteHandler & { deleteTa
         const profile = store.bot(m[1]);
         if (!profile) return json(res, 404, { error: "no such bot" });
         if (profile.approvalGrant) return json(res, 409, { error: "the bot's approval mode is still being confirmed" });
-        if (threadBusy(profile.id, m[2])) return json(res, 409, { error: "stop this thread before changing its approval mode" });
         const nextMode = approvalModeFor({ ...profile, approvalGrant: undefined });
         // Custom never travels over the bot-reachable HTTP surface; only the desktop's private channel copies it.
         if (nextMode === "custom") {
@@ -381,7 +386,6 @@ export function createTaskRoutes(deps: TaskRouteDeps): RouteHandler & { deleteTa
         if (!supportsApprovalMode(patch.modelSelection ?? current.modelSelection, mode)) {
           return json(res, 400, { error: "This provider does not support the selected approval level" });
         }
-        if (threadBusy(current.id, current.threadId)) return json(res, 409, { error: "stop this thread before changing its approval mode" });
         if (current.approvalGrant) return json(res, 409, { error: "the bot's approval mode is still being confirmed" });
         if (mode === "auto" && approvalModeFor(current) !== "auto" && auth.kind === "loopback" && !DESKTOP_MANAGED && !req.headers.origin && store.bots.some((bot) => bot.busy)) {
           return json(res, 409, { error: "Change approval mode from the app or a paired device while bots are working." });

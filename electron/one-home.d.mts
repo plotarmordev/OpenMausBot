@@ -3,8 +3,9 @@ export type OneHomeView =
   /** `chats`: conversations gone of those to go; `failing`: it has failed for a day, with why; `updating`: My Cloud is too old
    * to take a move and updates first. */
   | { phase: "copy"; chats?: { done: number; total: number }; failing?: { error: string | null }; updating?: true }
-  /** `waitingFor`: the bot or room still working here ("" when it has no name). */
-  | { phase: "wait"; waitingFor?: string; failing?: { error: string | null } }
+  /** `waitingFor`: the bot or room whose work holds the move ("" when it has no name), and `waitingWhat` what it is;
+   * neither while it waits for a quiet moment or has not asked yet. */
+  | { phase: "wait"; waitingFor?: string; waitingWhat?: "bot" | "room" | "sign-in"; failing?: { error: string | null } }
   | { phase: "finishing"; failing?: { error: string | null } }
   /** What arrived, checked on both sides; `at`: when the move was done; `phone`: a phone was paired with this computer; `held`: keys a trial's Cloud keeps unused while its Claude credit lasts. */
   | { phase: "done"; at?: number; counts?: OneHomeCounts; phone: boolean; held: string[] }
@@ -33,6 +34,7 @@ export declare const COPY_RETRY_MS: number[];
 export declare const FAILING_LINE_MS: number;
 export declare const KEPT_MS: number;
 export function parseJournal(value: unknown): Record<string, any> | null;
+export function rateLimited(error: unknown): boolean;
 /** Home is My Cloud by this journal. */
 export function awayIn(journal: Record<string, any> | null | undefined): boolean;
 export function parseKeep(value: unknown): { on: boolean };
@@ -48,7 +50,7 @@ export function createOneHome(deps: {
   cloud(): OneHomeCloud | null;
   send: { move(options?: { final?: boolean }): Promise<unknown>; check(): Promise<{ ok: boolean }>; switches(): Record<string, boolean>; snapshot(): any };
   local: {
-    freeze(origin: string): Promise<{ frozen: true } | { busy: string }>;
+    freeze(origin: string): Promise<{ frozen: true } | { busy: string; what?: string }>;
     unfreeze(options?: { automations?: "off" }): Promise<void>;
     frozen(): Promise<boolean>;
     json(route: string): Promise<any>;
@@ -89,11 +91,16 @@ export function createOneHome(deps: {
   kick(): Promise<void>;
   view(): OneHomeView | null;
   away(): boolean;
+  /** A move or a send under way that restarting this app would cut into. */
+  busy(): boolean;
   keeps(): boolean;
   /** Throws once this computer's bots are on their way home past turning back and `on` is false. */
   keep(on: boolean): Promise<void>;
   retry(): Promise<void>;
   seen(): OneHomeView | null;
   changed(): void;
+  /** What the last run found holding the move that only a run finds out (move-status.mjs), and what kind of work holds
+   * the freeze ("" when the server didn't say), never its name. */
+  facts(): { noted: "waiting_quiet" | "thaw_failed" | "frozen_without_move" | "local_unavailable" | null; waiting: string | null };
   close(): void;
 };

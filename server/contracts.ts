@@ -105,6 +105,9 @@ export interface SendTurnInput {
   recalled?: string;
   /** Reasserted every turn so a resumed native session cannot keep a stale, more permissive mode. */
   approvalMode?: ApprovalMode;
+  /** The conversation's level right now, which the person may change while the turn runs. A driver that gates its own
+   * tool calls reads it before each one; a native engine keeps `approvalMode` until its next turn. */
+  approvalModeNow?: () => ApprovalMode;
   /** Fresh owner selection, independent of execution approval and resume state. */
   toolScope?: ToolScope;
   /** A guest turn: no shell or command execution, no reads outside its folder. Sent only to drivers whose guestTurns is "confined". */
@@ -166,6 +169,8 @@ export interface SendTurnInput {
     data?: { command: string; args: string[]; env: Record<string, string> };
     /** The HighLevel CRM tools' MCP proxy: the harness holds the tokens and the per-bot verdict. */
     highlevel?: { command: string; args: string[]; env: Record<string, string> };
+    /** The paired phone's app tools' MCP proxy: the harness holds the jobs and the per-bot verdict. */
+    device?: { command: string; args: string[]; env: Record<string, string> };
     /** dweb daemon tools; `url` is the dweb HTTP base. */
     dweb?: { url: string };
     /** The user's MCP servers, mounted without any pre-allow; a driver skips a kind it cannot speak. */
@@ -225,6 +230,8 @@ export interface ProviderAdapter {
     dataMcp?: boolean;
     /** The driver can mount the HighLevel CRM tools MCP. */
     highlevelMcp?: boolean;
+    /** The driver can mount the phone apps MCP. */
+    deviceMcp?: boolean;
     /** The engine accepts images in the prompt (gates composer paste). */
     images?: boolean;
     /** sendTurn consumes `images` as structured input, so dispatch strips the attachment path from `text`. */
@@ -294,6 +301,9 @@ export type SteerOutcome = "steered" | "refused" | "indeterminate";
 export interface ProviderSnapshot {
   /** Separate, explicitly authorized ChatGPT-plan billing (not Codex login). */
   chatgptPlan?: boolean;
+  /** Ready only through OpenCode's free no-login models (no login, subscription or key of the person's own): a backup that
+   * ranks last for a new bot's default and never counts as "an AI already works" in the welcome. */
+  freeFallback?: boolean;
   authenticationUnavailableReason?: string;
   state: "available" | "unavailable";
   reason?: string;
@@ -412,7 +422,8 @@ export interface TextGenerationUsage {
 export interface TextGenerationOptions {
   signal?: AbortSignal;
   onUsage?: (usage: TextGenerationUsage) => void;
-  /** Only the helper model setting passes it: one of this instance's models instead of the driver's quick-call choice. */
+  /** One of this instance's models instead of the driver's quick-call choice: the helper model setting, and the setup
+   * card's quick model (side-jobs.ts). */
   model?: string;
   /** How long the caller will wait; drivers with their own process timer use it instead of their default. */
   timeoutMs?: number;

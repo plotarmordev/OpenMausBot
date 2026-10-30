@@ -1,13 +1,16 @@
-import type { ReactNode } from "react";
+import type { ReactNode, Ref } from "react";
 import { Check, ChevronLeft, ChevronRight, Trash2, type LucideIcon } from "lucide-react";
 
 import { cn } from "@/lib/cn";
+import { useAdvancedMode } from "@/lib/interface-mode";
 import { MAUS_COLORS, type MausColor } from "@/lib/mascot";
+import { ELEVATED_CONTROL, ELEVATED_HOVER } from "../elevated";
 import { Switch } from "../SettingsPrimitives";
 
 export const rowCls = "flex min-h-[46px] items-center gap-2.5 px-3.5 py-[11px]";
-const titleCls = "text-[13.5px] font-medium text-ink";
-const hintCls = "mt-px text-[12.5px] leading-[1.35] text-ink-secondary";
+export const roundButtonCls = `flex size-[34px] shrink-0 items-center justify-center rounded-full text-ink ${ELEVATED_CONTROL} ${ELEVATED_HOVER} [:root[data-skin=daylight]_&]:shadow-[0_1px_3px_rgb(28_28_28/0.12)]`;
+const titleCls = "text-[14px] font-medium text-ink";
+const hintCls = "mt-px text-[13px] leading-[1.35] text-ink-secondary";
 export const buttonCls =
   "inline-flex h-8 shrink-0 items-center justify-center gap-1.5 rounded-[9px] bg-control px-3.5 text-[13px] font-medium text-ink hover:bg-raised-hover disabled:cursor-not-allowed disabled:opacity-50";
 export const chipCls = (on: boolean) =>
@@ -18,7 +21,7 @@ export const chipCls = (on: boolean) =>
 
 export function CardLabel({ children, action }: { children: ReactNode; action?: ReactNode }) {
   return (
-    <div className="mx-1 mb-2 mt-5 flex min-h-5 items-center justify-between gap-3 text-[12.5px] text-ink-secondary">
+    <div className="mx-1 mb-2 mt-5 flex min-h-5 items-center justify-between gap-3 text-[13px] text-ink-secondary">
       <span className="min-w-0 truncate">{children}</span>
       {action}
     </div>
@@ -27,17 +30,26 @@ export function CardLabel({ children, action }: { children: ReactNode; action?: 
 
 export function LabelAction({ children, onClick, ...rest }: { children: ReactNode; onClick: () => void; "aria-label"?: string; "data-panel-action"?: string }) {
   return (
-    <button type="button" {...rest} onClick={onClick} className="shrink-0 rounded-[5px] px-1 py-px text-[12.5px] text-ink-secondary hover:bg-ink/[0.04] hover:text-ink">
+    <button type="button" {...rest} onClick={onClick} className="shrink-0 rounded-[5px] px-1 py-px text-[13px] text-ink-secondary hover:bg-ink/[0.04] hover:text-ink">
       {children}
     </button>
   );
 }
 
 export function Card({ label, action, anchor, children }: { label?: ReactNode; action?: ReactNode; anchor?: string; children: ReactNode }) {
+  const advanced = useAdvancedMode();
   return (
     <section data-panel-card={anchor}>
       {label ? <CardLabel action={action}>{label}</CardLabel> : <div className="h-3.5" />}
-      <div className="divide-y divide-ink/[0.05] overflow-hidden rounded-[14px] border border-ink/[0.04] bg-ink/[0.03]">{children}</div>
+      <div
+        data-panel-card-surface=""
+        className={cn(
+          "divide-y divide-ink/[0.05] overflow-hidden max-md:rounded-[20px] max-md:border-hairline max-md:bg-card",
+          advanced ? "rounded-[14px] border border-ink/[0.04] bg-ink/[0.03]" : "rounded-[12px] bg-composer ring-1 ring-inset ring-ink/[0.06] max-md:border max-md:ring-0",
+        )}
+      >
+        {children}
+      </div>
     </section>
   );
 }
@@ -51,9 +63,9 @@ export function RowText({ title, hint }: { title: ReactNode; hint?: ReactNode })
   );
 }
 
-function RowIcon({ icon: Icon }: { icon: LucideIcon }) {
+export function RowIcon({ icon: Icon }: { icon: LucideIcon }) {
   return (
-    <span className="flex size-7 shrink-0 items-center justify-center rounded-lg bg-ink/[0.05] text-ink-secondary" aria-hidden="true">
+    <span className="flex size-7 shrink-0 items-center justify-center rounded-lg bg-ink/[0.05] text-ink-secondary max-md:size-8 max-md:rounded-full" aria-hidden="true">
       <Icon size={15} />
     </span>
   );
@@ -102,6 +114,7 @@ export function NavRow({ title, hint, value, icon, onClick, drill = true, danger
   danger?: boolean;
   disabled?: boolean;
   tooltip?: string;
+  ref?: Ref<HTMLButtonElement>;
   "data-panel-row"?: string;
   "data-panel-page"?: string;
 }) {
@@ -150,7 +163,7 @@ export function ColRow({ children, ...rest }: { children: ReactNode; "data-panel
 export function NoteRow({ children, tone }: { children: ReactNode; tone?: "warn" }) {
   return (
     <div className={rowCls}>
-      <div className={cn("text-[12.5px] leading-[1.35]", tone === "warn" ? "text-warning" : "text-ink-secondary")}>{children}</div>
+      <div className={cn("text-[13px] leading-[1.35]", tone === "warn" ? "text-warning" : "text-ink-secondary")}>{children}</div>
     </div>
   );
 }
@@ -195,8 +208,8 @@ export function Segmented<V extends string>({ options, value, onChange, label, a
           title={option.tooltip}
           onClick={() => onChange(option.value)}
           className={cn(
-            "min-w-0 flex-auto truncate whitespace-nowrap rounded-full px-1.5 py-1.5 text-[12.5px] transition-colors disabled:cursor-not-allowed disabled:opacity-50",
-            value === option.value ? "bg-control font-medium text-ink" : "text-ink-secondary enabled:hover:text-ink",
+            "min-w-0 flex-auto truncate whitespace-nowrap rounded-full px-1.5 py-1.5 text-[13px] transition-colors disabled:cursor-not-allowed disabled:opacity-50",
+            value === option.value ? "bg-ink/[0.14] text-ink" : "text-ink-secondary enabled:hover:text-ink",
           )}
         >
           {option.label}
@@ -310,7 +323,7 @@ export function PageHeader({ back, title, intro, onBack }: { back: string; title
         <span>{back}</span>
       </button>
       <h3 className="mx-1 mt-1.5 text-[18px] font-semibold text-ink">{title}</h3>
-      {intro && <p className="mx-1 mt-1.5 text-[12.5px] leading-normal text-ink-secondary">{intro}</p>}
+      {intro && <p className="mx-1 mt-1.5 text-[13px] leading-normal text-ink-secondary">{intro}</p>}
     </div>
   );
 }

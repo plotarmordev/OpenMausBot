@@ -5,11 +5,12 @@ import { BookOpen, Crown, Pencil, Sparkles, Wand2 } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { t } from "@/lib/i18n";
 import { emailGateDone } from "@/lib/analytics";
+import { useAdvancedMode } from "@/lib/interface-mode";
 import { DEFAULT_BOT_NAME, myDefaultBot, setWelcomingBot, useViewerEmail } from "@/lib/default-bot";
 import { landInSidebar } from "@/lib/mausbot-landing";
-import { welcomeDue, type WelcomeViewer } from "@/lib/onboarding";
-import { currentStep } from "@/lib/guided-tour";
-import { useAdvancedMode } from "@/lib/interface-mode";
+import { firstReplyPending } from "@/lib/corner-popup";
+import { launchDialogShown, markLaunchDialog } from "@/lib/launch-dialogs";
+import { welcomeDue, welcomeFinishedThisLaunch, type WelcomeViewer } from "@/lib/onboarding";
 import { useStore, type Bot } from "@/state/store";
 import { BOT_PROFILE_LIMITS } from "../../shared/bot-profile";
 import { BotAvatar } from "./Avatar";
@@ -43,20 +44,34 @@ export function mausBotWelcomeDue(input: { bot: Pick<Bot, "welcomed" | "hidden">
   return Boolean(input.bot && !input.bot.welcomed && !input.bot.hidden && !input.onboardingDue && !input.welcomeOpen && !input.tourOpen);
 }
 
-export function MausBotWelcome({ viewer }: { viewer: WelcomeViewer | null }) {
+/** MausBot's first-launch card is due now (mausBotWelcomeDue), and, like the Cloud Pro popup and the product-updates
+ * question, waits for the first reply (unknown until the bots load), for a launch after the one whose welcome finished, and
+ * for a launch the notices queue has not already used. The notices queue asks this too, so the card goes first. */
+export function useMausBotWelcomeDue(viewer: WelcomeViewer | null): { bot: Bot | undefined; due: boolean } {
   const { state } = useStore();
   const bot = myDefaultBot(state.bots, useViewerEmail());
-  const [shownFor, setShownFor] = useState<string | null>(null);
-  const [closed, setClosed] = useState(false);
-  const advanced = useAdvancedMode();
-  const record = state.config?.onboarding;
-  const touring = state.tourOpen || (Boolean(record?.completedAt) && currentStep(record, advanced) !== null);
+  // The app tour runs only when Settings starts it; one never taken does not hold this back.
+  const touring = state.tourOpen;
   const onboardingDue = !viewer || welcomeDue(state.config, {
     remoteClient: window.ogb?.remoteClient?.active === true, legacyDone: emailGateDone(),
     hosted: viewer.hosted, canSave: viewer.canSave, cloudHome: viewer.cloudHome,
   });
-  const due = !closed && Boolean(state.config) && mausBotWelcomeDue({ bot, onboardingDue, welcomeOpen: state.welcomeOpen, tourOpen: touring });
-  useEffect(() => { if (due && bot) setShownFor(bot.id); }, [due, bot]);
+  const due = Boolean(state.config) && mausBotWelcomeDue({ bot, onboardingDue, welcomeOpen: state.welcomeOpen, tourOpen: touring })
+    && firstReplyPending(state) === false && !welcomeFinishedThisLaunch() && launchDialogShown() !== "notices";
+  return { bot, due };
+}
+
+export function MausBotWelcome({ viewer }: { viewer: WelcomeViewer | null }) {
+  const { state } = useStore();
+  const { bot, due: ready } = useMausBotWelcomeDue(viewer);
+  const [shownFor, setShownFor] = useState<string | null>(null);
+  const [closed, setClosed] = useState(false);
+  const due = !closed && ready;
+  useEffect(() => {
+    if (!due || !bot) return;
+    markLaunchDialog("mausbot");
+    setShownFor(bot.id);
+  }, [due, bot]);
   useEffect(() => {
     if (!shownFor || closed) return;
     setWelcomingBot(shownFor);
@@ -69,6 +84,7 @@ export function MausBotWelcome({ viewer }: { viewer: WelcomeViewer | null }) {
 
 export function MausBotWelcomeCard({ bot, onClose }: { bot: Bot; onClose: () => void }) {
   const { dispatch } = useStore();
+  const advanced = useAdvancedMode();
   const reduced = usePrefersReducedMotion();
   const [draft, setDraft] = useState<WelcomeDraft>(() => draftOf(bot));
   const [editing, setEditing] = useState(false);
@@ -103,6 +119,15 @@ export function MausBotWelcomeCard({ bot, onClose }: { bot: Bot; onClose: () => 
     recede();
   };
 
+  // Escape decides nothing about the sidebar, but the card has been seen: it is shown once per person and place.
+  const dismiss = () => {
+    if (leaving) return;
+    setLeaving(true);
+    setWelcomingBot(null);
+    dispatch({ type: "updateBot", botId: bot.id, patch: { welcomed: true } });
+    onClose();
+  };
+
   const drop = (event: DragEvent) => {
     const file = event.dataTransfer.files?.[0];
     if (!file) return;
@@ -112,7 +137,7 @@ export function MausBotWelcomeCard({ bot, onClose }: { bot: Bot; onClose: () => 
   };
 
   return (
-    <div ref={overlayRef} className={cn("fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/55 px-6 pb-6 pt-[min(6vh,48px)]", leaving && "pointer-events-none")} data-mausbot-welcome="">
+    <div ref={overlayRef} className={cn("fixed inset-0 z-50 flex items-start justify-center overflow-y-auto px-6 pb-6 pt-[min(6vh,48px)]", advanced ? "bg-black/55" : "ui-scrim", leaving && "pointer-events-none")} data-mausbot-welcome="">
       <div
         ref={dialogRef}
         role="dialog"
@@ -123,9 +148,9 @@ export function MausBotWelcomeCard({ bot, onClose }: { bot: Bot; onClose: () => 
         onKeyDown={(event) => {
           if (event.key !== "Escape") return;
           event.preventDefault();
-          if (editing && panelRef.current?.contains(event.target as Node)) { setEditing(false); pictureRef.current?.focus(); } else onClose();
+          if (editing && panelRef.current?.contains(event.target as Node)) { setEditing(false); pictureRef.current?.focus(); } else dismiss();
         }}
-        className="animate-pop-in w-full max-w-[460px] rounded-3xl border border-hairline/50 bg-panel px-6 pb-5 pt-5 shadow-2xl"
+        className={cn("animate-pop-in w-full max-w-[460px] rounded-2xl px-6 pb-5 pt-5", advanced ? "border border-hairline/50 bg-panel shadow-2xl" : "ui-modal border-0")}
       >
         <div className="flex flex-col items-center text-center">
           <button
@@ -148,8 +173,8 @@ export function MausBotWelcomeCard({ bot, onClose }: { bot: Bot; onClose: () => 
               <Pencil size={13} />
             </span>
           </button>
-          <h2 id="mausbot-welcome-title" className="mt-3 text-[20px] font-semibold text-ink">{t("mausbotWelcome.title", { name })}</h2>
-          <ul className="mt-3 space-y-1.5 text-left text-[13.5px] leading-snug text-ink-secondary">
+          <h2 id="mausbot-welcome-title" className={cn("mt-3 text-ink", advanced ? "text-[20px] font-semibold" : "text-[17px] font-medium leading-6 tracking-[-0.008em]")}>{t("mausbotWelcome.title", { name })}</h2>
+          <ul className="mt-3 space-y-1.5 text-left text-[14px] leading-snug text-ink-secondary">
             {([[Sparkles, "mausbotWelcome.line.helper"], [BookOpen, "mausbotWelcome.line.knows"], [Wand2, "mausbotWelcome.line.setup"], [Crown, "mausbotWelcome.line.powers"]] as const).map(([Icon, key]) => (
               <li key={key} className="flex items-start gap-2.5"><Icon size={15} className="mt-0.5 shrink-0 text-ink-tertiary" aria-hidden="true" />{t(key)}</li>
             ))}
@@ -172,13 +197,13 @@ export function MausBotWelcomeCard({ bot, onClose }: { bot: Bot; onClose: () => 
           </div>
         </div>
 
-        <div className="mt-4 flex flex-col-reverse gap-2 sm:flex-row sm:items-center sm:justify-between">
+        <div className={cn("mt-4 flex flex-col-reverse gap-2 sm:flex-row sm:items-center", advanced ? "sm:justify-between" : "sm:justify-end")}>
           <button type="button" data-mausbot-welcome-later="" onClick={() => choose(false)} title={t("mausbotWelcome.notNowHint", { name })}
-            className="rounded-full px-3 py-2 text-[13px] text-ink-secondary hover:bg-raised-hover hover:text-ink">
+            className={advanced ? "rounded-full px-3 py-2 text-[13px] text-ink-secondary hover:bg-raised-hover hover:text-ink" : "ui-button ui-button-pill"}>
             {t("mausbotWelcome.notNow")}
           </button>
           <button type="button" data-mausbot-welcome-add="" onClick={() => choose(true)}
-            className="rounded-full bg-accent px-5 py-2.5 text-[14px] font-medium text-accent-ink hover:brightness-110">
+            className={advanced ? "rounded-full bg-accent px-5 py-2.5 text-[14px] font-medium text-accent-ink hover:brightness-110" : "ui-button ui-button-pill ui-button-primary"}>
             {t("mausbotWelcome.add", { name })}
           </button>
         </div>

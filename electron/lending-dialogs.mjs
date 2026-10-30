@@ -3,22 +3,17 @@
 // but Use my Mac, which shows only after a few seconds with no typing, so a key meant for the page never answers it.
 import { randomUUID } from "node:crypto";
 
-/** The word the person knows this computer by, and the popup's button. */
-const USE_WORDS = Object.freeze({
-  darwin: { computer: "this Mac", use: "Use my Mac" },
-  win32: { computer: "this PC", use: "Use my PC" },
-  other: { computer: "this computer", use: "Use this computer" },
-});
+import { wordsFor } from "./use-my-computer-words.mjs";
 
-/** "Use my Mac": the popup's question, its one line and its buttons. `screen`: apps and screen can be lent here. */
-export function useMyComputerText(platform, { screen }) {
-  const words = USE_WORDS[platform] ?? USE_WORDS.other;
+/** "Use my Mac": the popup's question, its one line and its buttons, by the word the person knows this computer by and
+ * in the language this app's page shows. `screen`: apps and screen can be lent here. */
+export function useMyComputerText(platform, { screen, locale = "en" }) {
+  const device = platform === "darwin" ? "mac" : platform === "win32" ? "pc" : "computer";
+  const words = wordsFor(locale);
   return {
-    message: `Let your bots use ${words.computer}?`,
-    detail: screen
-      ? "Like before, they can use its internet connection, read your Desktop, Documents and Downloads, and use your apps and screen."
-      : "Like before, they can use its internet connection and read your Desktop, Documents and Downloads.",
-    buttons: [words.use, "Not now"],
+    message: words[`lending.useMyComputer.question.${device}`],
+    detail: words[`lending.useMyComputer.${screen ? "detail" : "detailNoScreen"}.${device}`],
+    buttons: [words[`lending.useMyComputer.use.${device}`], words["lending.useMyComputer.notNow"]],
   };
 }
 
@@ -43,8 +38,8 @@ export function serverAccessDetail(env, { folders, terminal, computer }) {
 export function createLendingDialogs({ dialog, window, validate, isHome = async () => false, platform = process.platform }) {
   return {
     /** Use my Mac, asked in `parent`: "use" or "later". */
-    async useMyComputer(parent, { screen }) {
-      const { message, detail, buttons } = useMyComputerText(platform, { screen });
+    async useMyComputer(parent, { screen, locale }) {
+      const { message, detail, buttons } = useMyComputerText(platform, { screen, locale });
       const { response } = await dialog.showMessageBox(parent, { type: "question", message, detail, buttons, defaultId: 0, cancelId: 1, noLink: true });
       return response === 0 ? "use" : "later";
     },
@@ -77,6 +72,17 @@ export function createLendingDialogs({ dialog, window, validate, isHome = async 
         type: "warning", message: "Let your bots on My Cloud use your apps and screen?",
         detail: "In your own conversations and routines, they can see your screen, click and type in your apps as you, while this computer is awake with OpenMausBot open. That reaches anything those apps can reach. You can turn it off at any time on My Cloud's page or in Settings → MausBot Cloud.",
         buttons: ["Lend apps and screen", "Cancel"], defaultId: 1, cancelId: 1,
+      });
+      return response === 0;
+    },
+    /** The terminal asked for from My Cloud's page: false when there is no window to ask in. */
+    async confirmTerminal() {
+      const parent = window();
+      if (!parent || parent.isDestroyed()) return false;
+      const { response } = await dialog.showMessageBox(parent, {
+        type: "warning", message: "Let My Cloud's bots run commands on this computer as you?",
+        detail: "There is no limit on what a command can do: they can read, change or delete anything you can, and install software. Only continue if you trust them with this computer. It turns off again whenever lending is turned off.",
+        buttons: ["Allow the terminal", "Cancel"], defaultId: 1, cancelId: 1,
       });
       return response === 0;
     },

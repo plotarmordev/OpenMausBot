@@ -5,7 +5,7 @@ import type { Socket } from "node:net";
 import type { Duplex } from "node:stream";
 import { isSameOrigin, type RequestAuth } from "../request-auth.ts";
 import { PASS, type RouteHandler } from "./table.ts";
-import { createUpgrades, type Upgrades } from "./upgrades.ts";
+import { createUpgrades, switchingProtocols, type Upgrades } from "./upgrades.ts";
 
 const ROUTE = /^\/api\/desktop-viewer\/(local\/(?:shared|bot-[a-f0-9]{64}|pool-\d+)|vps\/[\w-]+)(\/websockify)?$/;
 const HANDSHAKE_MS = 10_000;
@@ -154,7 +154,7 @@ export function createDesktopViewer(deps: {
       remote.once("close", upgrade.close);
       pending.release();
       res.detachSocket(socket);
-      socket.write(`HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: ${accept}\r\n\r\n`);
+      socket.write(switchingProtocols(accept, pending.attestation));
       if (remoteHead.length) socket.write(remoteHead);
       if (pending.head.length) remote.write(pending.head);
       pending.head = Buffer.alloc(0);

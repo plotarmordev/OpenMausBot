@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Check, Copy, Pause, Pencil, Play, RotateCw, Trash2, X } from "lucide-react";
 
-import { automationStatus, capital, lastReceived, lastWhen, runLine, STATUS_WORD, webhookCalls, type Automation } from "@/lib/automations";
+import { automationStatus, automationSubtitle, capital, lastReceived, lastWhen, runLine, STATUS_WORD, webhookCalls, type Automation } from "@/lib/automations";
 import { cn } from "@/lib/cn";
 import { copyText } from "@/lib/copy-text";
 import { t } from "@/lib/i18n";
@@ -12,7 +12,7 @@ import { useAllAutomationActions } from "./app-actions";
 import { FixButton, StatusMark } from "./parts";
 
 const RECENT = 5;
-const BUTTON = "flex items-center justify-center gap-1.5 rounded-lg px-3 py-2 text-[12.5px] font-medium disabled:opacity-50";
+const BUTTON = "flex items-center justify-center gap-1.5 rounded-lg px-3 py-2 text-[13px] font-medium disabled:opacity-50";
 
 /** One automation, simply: its sentence, its status, the last five runs, and what can be done to it. */
 export function AutomationPanel({ automation, sentence, onClose, onEdit, onDeleted }: {
@@ -29,6 +29,9 @@ export function AutomationPanel({ automation, sentence, onClose, onEdit, onDelet
   const credential = webhook ? loadWebhookCredentials(webhookCredentialStore())[webhook.id] : undefined;
   const receiving = state.webhookIngress?.available !== false;
   const statusWord = t(STATUS_WORD[status.state]);
+  const name = automation.name.trim();
+  const botName = state.bots.find((bot) => bot.id === automation.botId)?.name ?? t("routines.unavailableBot");
+  const instructions = automation.instructions.trim();
   const reason = status.state === "done" ? t("automations.reason.done") : status.reason;
   const calls = webhook ? webhookCalls(webhook.id, state.webhookAttempts) : [];
   const received = webhook ? lastReceived(webhook, state.webhookAttempts) : null;
@@ -45,7 +48,10 @@ export function AutomationPanel({ automation, sentence, onClose, onEdit, onDelet
   return (
     <aside aria-label={t("automations.panel.label")} className="flex h-full w-[min(380px,100vw)] shrink-0 flex-col border-l border-hairline/40 bg-panel">
       <div className="flex items-start gap-3 border-b border-hairline/40 px-5 py-4">
-        <h2 className="min-w-0 flex-1 text-[16px] font-semibold leading-snug text-ink">{sentence}</h2>
+        <div className="min-w-0 flex-1">
+          <h2 className="text-[16px] font-semibold leading-snug text-ink">{name || sentence}</h2>
+          {name && <p className="mt-0.5 text-[13px] text-ink-secondary">{automationSubtitle(automation, botName)}</p>}
+        </div>
         <button type="button" onClick={onClose} className="rounded-full p-1.5 text-ink-secondary hover:bg-raised hover:text-ink" aria-label={t("automations.panel.close")}><X size={16} /></button>
       </div>
 
@@ -64,8 +70,8 @@ export function AutomationPanel({ automation, sentence, onClose, onEdit, onDelet
               {actions.copied === webhook.id ? <Check size={14} /> : <Copy size={14} />}
               {actions.copied === webhook.id ? t("automations.address.copied") : t("automations.address.copy")}
             </button>
-            {(!receiving || !state.config?.cloudHome) && <p className="mt-2 text-[11.5px] leading-relaxed text-ink-secondary">{receiving ? t("automations.address.keepOpen") : t("automations.address.unavailable")}</p>}
-            <details className="mt-2.5 text-[11.5px] text-ink-secondary">
+            {(!receiving || !state.config?.cloudHome) && <p className="mt-2 text-[12px] leading-relaxed text-ink-secondary">{receiving ? t("automations.address.keepOpen") : t("automations.address.unavailable")}</p>}
+            <details className="mt-2.5 text-[12px] text-ink-secondary">
               <summary className="cursor-pointer select-none font-medium text-ink-secondary hover:text-ink">{t("automations.more")}</summary>
               <div className="mt-2 space-y-2 leading-relaxed">
                 {received && (
@@ -85,7 +91,7 @@ export function AutomationPanel({ automation, sentence, onClose, onEdit, onDelet
                           <span className={cn("shrink-0 font-semibold", call.ok ? "text-success" : "text-danger")}>{call.ok ? "✓" : "✗"}</span>
                           <span className="min-w-0 truncate text-ink">{call.reason}</span>
                         </button>
-                        {openCall === call.id && <pre className="mx-1.5 mb-1 whitespace-pre-wrap break-all rounded-md bg-inset px-2 py-1.5 font-mono text-[10.5px] text-ink">{call.preview || t("automations.calls.empty")}</pre>}
+                        {openCall === call.id && <pre className="mx-1.5 mb-1 whitespace-pre-wrap break-all rounded-md bg-inset px-2 py-1.5 font-mono text-[11px] text-ink">{call.preview || t("automations.calls.empty")}</pre>}
                       </li>
                     ))}</ul>
                   )}
@@ -106,18 +112,20 @@ export function AutomationPanel({ automation, sentence, onClose, onEdit, onDelet
           </section>
         )}
 
+        {name && instructions && <p data-testid="automation-instructions" className="whitespace-pre-wrap break-words text-[13px] leading-relaxed text-ink">{instructions}</p>}
+
         {automation.appTrigger && <AppEventsSection trigger={automation.appTrigger} />}
 
         <section>
           <h3 className="mb-2 text-[12px] font-semibold uppercase tracking-wider text-ink-tertiary">{t("automations.panel.recent")}</h3>
           {automation.runs.length === 0
-            ? <p className="text-[12.5px] text-ink-secondary">{t("automations.panel.noRuns")}</p>
+            ? <p className="text-[13px] text-ink-secondary">{t("automations.panel.noRuns")}</p>
             : <ul className="space-y-1">{automation.runs.slice(0, RECENT).map((run) => {
               const line = runLine(run);
               return (
                 <li key={run.id}>
                   <button type="button" disabled={!run.threadId} onClick={() => actions.openRun(automation, run)} title={run.threadId ? t("automations.panel.open") : undefined}
-                    className="flex w-full items-baseline gap-2 rounded-lg px-2 py-1.5 text-left text-[12.5px] hover:bg-raised disabled:hover:bg-transparent">
+                    className="flex w-full items-baseline gap-2 rounded-lg px-2 py-1.5 text-left text-[13px] hover:bg-raised disabled:hover:bg-transparent">
                     <span className="shrink-0 text-ink-secondary">{line.when}</span>
                     <span className={cn("shrink-0 font-semibold", line.mark === "✓" ? "text-success" : line.mark === "✗" ? "text-danger" : "text-warning")}>{line.mark}</span>
                     <span className="min-w-0 truncate text-ink">{line.text}</span>

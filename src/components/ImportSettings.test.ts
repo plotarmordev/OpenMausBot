@@ -51,9 +51,9 @@ describe("Settings → Import", () => {
     expect(apps({ result: { skills: { added: ["pdf"], present: [], skipped: [], filesLeftOut: 0, review: [] } } })).toContain("Added 1 skill.");
   });
 
-  it("uses the one shared Grok Bot import in Templates, Settings and the welcome step", () => {
+  it("uses the one shared bot import in Templates and Settings", () => {
     const source = (file: string) => readFileSync(join(import.meta.dirname, file), "utf8");
-    for (const file of ["TeamLibraryPanel.tsx", "ImportSettings.tsx", "onboarding/beats/ImportBeat.tsx"]) {
+    for (const file of ["TeamLibraryPanel.tsx", "ImportSettings.tsx"]) {
       expect(source(file), file).toMatch(/import \{ GrokImportFlow \} from "(?:\.\/|@\/components\/)GrokImportFlow"/);
       expect(source(file), file).toContain("<GrokImportFlow");
       expect(source(file), file).not.toContain("<GrokImportBox");

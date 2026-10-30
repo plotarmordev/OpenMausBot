@@ -39,8 +39,8 @@ export const MAX_ROOM_TURN_TIMEOUT_MINUTES = 1_440;
 export const DEFAULT_MCP_CALL_TIMEOUT_MINUTES = 10;
 export const MIN_MCP_CALL_TIMEOUT_MINUTES = 1;
 export const MAX_MCP_CALL_TIMEOUT_MINUTES = 60;
-export const DEFAULT_MAX_CONCURRENT_BOT_THREADS = 3;
-export const MAX_CONCURRENT_BOT_THREADS = 10;
+export const DEFAULT_MAX_CONCURRENT_BOT_THREADS = 16;
+export const MAX_CONCURRENT_BOT_THREADS = 16;
 /** The floor keeps a log tail large enough for the event inspector's recent-line window. */
 export const MIN_THREAD_EVENT_LOG_BYTES = 256 * 1024;
 export const MAX_THREAD_EVENT_LOG_BYTES = 4 * 1024 * 1024 * 1024;
@@ -247,6 +247,8 @@ const featureConfigSchema = z.object({
   claudeUserSkills: z.boolean().optional(), // Claude bots also load the skills in ~/.claude/skills, in place. Off unless true.
   /** LLM-generated titles for new threads. Off unless true. */
   llmThreadTitles: z.boolean().optional(),
+  /** A new bot's setup card offers answers its engine writes for it, when there is something to go on. On unless false. */
+  smartSetupChoices: z.boolean().optional(),
   /** Recall matching passages from the bot's memory into each turn. On unless false. */
   autoRecall: z.boolean().optional(),
   /** One shared skills store that bots read by assignment. Off unless true. */
@@ -516,7 +518,7 @@ export interface AppConfig extends HelperConfig {
   context?: { rebuildBytes?: number; compactAt?: number; autoCompact?: boolean; roomCompactAt?: number; roomSessions?: boolean; replayToolHistory?: boolean };
   memory?: { captureQuietMs?: number; tidyHour?: number };
   localVm?: { mode?: "shared" | "per-bot" | "pool"; maxInstances?: number; idleTimeoutMinutes?: number };
-  features?: { skillAuthoring?: boolean; skillReview?: boolean; skillReviewSteps?: number; showToolCalls?: boolean; browser?: boolean; sharedComputers?: boolean; claudeUserMcp?: boolean; claudeUserSkills?: boolean; llmThreadTitles?: boolean; autoRecall?: boolean; skillsLibrary?: boolean; shareLearnedSkills?: "off" | "ask" | "auto"; roomMemoryCapture?: boolean; parallelRoomJobs?: boolean; chiefEscalations?: boolean; acpPlanLines?: boolean; agentsToolBridge?: boolean };
+  features?: { skillAuthoring?: boolean; skillReview?: boolean; skillReviewSteps?: number; showToolCalls?: boolean; browser?: boolean; sharedComputers?: boolean; claudeUserMcp?: boolean; claudeUserSkills?: boolean; llmThreadTitles?: boolean; smartSetupChoices?: boolean; autoRecall?: boolean; skillsLibrary?: boolean; shareLearnedSkills?: "off" | "ask" | "auto"; roomMemoryCapture?: boolean; parallelRoomJobs?: boolean; chiefEscalations?: boolean; acpPlanLines?: boolean; agentsToolBridge?: boolean };
   onboarding?: { completedAt?: string; version?: number; reelSeen?: boolean; hintsSeen?: string[]; firstTurnAt?: string };
   browserProfiles?: BrowserProfile[];
   browserEngine?: BrowserEngineConfig;
@@ -713,10 +715,6 @@ export function sharedComputersEnabled(cfg: AppConfig): boolean {
 
 export function claudeUserMcpEnabled(cfg: Pick<AppConfig, "features">): boolean {
   return cfg.features?.claudeUserMcp === true;
-}
-
-export function llmThreadTitlesEnabled(cfg: AppConfig): boolean {
-  return cfg.features?.llmThreadTitles === true;
 }
 
 

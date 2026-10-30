@@ -12,6 +12,8 @@ export type GroupGoalRunStatus =
 
 export interface GroupGoalRunCardData {
   runId: string;
+  /** Verified person-originated main-chat work; absent markers remain capped. */
+  capacity?: "person";
   goal: string;
   status: GroupGoalRunStatus;
   coordinatorBotId: string;

@@ -60,13 +60,20 @@ describe("sidebar footer places", () => {
     expect(render(density).html).toBe("");
   });
 
-  it.each([false, true])("puts Automations on the avatars-only rail ahead of Apps, with Team map (advanced: %s)", (advanced) => {
+  it.each([false, true])("puts Automations on the avatars-only density ahead of Apps, with Team map (advanced: %s)", (advanced) => {
     fixture.advanced = advanced;
-    for (const html of [render("icons").html, renderToStaticMarkup(createElement(() => SidebarFooterNav({ density: "icons", rail: true })))]) {
-      expect(html).toContain('aria-label="Automations" title="Automations"');
-      expect(html).toContain('aria-label="Team map" title="Team map"');
-      expect(html.indexOf('data-sidebar-nav="automations"')).toBeLessThan(html.indexOf('data-sidebar-nav="apps"'));
-    }
+    const html = render("icons").html;
+    expect(html).toContain('aria-label="Automations" title="Automations"');
+    expect(html).toContain('aria-label="Team map" title="Team map"');
+    expect(html.indexOf('data-sidebar-nav="automations"')).toBeLessThan(html.indexOf('data-sidebar-nav="apps"'));
+  });
+
+  it("keeps only Apps on Simple mode's rail: Automations and Team map are in its account menu", () => {
+    const html = renderToStaticMarkup(createElement(() => SidebarFooterNav({ density: "icons", rail: true })));
+    expect(html).toContain('aria-label="Apps" title="Apps"');
+    expect(html).toContain('data-tour="tools"');
+    expect(html).not.toContain('data-sidebar-nav="automations"');
+    expect(html).not.toContain('data-sidebar-nav="team-map"');
   });
 
   it("opens the Automations page through the store, and marks it current while open", () => {
@@ -177,42 +184,13 @@ function renderBottom() {
   const html = renderToStaticMarkup(createElement(Capture));
   return { html, nodes: nodes(tree) };
 }
-const press = (tree: ReactElement<Props>[], id: string) =>
-  (tree.find((node) => node.props.id === id && typeof node.props.onClick === "function")!.props.onClick as () => void)();
-
 describe("the bottom bar beside the profile", () => {
-  it("carries Automations and Team map as icons with tooltips in Simple mode, ahead of Apps", () => {
-    const { html } = renderBottom();
-    for (const label of ["Automations", "Team map"]) {
-      expect(html).toContain(`aria-label="${label}" title="${label}"`);
-      expect(html).not.toContain(`>${label}</span>`);
-    }
-    const order = ["automations", "team-map", "apps"].map((id) => html.indexOf(`data-sidebar-nav="${id}"`));
-    expect(order.every((index) => index >= 0)).toBe(true);
-    expect(order).toEqual([...order].sort((a, b) => a - b));
-    expect(html).toMatch(/data-tour="nav-automations" data-sidebar-nav="automations"/);
-  });
-
-  it("leaves Automations and Team map to the Tools rows in Advanced mode", () => {
-    fixture.advanced = true;
+  it.each([false, true])("carries Apps alone: Automations and Team map are Tools rows in Advanced and account menu items in Simple (advanced: %s)", (advanced) => {
+    fixture.advanced = advanced;
     const { html } = renderBottom();
     expect(html).not.toContain('data-sidebar-nav="automations"');
     expect(html).not.toContain('data-sidebar-nav="team-map"');
     expect(html).toContain('data-sidebar-nav="apps"');
-  });
-
-  it("opens Automations and Team map, marks the open one, and carries the failed-run dot on Automations", () => {
-    press(renderBottom().nodes, "automations");
-    expect(fixture.dispatch).toHaveBeenLastCalledWith({ type: "showRoutines", view: "list" });
-    press(renderBottom().nodes, "team-map");
-    expect(fixture.dispatch).toHaveBeenLastCalledWith({ type: "showTeamMap" });
-    fixture.state.activeView = "team-map";
-    expect(renderBottom().html).toMatch(/data-sidebar-nav="team-map"[^>]*aria-current="page"/);
-    fixture.state.routineRuns = [{ id: "r", status: "failed", scheduledFor: 1 }];
-    const html = renderBottom().html;
-    const dot = html.indexOf('data-testid="routines-attention"');
-    expect(dot).toBeGreaterThan(html.indexOf('data-sidebar-nav="automations"'));
-    expect(dot).toBeLessThan(html.indexOf('data-sidebar-nav="team-map"'));
   });
 });
 

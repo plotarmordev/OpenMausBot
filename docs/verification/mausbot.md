@@ -23,6 +23,20 @@ pnpm exec vitest run server/default-bot.test.ts server/default-bot.e2e.test.ts \
 - `server/default-bot.e2e.test.ts`: on a real fixture server, `DELETE
   /api/bots/:id` answers 409, the switch hides and shows it, and a MausBot that
   is not the Chief creates a bot with `create_bot`.
+- `server/mausbot-notifications.test.ts`, `server/drivers/agents-mausbot-tools.test.ts`
+  and the second case of `server/default-bot.e2e.test.ts`: MausBot alone gets
+  `list_unread_notifications` and `mark_notifications_read`, listed last.
+  The list returns the unread feed (bounded, trimmed) with a lean per item;
+  marking read takes only finished work (`done`, `delegation-settled`), leaves
+  questions, approvals, failures, deferred runs (`routine-deferred`, which the
+  app routes as an ask), sign-ins, money, mentions and unrecognised kinds
+  unread, has no mark-all, and says what it marked and what it left. A `done`
+  item is the bot's final reply and may end in a question: the list's text says
+  such an item is the person's, to be marked read only if they said so.
+  Personal installs only (refused on any team server); no other bot may call
+  them. The list is annotated read-only like the other reviewed reads.
+  `server/drivers/agents-catalog-wire.test.ts` budgets the `+mausbot` profiles,
+  each within 2% of the same Chief's list without them.
 - `server/team-setup-requests.test.ts` ("MausBot's Chief-level team setup"):
   it adds specialists like a Chief but never changes who the Chief is.
 - `src/components/MausBotWelcome.test.ts` and `src/lib/default-bot.test.ts`:
@@ -34,8 +48,9 @@ pnpm exec vitest run server/default-bot.test.ts server/default-bot.e2e.test.ts \
   by the new row's height, the avatar lands in the new slot and leaves nothing
   behind, reduced motion only fades the row in, and a hidden sidebar just adds it.
 - `server/default-bot.test.ts` also: a place with no Chief gets MausBot as its
-  Chief and the daily brief comes from it (hidden from the sidebar or not); a
-  place with a Chief keeps it.
+  Chief; a place with a Chief keeps it. Either way the daily brief comes from
+  MausBot, hidden from the sidebar or not, and its intro says so. How the watch
+  moves to MausBot is in [Proactive routines and the brief](proactive-routines.md).
 
 ## By hand
 

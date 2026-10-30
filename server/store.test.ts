@@ -19,7 +19,7 @@ import {
 import type { ModelSelection } from "./contracts.ts";
 import * as mdb from "./message-db.ts";
 import { peerAllowKey } from "./peer-approval-key.ts";
-import { canAccessTeam } from "./peer-roster.ts";
+import { hasTeamAuthority } from "./peer-roster.ts";
 import { Store, toWireTask, type BotRecord } from "./store.ts";
 import type { TeamSetupRequest } from "../shared/team-setup.ts";
 import { SECTION_CONTEXTS_FILE, readSectionContext, writeSectionContext } from "./section-context.ts";
@@ -172,7 +172,7 @@ describe("Store", () => {
     const manager = store.createBot({ section: "Office" });
     store.setChiefOfStaff(manager.id);
     store.patchBot(manager.id, { managedSections: ["Delivery", " Delivery ", "Other"] });
-    expect(canAccessTeam(manager, "Delivery")).toBe(true);
+    expect(hasTeamAuthority(manager, "Delivery")).toBe(true);
     const room = store.createGroup("Room", [chief.id], false, "Delivery");
     const message = store.appendMessage(chief.threadId, { role: "user", kind: "text", text: "Keep this conversation" });
     writeSectionContext("Delivery", "Shared team instructions");
@@ -184,19 +184,19 @@ describe("Store", () => {
     expect(chief).toMatchObject({ section: "Launch", chiefOfStaff: true });
     expect(archived).toMatchObject({ section: "Launch", hidden: true });
     expect(manager.managedSections).toEqual(["Launch", "Other"]);
-    expect(canAccessTeam(manager, "Launch")).toBe(true);
+    expect(hasTeamAuthority(manager, "Launch")).toBe(true);
     expect(room.section).toBe("Launch");
     expect(readSectionContext("Launch")?.text).toBe("Shared team instructions");
     expect(readSectionContext("Delivery")).toBeNull();
     expect(computers.forSection("Launch")?.id).toBe(computer.id);
     const restored = new Store(selection);
     expect(restored.bot(chief.id)?.section).toBe("Launch");
-    expect(canAccessTeam(restored.bot(manager.id)!, "Launch")).toBe(true);
+    expect(hasTeamAuthority(restored.bot(manager.id)!, "Launch")).toBe(true);
     expect(restored.group(room.id)?.section).toBe("Launch");
     expect(restored.messagesFor(chief.threadId)).toContainEqual(message);
     expect(restored.sections).not.toContain("Delivery");
     store.setBotsSection([], "Delivery");
-    expect(canAccessTeam(manager, "Delivery")).toBe(false);
+    expect(hasTeamAuthority(manager, "Delivery")).toBe(false);
   });
 
   it("rejects rename conflicts and active work without changing teams", () => {
@@ -531,6 +531,28 @@ describe("Store", () => {
     expect(bot.modelSelection).toEqual(selection());
   });
 
+  it("offers Set me up on a blank bot's greeting, never on one given a role or instructions", () => {
+    const store = new Store(selection, undefined, undefined, "en");
+    const greeting = (bot: BotRecord) => store.messagesFor(bot.threadId)[0];
+    expect(greeting(store.createBot())).toMatchObject({ role: "bot", kind: "text", setupOffer: true });
+    expect(greeting(store.createBot({ soul: "Only water the garden." }))?.setupOffer).toBeUndefined();
+    expect(greeting(store.createBot({ description: "Files bugs." }))?.setupOffer).toBeUndefined();
+    expect(greeting(store.createBot({ soul: "  \n", description: " " }))?.setupOffer).toBe(true);
+  });
+
+  it("puts the setup card's answers, in the app's language, on a blank bot's greeting only", () => {
+    let language = "en";
+    const store = new Store(selection, undefined, undefined, () => language);
+    const greeting = (bot: BotRecord) => store.messagesFor(bot.threadId)[0];
+    expect(greeting(store.createBot())?.setupChoices).toEqual([
+      "Research and digging into topics", "Keeping an eye on things for me", "Email, calendar and messages",
+      "Bookings, shopping and errands", "Data, spreadsheets and reports",
+    ]);
+    expect(greeting(store.createBot({ description: "Files bugs." }))?.setupChoices).toBeUndefined();
+    language = "es-MX";
+    expect(greeting(store.createBot())?.setupChoices?.[0]).toBe("Investigar y profundizar en temas");
+  });
+
   it("reads the current language when creating a bot", () => {
     let language = "en";
     const store = new Store(selection, undefined, undefined, () => language);
@@ -538,6 +560,16 @@ describe("Store", () => {
 
     const bot = store.createBot();
     expect(store.messagesFor(bot.threadId)[0]?.text).toBe(`Oi, eu sou ${bot.name}. O que você gostaria que eu fizesse?`);
+  });
+
+  it("greets the person by the first name they have given by the time the bot is created", () => {
+    let person: string | undefined;
+    const store = new Store(selection, undefined, undefined, "en", () => person);
+    const greeting = (name: string) => store.messagesFor(store.createBot({ name }).threadId)[0]?.text;
+
+    expect(greeting("Ivy")).toBe("Hi, I'm Ivy. What would you like me to do?");
+    person = "Milind Soni";
+    expect(greeting("Scout")).toBe("Hi Milind, I'm Scout. What would you like me to do?");
   });
 
   it("clears provider-owned voice ids as one durable mutation", () => {
@@ -1395,14 +1427,14 @@ describe("Store", () => {
 
     expect(store.changeEmptySection("Delivery", nextName)).toBeUndefined();
     expect(chief.managedSections).toEqual(["Delivery East", ""]);
-    expect(canAccessTeam(chief, "Delivery")).toBe(false);
+    expect(hasTeamAuthority(chief, "Delivery")).toBe(false);
     expect(announcements).toEqual([chief.id]);
     store.setBotsSection([], "Delivery");
     const reloaded = new Store(selection);
     expect(reloaded.sections).toContain("Delivery");
-    expect(canAccessTeam(reloaded.bot(chief.id)!, "Delivery")).toBe(false);
-    expect(canAccessTeam(reloaded.bot(chief.id)!, "Delivery East")).toBe(true);
-    expect(canAccessTeam(reloaded.bot(chief.id)!, "")).toBe(true);
+    expect(hasTeamAuthority(reloaded.bot(chief.id)!, "Delivery")).toBe(false);
+    expect(hasTeamAuthority(reloaded.bot(chief.id)!, "Delivery East")).toBe(true);
+    expect(hasTeamAuthority(reloaded.bot(chief.id)!, "")).toBe(true);
   });
 
   it("keeps grants when an empty-team rename is a no-op or rejected", () => {
@@ -1549,7 +1581,7 @@ describe("Store", () => {
     const chief = store.bots[0]!;
     expect(chief).toMatchObject({ name: "MausBot", color: "chrome", chiefOfStaff: true, defaultBot: {} });
     expect(store.messagesFor(chief.threadId).map((message) => [message.kind, message.helperIntro, message.card?.options.length])).toEqual([["options", true, 4]]);
-    expect(store.messagesFor(chief.threadId)[0]!.text).toContain("Hi, I'm MausBot, your helper for everything here.");
+    expect(store.messagesFor(chief.threadId)[0]!.text).toContain("Hey! I'm MausBot. I'm new here. I'm here to be your Chief of Staff.");
     const later = Array.from({ length: 25 }, () => store.createBot());
     expect(later.map((bot) => bot.color)).not.toContain("silver");
     expect(later.map((bot) => bot.color)).not.toContain("chrome");
@@ -2538,7 +2570,7 @@ describe("soul", () => {
       ] };
     store.applyTeamSetup(request);
     expect(new Store(selection).bot("created-by-chief")?.visibility).toEqual({ people: ["hr@example.test"] });
-    expect(new Store(selection).bot("created-by-chief")).toMatchObject({ composio: false, connectorTools: {}, approvePeerComms: false });
+    expect(new Store(selection).bot("created-by-chief")).toMatchObject({ autoApprove: false, approvePeerComms: false });
     const open = new Store(selection);
     const everyoneChief = open.createBot({ name: "Ops", section: "Ops" });
     open.patchBot(everyoneChief.id, { chiefOfStaff: true });
@@ -2546,6 +2578,66 @@ describe("soul", () => {
       { action: "create", botId: "created-open", threadId: "created-open-thread", fields: { name: "Helper", section: "Ops", modelSelection: selection() } },
     ] });
     expect(open.bot("created-open")?.visibility).toBeUndefined();
+  });
+
+  const createdBy = (store: Store, chief: BotRecord, botId: string, requestId = `setup-${botId}`) => {
+    store.applyTeamSetup({ version: 1, requestId, botId: chief.id, threadId: chief.threadId, reason: "Requested", createdAt: 1,
+      requesterRevision: "fixture", newTeams: [], operations: [
+        { action: "create", botId, threadId: `${botId}-thread`, fields: { name: botId, section: chief.section, modelSelection: selection() } },
+      ] });
+    return store.bot(botId)!;
+  };
+  const grantsOf = (bot: BotRecord) => ({ composio: bot.composio, connectorTools: bot.connectorTools, connectorScopes: bot.connectorScopes, mcpServers: bot.mcpServers });
+
+  it("starts a bot a Chief creates with the Chief's own connected apps and levels, copied, never more", () => {
+    const store = new Store(selection);
+    const chief = store.createBot({ name: "Ops", section: "Ops" });
+    store.patchBot(chief.id, { chiefOfStaff: true, composio: true, mcpServers: ["notes"],
+      connectorTools: { gmail: { tools: ["GMAIL_FETCH_EMAILS"] }, slack: { tools: "*" } },
+      connectorScopes: { apps: { gmail: "read", slack: "write" } } });
+    const helper = createdBy(store, chief, "helper");
+    expect(grantsOf(helper)).toEqual({ composio: true, mcpServers: ["notes"],
+      connectorTools: { gmail: { tools: ["GMAIL_FETCH_EMAILS"] }, slack: { tools: "*" } },
+      connectorScopes: { apps: { gmail: "read", slack: "write" } } });
+    expect(grantsOf(new Store(selection).bot("helper")!)).toEqual(grantsOf(helper));
+    expect(helper).toMatchObject({ autoApprove: false, approvePeerComms: false });
+    chief.connectorScopes!.apps.gmail = "write";
+    (chief.connectorTools!.gmail.tools as string[]).push("GMAIL_SEND_EMAIL");
+    expect(helper.connectorScopes?.apps.gmail, "a copy, not the Chief's own record").toBe("read");
+    expect(helper.connectorTools?.gmail).toEqual({ tools: ["GMAIL_FETCH_EMAILS"] });
+
+    store.patchBot(chief.id, { connectorScopes: { apps: { slack: "read" } }, connectorTools: { slack: { tools: ["SLACK_LIST_CHANNELS"] } }, mcpServers: [] });
+    const later = createdBy(store, chief, "later");
+    expect(grantsOf(later), "what the Chief has when the bot is made").toEqual({ composio: true, mcpServers: [],
+      connectorTools: { slack: { tools: ["SLACK_LIST_CHANNELS"] } }, connectorScopes: { apps: { slack: "read" } } });
+    expect(grantsOf(helper).connectorScopes, "a bot made earlier keeps its own").toEqual({ apps: { gmail: "read", slack: "write" } });
+
+    store.patchBot(chief.id, { composio: false, connectorTools: undefined, connectorScopes: undefined, mcpServers: undefined });
+    expect(grantsOf(createdBy(store, chief, "off")), "off stays off, even once the switch is turned on").toEqual({ composio: false, connectorTools: {} });
+  });
+
+  it("leaves a bot the person creates with today's defaults, whatever a Chief has", () => {
+    const store = new Store(selection);
+    const chief = store.createBot({ name: "Ops", section: "Ops" });
+    store.patchBot(chief.id, { chiefOfStaff: true, composio: false, connectorTools: {}, connectorScopes: { apps: {} }, mcpServers: [] });
+    const mine = store.createBot({ name: "Mine", section: "Ops" });
+    for (const field of ["composio", "connectorTools", "connectorScopes", "mcpServers"]) expect(mine).not.toHaveProperty(field);
+  });
+
+  it("on a Team Cloud, gives a member's Chief's apps only to the bot it makes for that member", () => {
+    const store = new Store(selection);
+    const ada = "ada@acme.test";
+    const chief = store.createBot({ name: "Ada's MausBot", section: "Sales", createdBy: ada, visibility: { people: [ada] } });
+    store.patchBot(chief.id, { chiefOfStaff: true, connectorTools: { gmail: { tools: "*" }, slack: { tools: ["SLACK_SEND_MESSAGE"] } },
+      connectorScopes: { apps: { gmail: "write", slack: "read" } } });
+    const helper = createdBy(store, chief, "ada-helper");
+    expect(helper).toMatchObject({ createdBy: ada, visibility: { people: [ada] } });
+    expect(grantsOf(helper)).toEqual(grantsOf(chief));
+    const shared = store.createBot({ name: "Team Chief", section: "Ops" });
+    store.patchBot(shared.id, { chiefOfStaff: true, connectorScopes: { apps: { slack: "write" } } });
+    const teamHelper = createdBy(store, shared, "team-helper");
+    expect(teamHelper.createdBy, "a bot nobody owns makes bots nobody owns").toBeUndefined();
+    expect(grantsOf(teamHelper)).toEqual({ connectorScopes: { apps: { slack: "write" } } });
   });
 
   it("deleteBot removes the bot folder with the workspace", () => {

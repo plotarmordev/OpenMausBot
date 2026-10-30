@@ -22,6 +22,7 @@ export interface BeginRequest {
   /** The host's own id for the requesting turn (its generation); default a fresh uuid. */
   id?: string;
   origin: Origin;
+  capacity?: "person";
   /** person | routine_run | external_runtime */
   requester: Requester;
   /** The requesting conversation's own bot and thread. */
@@ -131,6 +132,7 @@ export class Runtime {
       level: req.level, levelSource: "own", executions: 1, restarts: 0, createdAt: now, startedAt: now, lastActivityAt: now,
       result: "", rework: false, budgets: { since: now, requests: 0, executions: 1, wakes: 0 }, version: 1,
       ...(req.goalRunId ? { goalRunId: req.goalRunId } : {}),
+      ...(req.capacity ? { capacity: req.capacity } : {}),
     };
     this.store.transaction(() => {
       this.store.insert(root, { kind: "enqueued", at: now, detail: "queued: root" });

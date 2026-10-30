@@ -12,6 +12,7 @@ import type { Audience } from "../audience.ts";
 import { storeUploads } from "../browser-upload.ts";
 import type { BrowserLive } from "../browser-live.ts";
 import type { LiveRouter } from "../browser/engines.ts";
+import { requestedSize } from "../browser/viewers/viewport.ts";
 import { messageFileDisposition } from "../message-file.ts";
 import { isSameOrigin, type RequestAuth } from "../request-auth.ts";
 import { PASS, type RouteHandler } from "./table.ts";
@@ -127,7 +128,8 @@ export function createBrowserViewerRoutes(deps: BrowserViewerRouteDeps): RouteHa
     if (live) {
       if (method === "GET" && live[2] === "live") {
         req.socket.setTimeout(0);
-        return await deps.viewers.open({ botId: browser.botId, session: browser.session, spec: browser.spec, owner, isCurrent, res, resume: url.searchParams.get("resume") });
+        const size = requestedSize(Number(url.searchParams.get("width")), Number(url.searchParams.get("height")));
+        return await deps.viewers.open({ botId: browser.botId, session: browser.session, spec: browser.spec, owner, isCurrent, res, resume: url.searchParams.get("resume"), size });
       }
       if (method === "POST" && live[2] === "action") {
         const body = await readBody(req, 32_768);
@@ -147,7 +149,7 @@ export function createBrowserViewerRoutes(deps: BrowserViewerRouteDeps): RouteHa
       const opened = deps.viewers.stream({
         session: browser.session, spec: browser.spec, botId: browser.botId, owner,
         canOperate: url.searchParams.get("interactive") !== "false",
-        params: url.searchParams, req, socket: pending.socket, head: pending.head,
+        params: url.searchParams, req, socket: pending.socket, head: pending.head, attestation: pending.attestation,
         isCurrent, restartRefusal: () => deps.restartRefusal(browser.session),
       });
       if (!opened) return json(res, 409, { error: "This browser shows in the live view only." });

@@ -2,6 +2,7 @@ import { AlertTriangle, Loader2, RefreshCw, Server, Trash2 } from "lucide-react"
 import { t } from "@/lib/i18n";
 import { cn } from "@/lib/cn";
 import { Card } from "./SettingsPrimitives";
+import { KeysLink } from "./keys/KeysLink";
 import {
   computerStateLabel,
   vpsComputerInventoryStateKind,
@@ -41,7 +42,7 @@ export function VpsComputersCard({
           {configured === true
             ? t("vm.vps.sshHost", { alias: aliases.join(", ") || t("vm.vps.configuredFallback") })
             : configured === false
-              ? t("vm.vps.needsAlias")
+              ? <>{t("vm.vps.needsAlias")} <KeysLink id="vps" /></>
               : t("vm.vps.refreshHint")}
         </div>
         <button
@@ -107,7 +108,7 @@ export function VpsComputersCard({
             >
               <div className="min-w-0 flex-1">
                 <div className="flex flex-wrap items-center gap-2">
-                  <span className="truncate text-[13.5px] font-medium text-ink">
+                  <span className="truncate text-[14px] font-medium text-ink">
                     {instance.orphaned ? t("vm.vps.orphan", { id: shortId }) : instance.ownerName}
                   </span>
                   <span
@@ -128,11 +129,11 @@ export function VpsComputersCard({
                     </span>
                   )}
                 </div>
-                <div className="mt-1 text-[11.5px] text-ink-secondary">
+                <div className="mt-1 text-[12px] text-ink-secondary">
                   {instance.orphaned ? t("vm.owner.gone") : t("vm.owner.owned")}
                 </div>
                 {instance.inUse && (
-                  <div className="mt-1 text-[11.5px] text-ink-secondary">{t("vm.vps.stopFirst")}</div>
+                  <div className="mt-1 text-[12px] text-ink-secondary">{t("vm.vps.stopFirst")}</div>
                 )}
               </div>
               <button

@@ -1,7 +1,9 @@
 import { useEffect, useState } from "react";
 import { Loader2, PackageOpen, RefreshCw, Sparkles, X } from "lucide-react";
 import { useUpdaterState } from "@/lib/updater";
+import { t } from "@/lib/i18n";
 import { brand } from "../lib/brand";
+import { NoticeToast } from "./NoticeCard";
 
 const primaryAction =
   "flex flex-1 items-center justify-center gap-1.5 rounded-lg bg-accent py-1.5 text-[13px] font-medium text-white transition-colors disabled:cursor-default disabled:bg-control disabled:text-ink-secondary";
@@ -20,6 +22,25 @@ type UpdateBannerProps = {
   sidebarIndicator?: boolean;
 };
 
+/** Said once, the first time the person looks at the window after the app updated itself while they were away. */
+function UpdatedLine({ version, onSeen }: { version: string; onSeen: () => void }) {
+  const [shown, setShown] = useState(false);
+  useEffect(() => {
+    if (shown) return;
+    const look = () => {
+      if (document.visibilityState === "visible" && document.hasFocus()) setShown(true);
+    };
+    look();
+    window.addEventListener("focus", look);
+    document.addEventListener("visibilitychange", look);
+    return () => {
+      window.removeEventListener("focus", look);
+      document.removeEventListener("visibilitychange", look);
+    };
+  }, [shown]);
+  return shown ? <NoticeToast text={t("update.updatedItself", { app: brand().name, version })} onDone={onSeen} /> : null;
+}
+
 export function UpdateBanner({ sidebarIndicator = false }: UpdateBannerProps) {
   const s = useUpdaterState();
   const [dismissed, setDismissed] = useState<string | null>(null);
@@ -27,6 +48,9 @@ export function UpdateBanner({ sidebarIndicator = false }: UpdateBannerProps) {
   const status = s?.status;
   useEffect(() => setPending(null), [status]);
 
+  if (s?.updated && ["idle", "checking", "downloading", "preparing"].includes(s.status)) {
+    return <UpdatedLine version={s.updated} onSeen={() => void window.ogb?.updater?.seen?.().catch(() => {})} />;
+  }
   if (!s || s.status === "idle" || s.status === "checking" || s.status === "downloading" || s.status === "preparing") return null;
   if (sidebarIndicator && (s.status === "downloaded" || s.status === "installing")) return null;
   const key = `${s.status}:${s.version ?? ""}`;
@@ -51,15 +75,20 @@ export function UpdateBanner({ sidebarIndicator = false }: UpdateBannerProps) {
     s.status === "downloaded"
       ? handoff
         ? "Copy the install command and open a terminal."
-        : "Restart to finish updating."
+        : s.installsByItself
+          ? t("update.card.idleNote", { app: brand().name })
+          : "Restart to finish updating."
       : installing
         ? handoff
           ? "Copying the command…"
           : s.message || `${brand().name} will reopen in a moment.`
         : s.status === "handed-off"
-          ? s.terminalOpened
-            ? "Command copied — paste it in the terminal that opened."
-            : "Command copied — paste it in a terminal to finish."
+          ? // when the automatic install could not run, say why before the steps
+            `${s.message ? `${s.message} ` : ""}${
+              s.terminalOpened
+                ? "Command copied — paste it in the terminal that opened."
+                : "Command copied — paste it in a terminal to finish."
+            }`
           : s.retryable === false
             ? `${friendlyError(s.message?.split(" Quit and reopen ")[0])} Quit and reopen ${brand().name} before trying the update again.`
             : friendlyError(s.message);
@@ -71,8 +100,8 @@ export function UpdateBanner({ sidebarIndicator = false }: UpdateBannerProps) {
           <Sparkles size={14} />
         </span>
         <div className="min-w-0 flex-1">
-          <div className="text-[13.5px] font-semibold text-ink">{title}</div>
-          <div className="mt-0.5 text-[12.5px] text-ink-secondary" title={subtitle}>
+          <div className="text-[14px] font-semibold text-ink">{title}</div>
+          <div className="mt-0.5 text-[13px] text-ink-secondary" title={subtitle}>
             {subtitle}
           </div>
         </div>
@@ -88,7 +117,7 @@ export function UpdateBanner({ sidebarIndicator = false }: UpdateBannerProps) {
       </div>
 
       {s.status === "handed-off" && s.command && (
-        <code className="mt-2.5 block overflow-x-auto rounded-lg bg-control px-2 py-1.5 font-mono text-[11.5px] whitespace-pre text-ink-secondary">
+        <code className="mt-2.5 block overflow-x-auto rounded-lg bg-control px-2 py-1.5 font-mono text-[12px] whitespace-pre text-ink-secondary">
           {s.command}
         </code>
       )}

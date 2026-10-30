@@ -21,6 +21,8 @@ import { dispatchRoutes } from "./table.ts";
 const sonnet: ModelSelection = { instanceId: "claude", model: "claude-sonnet-5" };
 const SEND = "send-0123456789abcdef";
 const OTHER_SEND = "send-fedcba9876543210";
+const INSTALL = "5e0c9a1d-7b2f-4c3e-8d4a-1f2e3d4c5b6a";
+const OTHER_INSTALL = "0a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d";
 const servers: Server[] = [];
 
 beforeEach(() => rmSync(DATA_DIR, { recursive: true, force: true }));
@@ -52,7 +54,8 @@ async function fixture() {
     started: Array<{ text: string; opts: StartOpts }>;
     relayed: Array<Parameters<BotMessageRouteDeps["relayedReaction"]>>;
     serverPresses: Array<{ threadId: string; messageId: string; type: string }>; serverAnswer: "handled" | "refused" | null; records: string | null;
-  } = { accepted: [], hold: null, refuse: null, busy: false, prompts: [], started: [], relayed: [], serverPresses: [], serverAnswer: null, records: null };
+    fromPhone: boolean; phoneSends: string[];
+  } = { accepted: [], hold: null, refuse: null, busy: false, prompts: [], started: [], relayed: [], serverPresses: [], serverAnswer: null, records: null, fromPhone: false, phoneSends: [] };
   const startTurn: BotMessageRouteDeps["startTurn"] = async (botId, text, opts = {}) => {
     state.started.push({ text, opts });
     state.prompts.push(promptWithReply(text, opts.replyTo));
@@ -61,7 +64,10 @@ async function fixture() {
 
   const accept: BotMessageRouteDeps["acceptDirectSend"] = (input, guardedStart) => {
     state.accepted.push(input);
-    if (guardedStart) return guardedStart(store.projectBotForTask(input.botId, input.threadId)!);
+    // Real acceptance may await provider discovery before a guarded start; `hold` stands in for that wait.
+    if (guardedStart) return state.hold
+      ? state.hold.then(() => guardedStart(store.projectBotForTask(input.botId, input.threadId)!))
+      : guardedStart(store.projectBotForTask(input.botId, input.threadId)!);
     state.prompts.push(promptWithReply(input.text, input.replyTo));
     return sequencer.run(input.sendId ? `bot:${input.botId}:${input.threadId}:${input.sendId}` : undefined, sendFingerprint(input.text, input.replyTo?.id), async () => {
       if (state.hold) await state.hold;
@@ -101,12 +107,14 @@ async function fixture() {
     directSendRefusal: (botId: string, thread: string) => (store.taskByThread(botId, thread) ? null : { status: 409, body: { error: "the bot switched tasks before it could receive the message" } }),
     usageTriggerFor: () => ({ kind: "user" }),
     messageSender: () => undefined,
+    environmentId: INSTALL,
     cloudGuestSendRefusal: () => null,
     resolveReplyTarget: replyTarget,
     requestedTaskBot: (botId: string, rawThreadId: unknown) => store.projectBotForTask(botId, String(rawThreadId))!,
     startTurn,
     threadBusy: () => false,
     botAtThreadCapacity: () => false,
+    botMainThread: (botId: string) => store.bot(botId)?.threadId,
     parksBehindCoordination: () => false,
     activeGroupTurnForBot: () => null,
     cloudThreadRefusal: () => null,
@@ -115,6 +123,8 @@ async function fixture() {
     registry: { get: () => ({ instanceId: "claude", driverKind: "claudeAgent" }) },
     policyModelRefusal: () => undefined,
     relayedReaction: (...args: Parameters<BotMessageRouteDeps["relayedReaction"]>) => { state.relayed.push(args); },
+    fromPhone: () => state.fromPhone,
+    notePhoneSend: (sendId: string) => { state.phoneSends.push(sendId); },
     pressRecords: () => state.records,
     serverPress: (_bot: unknown, thread: string, messageId: string, action: { type: string }) => {
       state.serverPresses.push({ threadId: thread, messageId, type: action.type });
@@ -483,5 +493,59 @@ describe("POST /api/bots/:id/messages/guarded with a reaction another app relaye
     expect((await post(relay(threadId, asked.id, leaf, { text: "👍" }), "/guarded")).status).toBe(400);
     expect(state.started).toEqual([]);
     expect(state.relayed).toEqual([]);
+  });
+});
+
+describe("POST /api/bots/:id/messages from a registered phone", () => {
+  it("notes a phone's send by its id on the plain and guarded routes, and gives one without an id its own", async () => {
+    const { store, bot, threadId, state, post } = await fixture();
+    store.patchBot(bot.id, { approvalMode: "ask", autoApprove: false });
+    state.fromPhone = true;
+    expect((await post({ threadId, sendId: SEND, text: "Remind me at five" })).status).toBe(202);
+    const guarded = await post({ threadId, sendId: OTHER_SEND, text: "And at six", expectedActiveLeafId: store.activeLeaf(threadId), expectedApprovalMode: "ask" }, "/guarded");
+    expect(guarded.status, JSON.stringify(guarded.body)).toBe(202);
+    const minted = await post({ threadId, text: "And at seven" });
+    expect(minted.status).toBe(202);
+
+    const mintedId = state.accepted[2]!.sendId;
+    expect(mintedId).toMatch(/^[A-Za-z0-9_-]{16,80}$/);
+    expect(minted.body.message.sendId).toBe(mintedId);
+    expect(state.phoneSends).toEqual([SEND, OTHER_SEND, mintedId]);
+  });
+
+  it("notes nothing from the computer, with or without an id, and nothing for a send refused before acceptance", async () => {
+    const { threadId, state, post } = await fixture();
+    expect((await post({ threadId, sendId: SEND, text: "Remind me at five" })).status).toBe(202);
+    expect((await post({ threadId, text: "And at six" })).status).toBe(202);
+    expect(state.accepted.map((input) => input.sendId)).toEqual([SEND, undefined]);
+    state.fromPhone = true;
+    expect((await post({ threadId: "someone-elses-thread", sendId: OTHER_SEND, text: "Hi" })).status).toBe(409);
+    expect(state.phoneSends).toEqual([]);
+  });
+});
+
+describe("POST /api/bots/:id/messages/guarded naming an install", () => {
+  it("refuses another install's send before acceptance, while an accepted one still waits on discovery", async () => {
+    const { store, threadId, state, post, sent } = await fixture();
+    store.patchBot(store.botByThread(threadId)!.id, { approvalMode: "ask", autoApprove: false });
+    const send = (sendId: string, text: string, expectedEnvironmentId: string) =>
+      post({ threadId, sendId, text, expectedActiveLeafId: store.activeLeaf(threadId), expectedApprovalMode: "ask", expectedEnvironmentId }, "/guarded");
+    let discovered = () => {};
+    state.hold = new Promise<void>((done) => { discovered = done; });
+    let ownSettled = false;
+    const own = send(SEND, "For this install", INSTALL.toUpperCase()).finally(() => { ownSettled = true; });
+    await vi.waitFor(() => expect(state.accepted).toHaveLength(1));
+
+    expect(await send(OTHER_SEND, "For another install", OTHER_INSTALL)).toEqual({
+      status: 409, body: { error: "this message is meant for another OpenMausBot install", code: "guarded_environment", environmentId: INSTALL },
+    });
+    expect(ownSettled).toBe(false);
+    expect(state.accepted.map((input) => input.sendId)).toEqual([SEND]);
+
+    discovered();
+    expect((await own).status).toBe(202);
+    expect(sent().map((message) => [message.text, message.sendId])).toEqual([["For this install", SEND]]);
+    // The refused sendId was never reserved.
+    expect((await send(OTHER_SEND, "Now for this install", INSTALL)).status).toBe(202);
   });
 });

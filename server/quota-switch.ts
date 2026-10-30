@@ -48,7 +48,7 @@ export interface QuotaSwitchDeps {
   busy: (botId: string, threadId: string) => boolean;
   request: (threadId: string) => QuotaRequest | undefined;
   /** A line spoken on a Live call is resent as spoken, so its words stay out of the log. */
-  resend: (botId: string, threadId: string, message: Message, replyTo: Message | undefined, spoken: { via?: "call"; callId?: string }) => Promise<unknown>;
+  resend: (botId: string, threadId: string, message: Message, replyTo: Message | undefined, spoken: { via?: "call"; callId?: string }, capacity?: "person") => Promise<unknown>;
   enabled?: () => boolean;
   after?: (ms: number, run: () => void) => { cancel(): void };
 }
@@ -277,7 +277,8 @@ export function createQuotaSwitch(deps: QuotaSwitchDeps): QuotaSwitch {
     } else {
       notice(threadId, `continuing on ${chosen.name} after hitting quota`, true);
       try {
-        await deps.resend(botId, threadId, original, original.replyToId ? store.messagesFor(threadId).find((message) => message.id === original.replyToId) : undefined, spokenLineFields(original.via, original.callId));
+        const root = card.quotaSwitch!.rootId ? coordinator.node(card.quotaSwitch!.rootId) : undefined;
+        await deps.resend(botId, threadId, original, original.replyToId ? store.messagesFor(threadId).find((message) => message.id === original.replyToId) : undefined, spokenLineFields(original.via, original.callId), root?.capacity);
       } catch (error) {
         if (store.taskByThread(botId, threadId)) {
           notice(threadId, `could not continue on ${chosen.name} — ${(error instanceof Error ? error.message : String(error)).slice(0, 200)}`, false);

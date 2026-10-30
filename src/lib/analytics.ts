@@ -3,6 +3,7 @@
 import type { CaptureResult, PostHog } from "posthog-js";
 import { DESKTOP_PORTS } from "../../electron/desktop-ports.mjs";
 import { appVersion } from "@/lib/app-links";
+import { readAdvancedMode } from "@/lib/interface-mode";
 
 const TOKEN = "phc_m2hP39w8y2gLPvHgDvSXAu6xcZ3agjf4ruL56rGcMZEe";
 
@@ -156,7 +157,7 @@ function claimActiveDay(day: string): boolean {
 
 function sendAppActive() {
   if (!client || !analyticsEnabled() || globalThis.document?.visibilityState !== "visible") return;
-  if (claimActiveDay(localDay())) client.capture("app_active", { platform: pagePlatform() });
+  if (claimActiveDay(localDay())) client.capture("app_active", { platform: pagePlatform(), mode: readAdvancedMode() ? "advanced" : "simple" });
 }
 
 function watchActiveDays() {
@@ -208,11 +209,11 @@ export function track(event: string, props?: Record<string, unknown>) {
   whenReady((ph) => ph.capture(event, props));
 }
 
-// Sends a personal identifier, so it is gated on analyticsEnabled(), not on opt_out_capturing() alone.
-export function identifyEmail(email: string, { submitted = true }: { submitted?: boolean } = {}) {
+// Sends a personal identifier, so it is gated on analyticsEnabled(), not on opt_out_capturing() alone. Only a counted
+// Cloud Pro popup click by someone signed in to MausBot Cloud calls it; the first-run screen asks for no email.
+export function identifyEmail(email: string) {
   whenReady((ph) => {
     ph.identify(email, { email });
-    if (submitted) ph.capture("email_submitted");
   });
 }
 

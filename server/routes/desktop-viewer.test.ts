@@ -13,10 +13,14 @@ import { SHARED_LOCAL_VM_TARGET, perBotLocalVmTarget, poolLocalVmTarget, type Co
 import { createDesktopViewer, desktopViewerUrl, type DesktopTarget } from "./desktop-viewer.ts";
 import { viewerTargetId } from "../../shared/desktop-viewer.ts";
 import { localDesktopTarget, localVmViewerStatus } from "../desktop-viewer-targets.ts";
+import { environmentAttestation } from "../environment.ts";
+import { createUpgrades, type Upgrades } from "./upgrades.ts";
 
 let dir: string;
 let sessions: SessionRegistry;
 let viewer: ReturnType<typeof createDesktopViewer>;
+let upgrades: Upgrades;
+const INSTALL = "6f1d2c3b-4a59-4687-9a1b-2c3d4e5f6a7b";
 let app: Server;
 let desktop: Server;
 let appPort: number;
@@ -60,15 +64,15 @@ function get(path: string, extra: Record<string, string> = {}) {
 }
 
 function open(path = `${base}/websockify`, overrides: Record<string, string> = {}, rawKey = "dGhlIHNhbXBsZSBub25jZQ==") {
-  return new Promise<{ status: number; socket?: Duplex; body?: string }>((resolve, reject) => {
+  return new Promise<{ status: number; headers: IncomingHttpHeaders; socket?: Duplex; body?: string }>((resolve, reject) => {
     const req = request({ hostname: "127.0.0.1", port: appPort, path, headers: {
       ...headers(), Upgrade: "websocket", Connection: "Upgrade", "Sec-WebSocket-Key": rawKey, "Sec-WebSocket-Version": "13", ...overrides,
     } });
-    req.once("upgrade", (res, socket) => { peers.add(socket); resolve({ status: res.statusCode!, socket }); });
+    req.once("upgrade", (res, socket) => { peers.add(socket); resolve({ status: res.statusCode!, headers: res.headers, socket }); });
     req.once("response", res => {
       let body = "";
       res.on("data", chunk => body += chunk);
-      res.on("end", () => resolve({ status: res.statusCode!, body }));
+      res.on("end", () => resolve({ status: res.statusCode!, headers: res.headers, body }));
     });
     req.once("error", reject);
     req.end();
@@ -97,7 +101,9 @@ beforeEach(async () => {
     socket.on("error", () => {});
   });
   desktopPort = await listen(desktop);
+  upgrades = createUpgrades(environmentAttestation(INSTALL));
   viewer = createDesktopViewer({
+    upgrades,
     target: id => {
       targetLookups++;
       if (id === "vps/test-bot") return vpsTarget;
@@ -136,6 +142,7 @@ beforeEach(async () => {
 
 afterEach(async () => {
   viewer.closeAll();
+  upgrades.close();
   for (const peer of peers) peer.destroy();
   peers.clear();
   await Promise.all([app, desktop].map(server => new Promise<void>(resolve => { server.close(() => resolve()); server.closeAllConnections(); })));
@@ -195,6 +202,22 @@ it("rejects ordinary HTTP on the socket path and invalid WebSocket handshakes", 
   expect((await get(`${base}/websockify`)).status).toBe(426);
   expect((await open(undefined, {}, "invalid")).status).toBe(400);
   expect((await open(undefined, { "sec-websocket-version": "12" })).status).toBe(400);
+});
+
+it("names the install on the handshake it answers and on upgrades its gate refuses", async () => {
+  const answered = await open();
+  expect(answered.status).toBe(101);
+  expect(answered.headers["openmausbot-environment"]).toBe(INSTALL);
+  expect(answered.headers.upgrade).toBe("websocket");
+  const echo = new Promise<Buffer>(resolve => answered.socket!.once("data", resolve));
+  answered.socket!.write(Buffer.from([1, 2, 3]));
+  expect(await echo).toEqual(Buffer.from([1, 2, 3]));
+  for (const path of ["/api/no-such-route", "/.well-known/openmausbot/no-such-route"]) {
+    const refused = await open(path);
+    expect([refused.status, refused.headers["openmausbot-environment"]]).toEqual([404, INSTALL]);
+  }
+  const outside = await open("/no-such-route");
+  expect([outside.status, outside.headers["openmausbot-environment"]]).toEqual([404, undefined]);
 });
 
 it("closes an established viewer when its paired session is revoked", async () => {

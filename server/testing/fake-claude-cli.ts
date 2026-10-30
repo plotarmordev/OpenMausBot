@@ -9,6 +9,7 @@
 //     api_error_status; FAKE_CLAUDE_NO_TERMINAL_REASON=1: the result has no terminal_reason, only stop_reason "stop_sequence"
 //   FAKE_CLAUDE_RATE_LIMIT  JSON rate_limit_info reported in a `rate_limit_event` after init
 //   FAKE_CLAUDE_LIMITED_FILE  path: while it exists, every turn plays usage-limit with the file's JSON rate_limit_info
+//   FAKE_CLAUDE_LIMITED_GATE  path: a usage-limit refusal is held until it exists
 //   FAKE_CLAUDE_MCP_FAILED  comma list of MCP servers init reports as failed (`mcp_servers`)
 //   FAKE_CLAUDE_RELEASE  with hang: the turn ends normally once this file exists
 //   FAKE_CLAUDE_DUMP  path for the latest turn's {argv, env, cwd, prompt, systemPrompt, mcpConfig}
@@ -26,6 +27,8 @@
 //   FAKE_CLAUDE_TEXT_LOG  JSON-lines file every one-shot prompt is appended to
 //   FAKE_CLAUDE_TEXT_HANG  set: the one-shot text mode never replies
 //   FAKE_CLAUDE_TEXT_RESULT  raw --output-format json one-shot response
+//   FAKE_CLAUDE_CHECK_LOG  JSON-lines file every connection check is appended to (checks touch no other knob)
+//   FAKE_CLAUDE_CHECK  fail | hang: how the connection check answers (default OK)
 //   FAKE_CLAUDE_REPLIES  JSON array of replies (string, or string[] for several items) used in order
 //   FAKE_CLAUDE_REPLY_STATE  counter file keeping FAKE_CLAUDE_REPLIES in order across processes
 //   FAKE_CLAUDE_TOOL_CALLS  JSON [{name, input?, ok?}] each turn calls before its reply (unset: one Bash call)
@@ -359,6 +362,38 @@ if (["text", "json"].includes(argAfter("--output-format") ?? "")) {
     }));
     process.exit(0);
   }
+  const replyText = (text: string, code = 0, raw: string | null = process.env.FAKE_CLAUDE_TEXT_RESULT ?? null) => {
+    const model = argAfter("--model") ?? "claude-haiku-4-5";
+    process.stdout.write(argAfter("--output-format") === "json"
+      ? raw ?? JSON.stringify({
+          type: "result", is_error: code !== 0, result: text,
+          usage: { input_tokens: 10, cache_read_input_tokens: 2, cache_creation_input_tokens: 3, output_tokens: 5 },
+          total_cost_usd: 0.01,
+          modelUsage: { [model]: { inputTokens: 10, cacheReadInputTokens: 2, cacheCreationInputTokens: 3, outputTokens: 5, costUSD: 0.01 } },
+        })
+      : code === 0 ? text : "");
+    process.exit(code);
+  };
+  // The server's connection check (server/engine-check.ts) stays out of every turn and one-shot capture and knob
+  // above, so a test sees only the calls it makes: FAKE_CLAUDE_CHECK_LOG records it, FAKE_CLAUDE_CHECK fail | hang scripts it.
+  if (prompt.startsWith("This is a connection check.")) {
+    if (process.env.FAKE_CLAUDE_CHECK_LOG) appendFileSync(process.env.FAKE_CLAUDE_CHECK_LOG, `${JSON.stringify({ prompt })}\n`);
+    if (process.env.FAKE_CLAUDE_CHECK === "hang") await new Promise(() => setInterval(() => {}, 1 << 30));
+    if (process.env.FAKE_CLAUDE_CHECK === "fail") {
+      process.stderr.write("fake connection check failed\n");
+      replyText("fake connection check failed", 1, null);
+    }
+    replyText("OK", 0, null);
+  }
+  // Every new bot asks for its setup card's answers (server/setup-suggestions.ts), so that call stays out of the captures
+  // below too: FAKE_CLAUDE_SETUP_DUMP records it, FAKE_CLAUDE_SETUP_FILE holds its reply, and without one it fails at once.
+  if (prompt.startsWith("You write the answer options for the first message of a new bot")) {
+    if (process.env.FAKE_CLAUDE_SETUP_DUMP) writeDumpAtomic(process.env.FAKE_CLAUDE_SETUP_DUMP, JSON.stringify({ argv, env: process.env, prompt }, null, 2));
+    const file = process.env.FAKE_CLAUDE_SETUP_FILE;
+    if (file && existsSync(file)) replyText(readFileSync(file, "utf8"));
+    process.stderr.write("fake setup answers failed\n");
+    process.exit(1);
+  }
   // Background one-shots never overwrite the shared turn dump; FAKE_CLAUDE_TEXT_DUMP records them.
   const upkeepCall = /You are the (?:CAPTURE|TIDY|ORGANIZE) step of a memory system|You are the SKILL REVIEW step/.test(prompt);
   const oneShotDump = process.env.FAKE_CLAUDE_TEXT_DUMP ?? (upkeepCall ? undefined : process.env.FAKE_CLAUDE_DUMP);
@@ -373,18 +408,6 @@ if (["text", "json"].includes(argAfter("--output-format") ?? "")) {
     // An unsettled top-level await is fatal in Node; a repeating timer keeps the loop alive.
     await new Promise(() => setInterval(() => {}, 1 << 30));
   }
-  const replyText = (text: string, code = 0) => {
-    const model = argAfter("--model") ?? "claude-haiku-4-5";
-    process.stdout.write(argAfter("--output-format") === "json"
-      ? process.env.FAKE_CLAUDE_TEXT_RESULT ?? JSON.stringify({
-          type: "result", is_error: code !== 0, result: text,
-          usage: { input_tokens: 10, cache_read_input_tokens: 2, cache_creation_input_tokens: 3, output_tokens: 5 },
-          total_cost_usd: 0.01,
-          modelUsage: { [model]: { inputTokens: 10, cacheReadInputTokens: 2, cacheCreationInputTokens: 3, outputTokens: 5, costUSD: 0.01 } },
-        })
-      : code === 0 ? text : "");
-    process.exit(code);
-  };
   if (process.env.FAKE_CLAUDE_TEXT_ROUTES && existsSync(process.env.FAKE_CLAUDE_TEXT_ROUTES)) {
     try {
       const routes = JSON.parse(readFileSync(process.env.FAKE_CLAUDE_TEXT_ROUTES, "utf8")) as Record<string, string>;
@@ -584,15 +607,41 @@ child.on("exit", () => process.exit(1));
 child.stdin.write(JSON.stringify(request) + "\\n");
 `;
 
+// A URL server, as Claude Code reaches one: initialize, list its tools, and call the one asked for, with the headers
+// its config gives.
+const MCP_HTTP_CALL_PROGRAM = `
+const { url, headers, name, input } = JSON.parse(process.argv[1]);
+let session;
+const send = async (body) => {
+  const response = await fetch(url, { method: "POST", body: JSON.stringify(body), headers: {
+    "content-type": "application/json", accept: "application/json, text/event-stream", ...headers, ...(session ? { "mcp-session-id": session } : {}) } });
+  session = response.headers.get("mcp-session-id") ?? session;
+  if (!response.ok) throw new Error("the server answered HTTP " + response.status);
+  const text = await response.text();
+  if (!text.trim()) return null;
+  if (!(response.headers.get("content-type") ?? "").includes("text/event-stream")) return JSON.parse(text);
+  return text.split("\\n").filter((line) => line.startsWith("data:")).map((line) => JSON.parse(line.slice(5))).find((frame) => frame.id !== undefined);
+};
+(async () => {
+  await send({ jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "fake-claude", version: "1" } } });
+  await send({ jsonrpc: "2.0", method: "notifications/initialized" });
+  const names = ((await send({ jsonrpc: "2.0", id: 2, method: "tools/list", params: {} }))?.result?.tools ?? []).map((tool) => tool.name);
+  if (!names.includes(name)) return { error: { message: name + " is not one of this server's tools: " + names.join(", ") } };
+  return await send({ jsonrpc: "2.0", id: 3, method: "tools/call", params: { name, arguments: input } });
+})().catch((error) => ({ error: { message: String(error.message ?? error) } })).then((reply) => process.stdout.write(JSON.stringify(reply) + "\\n"));
+`;
+
 const mcpToolCall = (serverName: string, name: string, input: Record<string, unknown>): { ok: boolean; content: unknown } => {
   launchFiles ??= readLaunchFiles();
-  const server = (launchFiles.mcpConfig as { mcpServers?: Record<string, { command?: string; args?: string[]; env?: Record<string, string> }> } | null)
+  const server = (launchFiles.mcpConfig as { mcpServers?: Record<string, { command?: string; args?: string[]; env?: Record<string, string>; url?: string; headers?: Record<string, string> }> } | null)
     ?.mcpServers?.[serverName];
-  if (!server?.command) return { ok: false, content: `no ${serverName} MCP server was launched for this turn` };
+  if (!server?.command && !server?.url) return { ok: false, content: `no ${serverName} MCP server was launched for this turn` };
   const request = { jsonrpc: "2.0", id: 1, method: "tools/call", params: { name, arguments: input } };
-  const ran = spawnSync(process.execPath, ["-e", MCP_CALL_PROGRAM, JSON.stringify({ command: server.command, args: server.args ?? [], env: server.env ?? {}, request })], {
-    encoding: "utf8", timeout: 120_000,
-  });
+  const ran = server.url
+    ? spawnSync(process.execPath, ["-e", MCP_HTTP_CALL_PROGRAM, JSON.stringify({ url: server.url, headers: server.headers ?? {}, name, input })], { encoding: "utf8", timeout: 120_000 })
+    : spawnSync(process.execPath, ["-e", MCP_CALL_PROGRAM, JSON.stringify({ command: server.command, args: server.args ?? [], env: server.env ?? {}, request })], {
+      encoding: "utf8", timeout: 120_000,
+    });
   let reply: { result?: { isError?: boolean; content?: unknown }; error?: { message?: string } } = {};
   try { reply = JSON.parse(ran.stdout.trim().split("\n")[0] ?? ""); } catch { reply = { error: { message: ran.stderr || "no answer" } }; }
   return { ok: !reply.error && !reply.result?.isError, content: reply.result?.content ?? reply.error?.message ?? "" };
@@ -759,16 +808,25 @@ const playTurn = (prompt: JsonValue, late = false) => {
   const resumedError = process.env.FAKE_CLAUDE_RESUMED_API_ERROR === "1" && argv.includes("--resume") && !resumedErrorPlayed;
   if (resumedError) resumedErrorPlayed = true;
   if (mode === "usage-limit" || limited !== null) {
-    // captured from 2.1.295 for an account past its weekly limit
-    const text = process.env.FAKE_CLAUDE_API_ERROR ?? "You've hit your weekly limit \u00b7 resets Oct 12 at 2:30pm (Asia/Calcutta)";
-    out({
-      type: "assistant", message: { model: "<synthetic>", stop_reason: "stop_sequence", content: [{ type: "text", text }] },
-      error: "rate_limit", is_api_error_message: true, api_error: "usage_limit_reached",
-      ...(rateLimit ? { api_error_params: { rate_limit_info: rateLimit } } : {}),
-    });
-    out({ type: "result", subtype: "success", is_error: true, stop_reason: "stop_sequence", terminal_reason: "api_error", api_error: "usage_limit_reached", result: text });
-    turnRunning = false;
-    finishIfDone();
+    const refuse = () => {
+      // captured from 2.1.295 for an account past its weekly limit
+      const text = process.env.FAKE_CLAUDE_API_ERROR ?? "You've hit your weekly limit \u00b7 resets Oct 12 at 2:30pm (Asia/Calcutta)";
+      out({
+        type: "assistant", message: { model: "<synthetic>", stop_reason: "stop_sequence", content: [{ type: "text", text }] },
+        error: "rate_limit", is_api_error_message: true, api_error: "usage_limit_reached",
+        ...(rateLimit ? { api_error_params: { rate_limit_info: rateLimit } } : {}),
+      });
+      out({ type: "result", subtype: "success", is_error: true, stop_reason: "stop_sequence", terminal_reason: "api_error", api_error: "usage_limit_reached", result: text });
+      turnRunning = false;
+      finishIfDone();
+    };
+    const gate = process.env.FAKE_CLAUDE_LIMITED_GATE;
+    if (!gate || existsSync(gate)) { refuse(); return; }
+    const poll = setInterval(() => {
+      if (!existsSync(gate)) return;
+      clearInterval(poll);
+      refuse();
+    }, 10);
     return;
   }
   if (mode === "api-error" || resumedError) {

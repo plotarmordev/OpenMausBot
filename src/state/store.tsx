@@ -21,6 +21,8 @@ import { isNotificationFeedAction, reduceNotificationFeed, type NotificationFeed
 import { bumpThreadUpdatedAt, mergeTaskStamps, rewindThreadUpdatedAt } from "./thread-stamps";
 import { botOpensTo, openBot, openNotificationTarget, visibleNotificationThread } from "./thread-navigation";
 import { patchGroupTask } from "./thread-edits";
+import { optimisticMessageId, optimisticUserMessage } from "./optimistic-send";
+import { patchedGroups, roomAnswers, snapshotPatch } from "./room-frames";
 import { savedStateAction, type SavedOwner, type SavedSnapshot } from "./saved-state";
 export { awayFromMainThread, botOpensTo, openBot, openBotThread, openNotificationTarget, openThread, visibleNotificationThread, type ThreadTarget } from "./thread-navigation";
 import type { TurnDigest } from "../../shared/digest";
@@ -52,13 +54,12 @@ import { firstUnreadMessageId, threadOpensUnread, threadReadCursor } from "@/lib
 import type { ComputerStart } from "@/lib/computer-start";
 import { parseComputerHelp } from "@/lib/computer-control";
 import { answerResponse, dismissResponse } from "@/lib/card-answer";
-import { currentCall } from "@/lib/call";
+import { forgetLiveTurns, noteRuntimeTurn, sendStop } from "@/lib/stop-turn";
 import { readLastConversation, rememberConversation } from "@/lib/last-conversation";
 import { readLastBotSection, rememberBotSection } from "@/lib/last-bot-section";
 import { showNotification } from "@/lib/notify";
 import { useShowThreads } from "@/lib/thread-preferences";
-import { speaker } from "@/lib/tts";
-import { roleProfilePatch, type BotRole } from "@/lib/bot-roles";
+import { speechOwner, spokenReplyStream } from "@/lib/spoken-reply-stream";
 import { t } from "@/lib/i18n";
 import { createBotPatchQueue, type BotUpdatePatch } from "./bot-patch-queue";
 import { useChatErrorClear } from "./chat-error";
@@ -69,7 +70,7 @@ import { reconcileSnapshotQueues, rememberConsumedQueueId, replaceBotQueues } fr
 export type { MausColor } from "@/lib/mascot";
 export type { RoutineRunCardData } from "../../shared/routine-run";
 
-export interface OptionCardData extends Pick<WireOptionCard, "fixedOptions" | "webhookRequest" | "appTriggerRequest"> {
+export interface OptionCardData extends Pick<WireOptionCard, "fixedOptions" | "webhookRequest" | "appTriggerRequest" | "yourComputer"> {
   title: string;
   subtitle: string;
   options: string[];
@@ -79,6 +80,7 @@ export interface OptionCardData extends Pick<WireOptionCard, "fixedOptions" | "w
   answered?: string;
   answeredText?: string;
   answeredBy?: CardAnswerer;
+  pendingAnswer?: string;
   dismissed?: boolean;
   requestId?: string;
   tool?: string;
@@ -131,7 +133,7 @@ export interface SecretRequestCardData {
 
 export type ComputerControlState = { held: boolean; helpReason: string | null; help?: import("../../shared/wire").ComputerHelpRef | null };
 
-export interface Message extends Pick<import("../../shared/wire").WireMessage, "widget" | "app" | "fromApp" | "pointed" | "routedBy" | "quickModel" | "automation" | "publishedPage" | "sender" | "setupSuggestion" | "helperIntro"> {
+export interface Message extends Pick<import("../../shared/wire").WireMessage, "widget" | "app" | "fromApp" | "pointed" | "routedBy" | "quickModel" | "automation" | "publishedPage" | "sender" | "setupSuggestion" | "helperIntro" | "helperFollowup" | "setupOffer" | "setupChoices" | "setupChoicesPending" | "setupRequest" | "relay" | "inbox" | "sentDirectly" | "doneWhen"> {
   id: string;
   role: "bot" | "user";
   kind: "text" | "options" | "activity" | "screen" | "connector" | "secret" | "signin" | "routine.run" | "goal.run" | "digest" | "compaction" | "call" | "widget" | "app";
@@ -147,7 +149,7 @@ export interface Message extends Pick<import("../../shared/wire").WireMessage, "
   goalRun?: GroupGoalRunCardData;
   call?: import("../../shared/wire").LiveCallRecord;
   channelMode?: "chat" | "goal";
-  tool?: { name: string; ok?: boolean; spoken?: string; setup?: boolean; claudeUpdate?: boolean; place?: PlaceRow; limitResetsAt?: number; summary?: string; input?: string; output?: string ; itemId?: string; outputPath?: string; fullResult?: boolean };
+  tool?: { name: string; ok?: boolean; spoken?: string; setup?: boolean; claudeUpdate?: boolean; place?: PlaceRow; limitResetsAt?: number; summary?: string; input?: string; output?: string ; itemId?: string; outputPath?: string; fullResult?: boolean; rescue?: import("../../shared/first-reply-rescue").FirstReplyRescue };
   steered?: boolean;
   via?: "api" | "call";
   callId?: string;
@@ -228,7 +230,7 @@ export interface ModelSelection {
   variant?: string;
 }
 
-export interface Task extends Pick<WireTask, "private"> {
+export interface Task extends Pick<WireTask, "private" | "setupRequest" | "inbox"> {
   waitingForTeammates?: boolean;
   threadId: string;
   routineRunId?: string;
@@ -335,7 +337,7 @@ export interface Bot extends DefaultBotFields {
   peers?: string[];
   composio?: boolean;
   connectorTools?: Record<string, ConnectorToolGrant>;
-  connectorScopes?: { apps: Record<string, "read" | "write"> };
+  connectorScopes?: { apps: Record<string, "read" | "write"> }; phoneApps?: import("../../shared/phone-apps").PhoneApps;
   outbound?: { policy: "ask" | "allow"; dailyCap: number };
   fallback?: Array<{ instanceId: string; model: string }>;
   browser?: boolean;
@@ -438,7 +440,7 @@ export type { BrowserEngineSummary, BrowserProfile, ConfigStatus, ManagedPolicyS
 // A section left out here is wiped from state.config whenever a config frame lands.
 export type ConfigStatusFrame = Pick<
   ConfigStatus,
-  "xai" | "mistral" | "cerebras" | "groq" | "meta" | "deepseek" | "xResearch" | "treg" | "anthropic" | "openai" | "openrouter" | "openaiCompat" | "fleet" | "composio" | "box" | "vps" | "rooms" | "mcp" | "threads" | "automaticRecovery" | "cacheKeepWarm" | "localVm" | "opencodeGo" | "tts" | "decider" | "helpers" | "imageGen" | "live" | "profile" | "language" | "features" | "onboarding" | "browserEngine" | "browserProfiles" | "edition" | "budgets" | "billing" | "managedPolicy" | "cloudHome"
+  "xai" | "mistral" | "cerebras" | "groq" | "meta" | "deepseek" | "xResearch" | "treg" | "anthropic" | "openai" | "openrouter" | "openaiCompat" | "fleet" | "composio" | "box" | "vps" | "rooms" | "mcp" | "threads" | "automaticRecovery" | "cacheKeepWarm" | "localVm" | "opencodeGo" | "tts" | "decider" | "helpers" | "imageGen" | "live" | "savedKeys" | "profile" | "language" | "features" | "onboarding" | "browserEngine" | "browserProfiles" | "edition" | "budgets" | "billing" | "managedPolicy" | "cloudHome" | "team"
 >;
 
 export function configStatusFromFrame(frame: ConfigStatusFrame): ConfigStatus {
@@ -466,7 +468,7 @@ export function configStatusFromFrame(frame: ConfigStatusFrame): ConfigStatus {
     tts: frame.tts,
     decider: frame.decider, helpers: frame.helpers,
     imageGen: frame.imageGen,
-    live: frame.live,
+    live: frame.live, savedKeys: frame.savedKeys,
     profile: frame.profile,
     language: frame.language,
     features: frame.features,
@@ -477,7 +479,7 @@ export function configStatusFromFrame(frame: ConfigStatusFrame): ConfigStatus {
     budgets: frame.budgets,
     billing: frame.billing,
     managedPolicy: frame.managedPolicy,
-    ...(frame.cloudHome ? { cloudHome: true } : {}),
+    ...(frame.cloudHome ? { cloudHome: true } : {}), ...(frame.team ? { team: frame.team } : {}),
   };
 }
 
@@ -506,27 +508,26 @@ export interface InstanceInfo {
     reason?: string;
     authenticated?: boolean;
     chatgptPlan?: boolean;
+    /** Ready only through OpenCode's free no-login models: a backup, never "an AI already works". */
+    freeFallback?: boolean;
     authenticationUnavailableReason?: string;
     account?: { email?: string; organization?: string; method?: "login" | "api-key" };
     version?: string | null;
-    update?: {
-      title: string;
-      message: string;
-      command: string;
-    };
+    update?: { title: string; message: string; command: string };
     billing?: "metered" | "subscription";
-    warning?: {
-      title: string;
-      message: string;
-    };
+    warning?: { title: string; message: string };
   };
+  /** What one tiny test message through this AI showed, for its current sign-in; absent until one is sent. */
+  aiTest?: import("../../shared/ai-ranking").AiTestState;
+  /** Why it didn't answer, in plain words, when it said (signed out, a used-up limit…). */
+  aiTestError?: string;
   models: { default: string; options: Array<{ id: string; label: string; custom?: boolean; loaded?: boolean; provider?: string; variants?: ModelVariantOption[] }> };
   capabilities?: {
     computerMcp?: boolean;
     agentsMcp?: boolean;
     composioMcp?: boolean;
-    /** the engine can mount the native HighLevel tools (a connected app without Composio) */
-    highlevelMcp?: boolean;
+    /** the engine can mount the native HighLevel tools (a connected app without Composio), the paired phone's app tools and the Data tools */
+    highlevelMcp?: boolean; deviceMcp?: boolean; dataMcp?: boolean;
     browserMcp?: boolean;
     images?: boolean;
     effortLevels?: readonly EffortLevel[];
@@ -565,7 +566,7 @@ export type AppSettingsSection =
   | "activity"
   | "backups"
   | "workspaces"
-  | "skills" | "import";
+  | "skills" | "import" | "updates";
 
 export type BotSettingsSection =
   | "overview"
@@ -616,7 +617,6 @@ export interface AppState {
   settingsOpen: boolean;
   pluginsOpen: boolean;
   pluginsSurface: "apps" | "mcp";
-  newBotOpen: boolean;
   botCreationPending: boolean;
   computerOpen: boolean;
   inspectorOpen: boolean;
@@ -706,6 +706,12 @@ export type Action =
   | { type: "markRoutineRunSeen"; runId: string }
   | { type: "markAllRoutineRunsSeen" }
   | { type: "groupPatched"; group: Partial<Group> & { id: string } }
+  | {
+      type: "groupSnapshot";
+      group: Partial<Group> & { id: string };
+      since: AppState["transcriptGeneration"];
+      heldAtStart: readonly Message[];
+    }
   | { type: "groupDeleted"; groupId: string }
   | { type: "createGroup"; memberIds: string[]; name?: string; section?: string }
   | {
@@ -746,7 +752,7 @@ export type Action =
       sendId?: string;
       replyToId?: string;
       threadId?: string;
-      dataContext?: import("../../shared/data-context").DataContext; pointed?: import("../../shared/app-frame/point").PointedElement[];
+      dataContext?: import("../../shared/data-context").DataContext; pointed?: import("../../shared/app-frame/point").PointedElement[]; mode?: "chat" | "goal";
       onError?: () => void;
     }
   | { type: "pendingQueued"; threadId: string; queueId: string; text: string; reason?: SteerQueueReason }
@@ -761,6 +767,7 @@ export type Action =
   | { type: "loadOlderMessages"; threadId: string }
   | { type: "olderMessages"; threadId: string; generation: number; messages: Message[]; hasMore: boolean }
   | { type: "answerCard"; botId: string; messageId: string; answer: string; threadId?: string; groupId?: string }
+  | { type: "answerCardFailed"; botId: string; messageId: string; answer: string; groupId?: string }
   | { type: "dismissCard"; botId: string; messageId: string; threadId?: string; groupId?: string }
   | {
       type: "decideRequest";
@@ -781,7 +788,7 @@ export type Action =
   | { type: "renameTask"; botId: string; threadId: string; title: string }
   | { type: "regenerateTaskTitle"; botId: string; threadId: string; onSettled?: (ok: boolean) => void }
   | { type: "deleteTask"; botId: string; threadId: string }
-  | { type: "newBot"; role?: BotRole; visibility?: BotVisibility; section?: string; preserveSelection?: boolean; onCreated?: (bot: Bot) => void; onError?: (message: string) => void }
+  | { type: "newBot"; section?: string; preserveSelection?: boolean; onCreated?: (bot: Bot) => void; onError?: (message: string) => void }
   | { type: "botCreationPending"; on: boolean }
   | { type: "updateTask"; botId: string; threadId: string; patch: TaskUpdatePatch }
   | { type: "refreshTaskPermissions"; botId: string; threadId: string; acknowledgeLocalAuto?: boolean }
@@ -813,7 +820,6 @@ export type Action =
   | { type: "revealThread"; threadId: string }
   | { type: "toggleSettings"; open?: boolean; section?: BotSettingsSection; botId?: string }
   | { type: "togglePlugins"; open?: boolean; surface?: "apps" | "mcp" }
-  | { type: "toggleNewBot"; open?: boolean }
   | { type: "toggleComputer"; open?: boolean; botId?: string }
   | { type: "openDataResult"; botId: string; cardId: string }
   | { type: "dataResultFocusConsumed"; requestId: number }
@@ -913,28 +919,6 @@ function dismissOnboardingCard(state: AppState, botId: string): AppState {
   const bot = state.bots.find((candidate) => candidate.id === botId);
   const quiz = bot ? openOnboardingCard(bot) : undefined;
   return quiz ? patchCard(state, botId, quiz.id, { dismissed: true }) : state;
-}
-
-const optimisticMessageId = (sendId: string): string => `optimistic-${sendId}`;
-
-function optimisticUserMessage(
-  text: string,
-  sendId: string,
-  replyToId?: string,
-  parentId?: string | null,
-  channelMode?: "chat" | "goal",
-): Message {
-  return {
-    id: optimisticMessageId(sendId),
-    role: "user",
-    kind: "text",
-    text,
-    at: Date.now(),
-    parentId: parentId ?? null,
-    replyToId,
-    sendId,
-    channelMode,
-  };
 }
 
 export const CLOUD_LINK_SETTINGS = { type: "toggleAppSettings", open: true, section: "cloudAccount", cloudLink: true } as const satisfies Action;
@@ -1100,23 +1084,11 @@ export function reducer(state: AppState, action: Action): AppState {
     }
     case "groupPatched": {
       const fenced = action.group.messages ? bumpTranscriptGeneration(state, action.group.threadId) : state;
-      const exists = fenced.groups.some((g) => g.id === action.group.id);
-      const groups = exists
-        ? fenced.groups.map((g) => (g.id === action.group.id ? {
-            ...g, ...action.group,
-            section: typeof action.group.threadId === "string" || Object.hasOwn(action.group, "section") ? action.group.section : g.section,
-            description: Object.hasOwn(action.group, "description")
-              ? (action.group.description ?? undefined)
-              : g.description,
-            tasks: action.group.tasks ? mergeTaskStamps(g.tasks, action.group.tasks) : g.tasks,
-            turnTimeoutMinutes: Object.hasOwn(action.group, "turnTimeoutMinutes")
-              ? (action.group.turnTimeoutMinutes ?? undefined)
-              : g.turnTimeoutMinutes,
-            messages: action.group.messages ?? g.messages,
-            hasMore: action.group.messages ? Boolean(action.group.hasMore) : g.hasMore,
-          } : g))
-        : [{ ...(action.group.description === null ? { ...action.group, description: undefined } : action.group) as Group, messages: action.group.messages ?? [] }, ...fenced.groups];
-      return { ...fenced, groups };
+      return { ...fenced, groups: patchedGroups(state.groups, action.group) };
+    }
+    case "groupSnapshot": {
+      const group = snapshotPatch(state, action);
+      return group ? reducer(state, { type: "groupPatched", group }) : state;
     }
     case "groupDeleted": {
       const groups = state.groups.filter((g) => g.id !== action.groupId);
@@ -1168,17 +1140,34 @@ export function reducer(state: AppState, action: Action): AppState {
       );
     }
     case "answerCard": {
-      if (action.groupId) return patchGroupCard(state, action.groupId, action.messageId, { answered: action.answer });
+      if (action.groupId) {
+        const card = state.groups.find((group) => group.id === action.groupId)?.messages.find((message) => message.id === action.messageId)?.card;
+        return patchGroupCard(state, action.groupId, action.messageId, {
+          answered: action.answer,
+          ...(card?.requestId ? { pendingAnswer: action.answer } : {}),
+        });
+      }
       const bot = state.bots.find((candidate) => candidate.id === action.botId);
       const card = bot?.messages.find((message) => message.id === action.messageId)?.card;
       return withMascotMotion(
         patchCard(state, action.botId, action.messageId, {
           answered: action.answer,
-          ...(card?.requestId ? {} : { dismissed: true }),
+          ...(card?.requestId ? { pendingAnswer: action.answer } : { dismissed: true }),
         }),
         action.botId,
         "working",
       );
+    }
+    case "answerCardFailed": {
+      const host = action.groupId
+        ? state.groups.find((group) => group.id === action.groupId)
+        : state.bots.find((bot) => bot.id === action.botId);
+      const card = host?.messages.find((message) => message.id === action.messageId)?.card;
+      if (card?.pendingAnswer !== action.answer) return state;
+      const reopened = { answered: undefined, pendingAnswer: undefined };
+      return action.groupId
+        ? patchGroupCard(state, action.groupId, action.messageId, reopened)
+        : patchCard(state, action.botId, action.messageId, reopened);
     }
     case "dismissCard":
       if (action.groupId) return patchGroupCard(state, action.groupId, action.messageId, { dismissed: true });
@@ -1242,7 +1231,7 @@ export function reducer(state: AppState, action: Action): AppState {
       if ((switchedThread || (before.awaitingThreadSnapshot && action.bot.threadId === before.threadId)) &&
           Array.isArray(action.bot.messages)) {
         // The slim deletion broadcast can beat the full snapshot; later duplicate snapshots must not overwrite newer messages.
-        return reducer(switching, { type: "taskSwitched", bot: { ...before, ...action.bot, computer: action.bot.computer, section: action.bot.section, toolScope: action.bot.toolScope, managedSections: action.bot.managedSections, messages: action.bot.messages, browserProfile: action.bot.browserProfile, vpsAlias: action.bot.vpsAlias } });
+        return reducer(switching, { type: "taskSwitched", bot: { ...before, ...action.bot, computer: action.bot.computer, section: action.bot.section, toolScope: action.bot.toolScope, managedSections: action.bot.managedSections, messages: action.bot.messages, browserProfile: action.bot.browserProfile, vpsAlias: action.bot.vpsAlias, phoneApps: action.bot.phoneApps } });
       }
       const patched = updateBot(switching, action.bot.id, (b) => ({
         ...b,
@@ -1255,7 +1244,7 @@ export function reducer(state: AppState, action: Action): AppState {
         computer: action.bot.computer,
         toolScope: action.bot.toolScope,
         section: action.bot.section, managedSections: action.bot.managedSections,
-        vpsAlias: action.bot.vpsAlias,
+        vpsAlias: action.bot.vpsAlias, phoneApps: action.bot.phoneApps,
         tasks: action.bot.tasks ? mergeTaskStamps(b.tasks, action.bot.tasks) : b.tasks,
         // Old approvals must never be sent to the replacement thread while its transcript loads.
         messages: switchedThread ? [] : b.messages,
@@ -1486,18 +1475,11 @@ export function reducer(state: AppState, action: Action): AppState {
         ...state,
         pluginsOpen: open,
         pluginsSurface: action.surface ?? state.pluginsSurface,
-        ...(open ? { settingsOpen: false, appSettingsOpen: false, newBotOpen: false, shortcutsOpen: false } : {}),
+        ...(open ? { settingsOpen: false, appSettingsOpen: false, shortcutsOpen: false } : {}),
       };
     }
     case "botCreationPending":
       return { ...state, botCreationPending: action.on };
-    case "toggleNewBot": {
-      const open = action.open ?? !state.newBotOpen;
-      return {
-        ...state, newBotOpen: open,
-        ...(open ? { settingsOpen: false, appSettingsOpen: false, pluginsOpen: false, shortcutsOpen: false } : {}),
-      };
-    }
     case "notice":
       return { ...state, notice: action.notice };
     case "revealThread":
@@ -1642,10 +1624,10 @@ export function reducer(state: AppState, action: Action): AppState {
         keepThreadModels: _keepThreadModels, threadId: _threadId,
         computer,
         connectorTools,
-        connectorScopes,
+        connectorScopes, phoneApps, peers,
         ...rest
       } = action.patch;
-      const botPatch: Partial<Bot> = { ...rest };
+      const botPatch: Partial<Bot> = { ...rest, ...(phoneApps !== undefined && { phoneApps: phoneApps ?? undefined }), ...(peers !== undefined && { peers: peers ?? undefined }) };
       if (computer === null) botPatch.computer = undefined;
       else if (computer !== undefined) botPatch.computer = computer;
       if (connectorTools === null) botPatch.connectorTools = undefined;
@@ -1832,6 +1814,7 @@ export function reducer(state: AppState, action: Action): AppState {
       return reconcileModelVariantSessions(reconcileSnapshotQueues(switched, [action.bot]));
     }
     case "newBot":
+      return action.preserveSelection ? state : { ...state, settingsOpen: false, appSettingsOpen: false, pluginsOpen: false, shortcutsOpen: false };
     case "duplicateBot":
     case "createProject":
     case "updateProject":
@@ -1928,7 +1911,6 @@ export const initialState: AppState = {
   settingsOpen: false,
   pluginsOpen: false,
   pluginsSurface: "apps",
-  newBotOpen: false,
   botCreationPending: false,
   computerOpen: false,
   inspectorOpen: false,
@@ -1988,26 +1970,6 @@ export function nextLiveCallLookup(): number {
 }
 
 export { api, ApiError };
-
-/** `visibility` rides the create itself, so the bot is never announced to people who should not see it. */
-export async function createBotWithRole(role?: BotRole, request: typeof api = api, visibility?: BotVisibility, section?: string): Promise<{ bot: Bot; profileError?: string }> {
-  const restricted = visibility && visibility !== "everyone" ? { visibility } : {};
-  const fields = { ...(role ? { name: role.name, title: role.title, description: role.description } : {}), ...restricted,
-    ...(section !== undefined ? { section } : {}) };
-  const { bot } = await request("/api/bots", {
-    method: "POST",
-    ...(Object.keys(fields).length ? { body: JSON.stringify(fields) } : {}),
-  });
-  if (!role) return { bot };
-  try {
-    const { bot: patched } = await request(`/api/bots/${bot.id}`, {
-      method: "PATCH", body: JSON.stringify(roleProfilePatch(role)),
-    });
-    return { bot: { ...bot, ...patched, messages: bot.messages } };
-  } catch (error) {
-    return { bot, profileError: error instanceof Error ? error.message : String(error) };
-  }
-}
 
 /** Messages per snapshot thread and per scrollback page: the server's own page maximum. */
 export const MESSAGE_PAGE_SIZE = 200;
@@ -2176,6 +2138,7 @@ export async function loadSnapshotBoundary<Key extends string>(
 }
 
 export function runtimeFrameAction(event: RuntimeEvent): Action | null {
+  noteRuntimeTurn(event);
   return event.type === "turn.started" || event.type === "session.model-variants" || event.type === "turn.completed"
     ? { type: "modelVariantRuntime", event }
     : null;
@@ -2244,6 +2207,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const dispatch = useMemo(() => {
     const navigation = new Map<string, number>();
     let selectionRevision = 0;
+    const roomAnswer = roomAnswers(() => stateRef.current, rawDispatch);
     const olderPagesInFlight = new Set<string>();
     let creatingBot = false;
     const showError = (e: unknown) => {
@@ -2542,7 +2506,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           void waitForExecutionSettings(botBeforeSend ? [botBeforeSend] : [], threadId)
             .then(() => api(`/api/bots/${action.botId}/messages`, {
                 method: "POST",
-                body: JSON.stringify({ text: action.text, replyToId: action.replyToId, threadId, sendId, ...(action.dataContext ? { dataContext: action.dataContext } : {}), ...(action.pointed?.length ? { pointed: action.pointed } : {}) }),
+                body: JSON.stringify({ text: action.text, replyToId: action.replyToId, threadId, sendId, ...(action.dataContext ? { dataContext: action.dataContext } : {}), ...(action.pointed?.length ? { pointed: action.pointed } : {}), ...(action.mode === "goal" ? { mode: "goal" } : {}) }),
               }))
             .then((body) => {
               if (body?.message && typeof body.threadId === "string") {
@@ -2671,7 +2635,12 @@ export function StoreProvider({ children }: { children: ReactNode }) {
                 body: JSON.stringify({ text: action.answer, threadId: action.threadId }),
               });
             })
-            .catch(showError);
+            .catch((error) => {
+              if (card?.requestId && host) {
+                rawDispatch({ type: "answerCardFailed", botId: action.botId, messageId: action.messageId, answer: action.answer, groupId: action.groupId });
+              }
+              showError(error);
+            });
           break;
         }
         case "dismissCard": {
@@ -2687,23 +2656,13 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           break;
         }
         case "newBot": {
-          // The picker can close/remount before React paints pending state.
-          if (creatingBot) break;
+          // A double click lands before React paints the pending state.
+          if (creatingBot || stateRef.current.botCreationPending) break;
           creatingBot = true;
           rawDispatch({ type: "botCreationPending", on: true });
-          void createBotWithRole(action.role, api, action.visibility, action.section)
-            .then(({ bot, profileError }) => {
-              rawDispatch({ type: "botAdded", bot, preserveSelection: action.preserveSelection });
-              action.onCreated?.(bot);
-              if (profileError) {
-                showError(t("newBot.profileFailed", { error: profileError }));
-                rawDispatch({ type: "toggleSettings", open: true, section: "soul" });
-              }
-            })
-            .catch((error) => {
-              if (action.onError) action.onError(error instanceof Error ? error.message : String(error));
-              else showError(error);
-            })
+          void import("@/lib/new-bot")
+            .then(({ makeNewBot }) => makeNewBot(action, stateRef.current.bots, wrapped, showThreadsRef.current))
+            .catch(showError)
             .finally(() => {
               creatingBot = false;
               rawDispatch({ type: "botCreationPending", on: false });
@@ -2913,13 +2872,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
             .catch((error) => { showError(error); action.onError?.(error instanceof Error ? error.message : String(error)); });
           break;
         case "interrupt":
-          api(`/api/bots/${action.botId}/interrupt`, {
-            method: "POST",
-            body: action.threadId ? JSON.stringify({ threadId: action.threadId }) : undefined,
-          }).catch((error) => {
-            showError(error);
-            action.onError?.();
-          });
+          sendStop(api, action, showError);
           break;
         case "newTask":
         case "switchTask": {
@@ -2967,12 +2920,12 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           break;
         case "newGroupTask":
           api<{ group?: Partial<Group> & { id: string } }>(`/api/groups/${action.groupId}/tasks`, { method: "POST", body: "{}" })
-            .then((r) => r?.group && dispatch({ type: "groupPatched", group: r.group }))
+            .then(roomAnswer(action.groupId, true))
             .catch(showError);
           break;
         case "switchGroupTask":
           api<{ group?: Partial<Group> & { id: string } }>(`/api/groups/${action.groupId}/tasks/${action.threadId}?messages=${MESSAGE_PAGE_SIZE}`, { method: "POST" })
-            .then((r) => r?.group && dispatch({ type: "groupPatched", group: r.group }))
+            .then(roomAnswer(action.groupId, true))
             .catch(showError);
           break;
         case "renameGroupTask":
@@ -2995,7 +2948,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           break;
         case "deleteGroupTask":
           api<{ group?: Partial<Group> & { id: string } }>(`/api/groups/${action.groupId}/tasks/${action.threadId}`, { method: "DELETE" })
-            .then((r) => r?.group && dispatch({ type: "groupPatched", group: r.group }))
+            .then(roomAnswer(action.groupId, false))
             .catch(showError);
           break;
         case "setGroupHold":
@@ -3003,7 +2956,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
             method: "POST",
             body: JSON.stringify({ botId: action.botId, held: action.held }),
           })
-            .then((r) => r?.group && dispatch({ type: "groupPatched", group: r.group }))
+            .then(roomAnswer(action.groupId, false))
             .catch(showError);
           break;
         case "interruptGroup":
@@ -3235,16 +3188,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
             });
           }
           if (frame.message?.role === "bot" && frame.message?.kind === "text") {
-            const owner = stateRef.current.bots.find((b) => b.threadId === frame.threadId || b.tasks?.some((task) => task.threadId === frame.threadId));
-            const live = stateRef.current.liveCall;
-            const onLiveCall = Boolean(live && live.status !== "ended" && live.botId === owner?.id);
-            if (owner?.speakReplies && currentCall() === null && !onLiveCall && frame.message.text?.trim()) {
-              void speaker.speak(frame.message.text, {
-                botId: owner.id,
-                messageId: frame.message.id,
-                voiceId: owner.voice,
-              });
-            }
+            const owner = speechOwner(stateRef.current, frame.threadId);
+            spokenReplyStream.completeBotText(frame.threadId, frame.message.turnId, frame.message.text ?? "", owner, frame.message.id);
           }
           break;
         }
@@ -3259,7 +3204,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           const selected = stateRef.current.bots.find((candidate) => candidate.id === bot.id);
           const shown = selected?.switchingTo ?? selected?.threadId;
           const selectedTask = bot.tasks?.find((task) => task.threadId === shown);
-          if (bot.id === stateRef.current.selectedId && stateRef.current.activeView === "chat" &&
+          if (bot.id === stateRef.current.selectedId && stateRef.current.activeView === "chat" && document.hasFocus() &&
               (selectedTask?.unread || (!bot.tasks && bot.unread))) {
             if (selectedTask) selectedTask.unread = false;
             bot.unread = botShowsUnread(bot);
@@ -3273,7 +3218,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         }
         case "group": {
           const group = frame.group as Partial<Group> & { id: string };
-          if (group.unread && group.id === stateRef.current.selectedId) {
+          if (group.unread && group.id === stateRef.current.selectedId && document.hasFocus()) {
             group.unread = false;
             fetch(`/api/groups/${group.id}/read`, { method: "POST" }).catch(() => {});
           }
@@ -3316,6 +3261,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           rawDispatch({ type: "webhookDeleted", webhookId: frame.webhookId });
           break;
         case "runtime": {
+          spokenReplyStream.onRuntimeEvent(frame.event, speechOwner(stateRef.current, frame.event.threadId));
           const action = runtimeFrameAction(frame.event);
           if (action) rawDispatch(action);
           break;
@@ -3348,7 +3294,10 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         case "live.call": {
           const framed = liveCallFromFrame(frame);
           // Rendered at once: the next bot frame decides auto-speak from stateRef.
-          if (framed) flushSync(() => rawDispatch({ type: "liveCall", call: framed.call }));
+          if (framed) {
+            spokenReplyStream.onLiveCall(framed.call);
+            flushSync(() => rawDispatch({ type: "liveCall", call: framed.call }));
+          }
           break;
         }
         case "config":
@@ -3373,8 +3322,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       onSnapshotRequired: () => {
         clearTimeout(hydrationFallback);
         publishMissedFrames();
-        // Frames buffered before a non-resumable stream belong to an abandoned generation.
+        // Frames buffered before a non-resumable stream belong to an abandoned generation, and so do the turns they named.
         pendingFrames.splice(0);
+        forgetLiveTurns();
         return hydrate();
       },
       onFrame: (frame) => {

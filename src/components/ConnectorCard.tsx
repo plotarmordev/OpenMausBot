@@ -9,6 +9,7 @@ import { accountAliasTaken, requiresAccountAlias } from "@/lib/connector-status"
 import { mcpSignInLink } from "@/lib/mcp-sign-in";
 import { cn } from "@/lib/cn";
 import { ASK_PRIMARY_BUTTON, ASK_QUIET_BUTTON, AskCard, AskSettledLine } from "./AskCard";
+import { CardHint } from "./CardHint";
 
 const STATUS_CHECK_MS = 4_000;
 /** Composio marks an unfinished account EXPIRED shortly after its link lapses; the card keeps asking until it can say so. */
@@ -195,7 +196,8 @@ export function ConnectorCard({ botId, threadId, message }: { botId: string; thr
         </>
       }
     >
-      <p className="text-[11.5px] text-ink-tertiary">{t("connectors.card.signInHint")}</p>
+      <CardHint id="spot.connector" />
+      <p className="text-[12px] text-ink-tertiary">{t("connectors.card.signInHint")}</p>
       {labelNeeded ? (
         <form
           className="mt-1.5"
@@ -213,7 +215,7 @@ export function ConnectorCard({ botId, threadId, message }: { botId: string; thr
             onChange={(event) => setLabel(event.target.value)}
             placeholder={t("connectors.aliasPlaceholder")}
             aria-label={t("connectors.aliasAriaAnother", { service: connector.label })}
-            className="mt-1.5 h-8 w-full rounded-full bg-inset px-3 text-[12.5px] text-ink placeholder:text-ink-secondary focus:outline-none focus:ring-1 focus:ring-accent"
+            className="mt-1.5 h-8 w-full rounded-full bg-inset px-3 text-[13px] text-ink placeholder:text-ink-secondary focus:outline-none focus:ring-1 focus:ring-accent"
           />
         </form>
       ) : error && <p role="alert" className="mt-1.5 text-[12px] text-danger">{typeof error === "string" ? error : t(error.key)}</p>}

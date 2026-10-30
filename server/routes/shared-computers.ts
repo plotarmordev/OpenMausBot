@@ -41,7 +41,7 @@ export function createSharedComputerRoutes(deps: {
       const computer = deps.computers.linkable(link[1]!, auth.session.id, String(req.headers["x-omb-computer-secret"] ?? ""));
       if (pending.socket.destroyed) return;
       pending.release();
-      deps.links.accept({ req, socket: pending.socket, head: pending.head }, { ...computer, seenAs: requestSource(req) }, deps.power());
+      deps.links.accept({ req, socket: pending.socket, head: pending.head, attestation: pending.attestation }, { ...computer, seenAs: requestSource(req) }, deps.power());
       res.detachSocket(pending.socket);
       return;
     }

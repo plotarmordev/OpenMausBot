@@ -3,6 +3,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { EMPTY_ONBOARDING, LOCAL_VIEWER, WELCOME_VERSION, type WelcomeViewer } from "@/lib/onboarding";
 import { setLocale } from "@/lib/i18n";
+import { WELCOME_DRAFT_KEY } from "@/lib/welcome-draft";
 
 const fixture = vi.hoisted(() => ({ values: [] as unknown[], index: 0, effects: [] as EffectCallback[] }));
 vi.mock("react", async (original) => ({
@@ -28,7 +29,7 @@ import { SharedWorkspaceHint } from "./SharedWorkspaceHint";
 import { useWelcomeViewer, WelcomeGate } from "./WelcomeGate";
 import { WelcomeFlow } from "./WelcomeFlow";
 
-type Node = ReactElement<Record<string, unknown> & { onClick?: () => void; onClose?: () => void; onOpenOrganisation?: () => void; children?: ReactNode }>;
+type Node = ReactElement<Record<string, unknown> & { onClick?: () => void; onClose?: () => void; onDone?: (botId: string | null) => void; children?: ReactNode }>;
 function render(component: () => ReactNode) {
   fixture.index = 0;
   fixture.effects = [];
@@ -79,15 +80,50 @@ describe("who gets the welcome flow", () => {
     vi.stubGlobal("window", LOCAL_PAGE);
     const { tree } = gate(LOCAL_VIEWER);
     expect(tree?.type).toBe(WelcomeFlow);
-    expect(tree?.props).toMatchObject({ hosted: false, initialBeat: undefined, replay: false });
+    expect(tree?.props).toMatchObject({ hosted: false, replay: false });
   });
 
-  it("introduces the Chief of Staff when there is one, wherever it sits in the list", () => {
+  it("lands in the chat with the bot the person chose on the Chief screen", () => {
     vi.stubGlobal("window", LOCAL_PAGE);
+    store.state = { ...store.state, bots: [{ id: "maus", chiefOfStaff: true }, { id: "research" }] };
+    gate(LOCAL_VIEWER).tree!.props.onDone!("research");
+    expect(store.dispatch).toHaveBeenCalledWith({ type: "select", id: "research" });
+    expect(store.dispatch).toHaveBeenCalledWith({ type: "toggleWelcome", open: false });
+  });
+
+  it("with no choice made, lands with the Chief of Staff wherever it sits in the list, else the first bot", () => {
+    vi.stubGlobal("window", LOCAL_PAGE);
+    const finish = () => gate(LOCAL_VIEWER).tree!.props.onDone!(null);
     store.state = { ...store.state, bots: [{ id: "old", hidden: true, chiefOfStaff: true }, { id: "helper" }, { id: "chief", chiefOfStaff: true }] };
-    expect(gate(LOCAL_VIEWER).tree?.props.bot).toMatchObject({ id: "chief" });
+    finish();
+    expect(store.dispatch).toHaveBeenCalledWith({ type: "select", id: "chief" });
+    fixture.values = [];
+    store.dispatch.mockReset();
     store.state = { ...store.state, bots: [{ id: "old", hidden: true }, { id: "helper" }] };
-    expect(gate(LOCAL_VIEWER).tree?.props.bot).toMatchObject({ id: "helper" });
+    finish();
+    expect(store.dispatch).toHaveBeenCalledWith({ type: "select", id: "helper" });
+    fixture.values = [];
+    store.dispatch.mockReset();
+    store.state = { ...store.state, bots: [] };
+    finish();
+    expect(store.dispatch).not.toHaveBeenCalledWith(expect.objectContaining({ type: "select" }));
+  });
+
+  it("never starts the app tour when the welcome is finished or skipped, nor after a reload", () => {
+    vi.stubGlobal("window", LOCAL_PAGE);
+    store.state = { ...store.state, bots: [{ id: "first" }] };
+    gate(LOCAL_VIEWER).tree!.props.onDone!(null);
+    expect(store.dispatch).toHaveBeenCalledWith({ type: "toggleWelcome", open: false });
+    // Reloaded: the welcome is saved as done, and nothing opens in its place.
+    fixture.values = [];
+    store.state = { ...store.state, config: { onboarding: { ...EMPTY_ONBOARDING, completedAt: "2026-10-23T00:00:00.000Z", version: WELCOME_VERSION } } };
+    expect(gate(LOCAL_VIEWER).tree).toBeNull();
+    // A replay from Settings closes the same way, and stays where the person was unless they chose a bot.
+    store.dispatch.mockReset();
+    store.state = { ...store.state, welcomeOpen: true };
+    gate(LOCAL_VIEWER).tree!.props.onDone!(null);
+    expect(store.dispatch).not.toHaveBeenCalledWith(expect.objectContaining({ type: "toggleTour" }));
+    expect(store.dispatch).not.toHaveBeenCalledWith(expect.objectContaining({ type: "select" }));
   });
 
   it("opens the hosted beat set for a hosted workspace's admin", () => {
@@ -183,19 +219,24 @@ describe("who gets the welcome flow", () => {
     expect(gate(LOCAL_VIEWER).tree).not.toBeNull();
   });
 
-  it("resumes on the engines beat after the organisation row opens Settings", () => {
+  it("forgets a welcome draft once the welcome is done, however it was finished", () => {
     vi.stubGlobal("window", LOCAL_PAGE);
-    const first = gate(LOCAL_VIEWER).tree!;
-    first.props.onOpenOrganisation!();
-    expect(store.dispatch).toHaveBeenCalledWith({ type: "toggleAppSettings", open: true, section: "organization" });
+    localStorage.setItem(WELCOME_DRAFT_KEY, "kept");
+    gate(LOCAL_VIEWER);
+    for (const effect of fixture.effects) effect();
+    expect(localStorage.getItem(WELCOME_DRAFT_KEY), "a welcome still due keeps its draft").toBe("kept");
+    store.state = { ...store.state, config: { onboarding: { ...EMPTY_ONBOARDING, completedAt: "2026-10-23T00:00:00.000Z", version: WELCOME_VERSION } } };
+    gate(LOCAL_VIEWER);
+    for (const effect of fixture.effects) effect();
+    expect(localStorage.getItem(WELCOME_DRAFT_KEY)).toBeNull();
+  });
+
+  it("steps aside while Settings is open on the organization sign-in it offers, and is back after", () => {
+    vi.stubGlobal("window", LOCAL_PAGE);
     store.state = { ...store.state, appSettingsOpen: true, appSettingsSection: "organization" };
     expect(gate(LOCAL_VIEWER).tree).toBeNull();
     store.state = { ...store.state, appSettingsOpen: false };
-    const resumed = gate(LOCAL_VIEWER).tree!;
-    expect(resumed.props.initialBeat).toBe("engines");
-    (resumed.props.onDone as () => void)();
-    store.state = { ...store.state, welcomeOpen: true };
-    expect(gate(LOCAL_VIEWER).tree?.props.initialBeat).toBeUndefined();
+    expect(gate(LOCAL_VIEWER).tree?.type).toBe(WelcomeFlow);
   });
 });
 

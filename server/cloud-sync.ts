@@ -97,11 +97,11 @@ export function createCloudSync(options: { dataDir: string; root?: string; now?:
     },
     register(body: unknown): SyncFolder {
       const input = (body ?? {}) as Record<string, unknown>;
-      if (!UUID.test(String(input.computerId)) || !text(input.computerName, 200) || !text(input.pcPath, 4096) || !text(input.name, 200)) {
+      if (!UUID.test(String(input.computerId)) || !text(input.computerName, 200) || !text(input.pcPath, 4096) || !text(input.name, 200) || (input.lent !== undefined && typeof input.lent !== "boolean")) {
         throw new SyncError(400, { error: "invalid folder" });
       }
       if (!posix.isAbsolute(input.pcPath) && !win32.isAbsolute(input.pcPath)) throw new SyncError(400, { error: "the folder on the computer must be an absolute path" });
-      const folder = store.register({ computerId: String(input.computerId), computerName: input.computerName, pcPath: input.pcPath, name: input.name });
+      const folder = store.register({ computerId: String(input.computerId), computerName: input.computerName, pcPath: input.pcPath, name: input.name, lent: input.lent === true });
       noteChange(folder.id);
       return folder;
     },
@@ -209,7 +209,7 @@ export function createCloudSync(options: { dataDir: string; root?: string; now?:
       const found = typeof entryId === "string" ? store.trashEntry(entryId) : null;
       if (!found) throw new SyncError(404, { error: "no such deleted file" });
       // Its folder may no longer sync (turned off) or list (a bot folder emptied): put it back where it came from.
-      const home = found.cloudPath && [store.root, join(options.dataDir, "task-workspaces")].some((root) => found.cloudPath!.startsWith(root + sep)) ? found.cloudPath : null;
+      const home = found.cloudPath && [store.root, store.lentRoot(), join(options.dataDir, "task-workspaces")].some((root) => found.cloudPath!.startsWith(root + sep)) ? found.cloudPath : null;
       const known = store.folder(found.entry.folderId);
       if (!known && !home) throw new SyncError(404, { error: "the folder this file came from is gone" });
       if (!known) mkdirSync(home!, { recursive: true, mode: 0o700 });

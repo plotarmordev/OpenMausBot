@@ -179,6 +179,8 @@ describe("widget actions", () => {
       { ref: "cancel", label: "Fix #719 first", tone: "cancel", kind: "cancel" },
     ]);
     expect(widgetActions(sample("sources")).filter((entry) => entry.client).length).toBe(2);
+    const phone = parsed({ type: "Card", children: [{ type: "Button", label: "Connect your phone", onClickAction: { type: "open_phone_pairing" } }] });
+    expect(widgetActions(phone).map((entry) => [entry.action.type, entry.client])).toEqual([["open_phone_pairing", true]]);
     expect(widgetActionByLabel(sample("pullRequests"), "Merge the two ready")?.action).toEqual({ type: "pr.merge", payload: { prs: [750, 739] } });
     expect(widgetActionByLabel(sample("sources"), "ChatKit widgets guide")).toBeUndefined();
   });
@@ -461,6 +463,13 @@ describe("times, days, labels and progress", () => {
     expect(widgetAdvice(card("What should happen each time it runs?"))).toBeUndefined();
     expect(widgetAdvice(card("How many times a week?"))).toBeUndefined();
     expect(widgetAdvice(card("Today's mood"))).toBeUndefined();
+  });
+
+  it("leaves a Textarea alone: it may list several days and times, which no single picker holds", () => {
+    const notes = parsed({ type: "Card", confirm: { label: "Build my plan", action: { type: "plan" } }, children: [
+      { type: "Textarea", name: "fixed", label: "Fixed meetings (days and times)" },
+    ] });
+    expect(widgetAdvice(notes)).toBeUndefined();
   });
 
   it("tells the bot when a form has nothing the person can press to send it", () => {

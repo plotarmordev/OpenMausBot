@@ -95,10 +95,13 @@ async function fixture() {
     startTurn: async () => { throw new Error("not reached"); },
     threadBusy: () => false,
     botAtThreadCapacity: () => false,
+    botMainThread: (botId: string) => store.bot(botId)?.threadId,
     parksBehindCoordination: () => false,
     activeGroupTurnForBot: () => null,
     cloudThreadRefusal: () => null,
     phoneSecretSubmissions: { hasThread: () => false },
+    fromPhone: () => false,
+    notePhoneSend: () => {},
   } as unknown as BotMessageRouteDeps;
   const routes = [createBotMessageRoutes(deps)];
   const server = createServer(async (req, res) => {

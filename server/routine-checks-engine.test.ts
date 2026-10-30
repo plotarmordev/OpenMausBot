@@ -1,7 +1,7 @@
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { CHECK_BOOT_HOLD_MS, CHECK_RUNS_PER_DAY } from "./routine-check-pacing.ts";
 import { CHECK_WAKE_MS } from "./routine-due.ts";
@@ -50,7 +50,7 @@ function harness(options: { bot?: () => "ready" | "busy" | "missing" } = {}) {
   });
   const complete = (run: RoutineRun, ok = true, error?: string) => {
     if (error) manager.handleRuntimeEvent({ type: "runtime.error", threadId: run.threadId!, message: error } as never);
-    manager.handleRuntimeEvent({ type: "turn.completed", threadId: run.threadId!, ok, stopReason: ok ? "end_turn" : "error" } as never);
+    manager.handleRuntimeEvent({ type: "turn.completed", threadId: run.threadId!, ok, stopReason: ok ? "end_turn" : "refusal" } as never);
   };
   return {
     get manager() { return manager; }, gate, answers, asked, settled, released, started, failed, deferred, tick, watch, complete, settle,
@@ -87,6 +87,37 @@ describe("routines with checks", () => {
     expect(h.manager.listRoutines()[0].checkedAt).toBeUndefined();
     h.complete(h.manager.listRuns()[0]!);
     expect(h.settled.map((one) => [one.checkKey, one.status])).toContainEqual(["batch-1", "completed"]);
+  });
+
+  it("reports a check whose result cannot be written, releases its items and checks again later", async () => {
+    const h = harness();
+    h.watch();
+    h.answers.push({ run: { prompt: "batch", key: "batch-1" } });
+    let open!: () => void;
+    h.gate.wait = new Promise((resolve) => { open = resolve; });
+    h.advance(CHECK_BOOT_HOLD_MS + 15 * MINUTE);
+    await h.tick();
+    const unhandled: unknown[] = [];
+    const onUnhandled = (reason: unknown) => unhandled.push(reason);
+    process.on("unhandledRejection", onUnhandled);
+    const logged = vi.spyOn(console, "error").mockImplementation(() => {});
+    const save = vi.spyOn(h.manager as unknown as { save(): void }, "save").mockImplementation(() => { throw new Error("fixture disk full"); });
+    try {
+      open();
+      await h.settle();
+      expect(logged).toHaveBeenCalledWith(expect.stringMatching(/^routines: /), expect.objectContaining({ message: "fixture disk full" }));
+      expect(unhandled).toEqual([]);
+    } finally {
+      process.off("unhandledRejection", onUnhandled);
+      save.mockRestore();
+      logged.mockRestore();
+    }
+    expect(h.released).toEqual(["batch-1"]);
+    expect(h.manager.listRuns()).toEqual([]);
+    delete h.gate.wait;
+    h.answers.push({ run: { prompt: "batch", key: "batch-1" } });
+    await past(h, 15 * MINUTE);
+    expect(h.manager.listRuns()).toEqual([expect.objectContaining({ status: "running", checkKey: "batch-1" })]);
   });
 
   it("checks keep running while their run works, but hand the AI nothing until it ends", async () => {

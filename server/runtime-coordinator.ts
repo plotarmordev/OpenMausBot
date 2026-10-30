@@ -52,10 +52,10 @@ function legacyOrigin(origin: Origin): WorkOrigin | undefined {
 
 const hostFirstTurn = (a: Assignment): boolean => !a.parentId && a.status === "running" && a.executions === 1;
 
-function runtimeOrigin(origin: WorkOrigin | undefined, source: RoomAddress): Origin {
+function runtimeOrigin(origin: WorkOrigin | undefined, source: RoomAddress, capacity: BeginTurnRequest["capacity"]): Origin {
   return origin?.kind === "user"
     ? { kind: "person", source: "chat", ref: source.threadId, quote: origin.request }
-    : { kind: "outside", source: "chat", ref: source.threadId };
+    : { kind: "outside", source: capacity === "person" ? "relay" : "chat", ref: source.threadId };
 }
 
 export function needsInputQuestion(text: string): string | undefined {
@@ -90,6 +90,7 @@ export function view(a: Assignment, parent?: Assignment): HandoffView {
   if (a.startedAt !== undefined) node.startedAt = a.startedAt;
   const origin = legacyOrigin(a.origin);
   if (origin) node.origin = origin;
+  if (a.capacity !== undefined) node.capacity = a.capacity;
   if (a.restart !== undefined) node.restart = a.restart;
   return node;
 }
@@ -198,7 +199,7 @@ export class RuntimeCoordinator implements Coordinator {
     const reply: Reply = wanted === "none" ? "none" : root.reply === "poll" ? "poll" : wanted;
     const requester: Requester = { kind: "bot_turn", botId: parent.assignee.botId, threadId: parent.assignee.destination.threadId,
       chief: this.host.chiefOf(address(parent)), ...(parent.id === root.id && root.requester.runId !== undefined ? { runId: root.requester.runId } : {}) };
-    const level = this.host.levelOf(target, address(parent));
+    const level = this.host.levelOf(target, this.project(parent));
     const result = this.runtime.enqueue({
       parentId: parent.id,
       origin: parent.origin,
@@ -207,7 +208,7 @@ export class RuntimeCoordinator implements Coordinator {
         threadId: target.threadId, ...(target.groupId ? { groupId: target.groupId } : {}) } },
       mode, reply, brief: text, rework,
       ...(options.doneWhen ? { doneWhen: options.doneWhen } : {}),
-      levels: { own: level.level },
+      levels: { own: level.level, ...(level.chief !== undefined ? { chief: level.chief } : {}) },
       ...(level.driverKind !== undefined ? { driverKind: level.driverKind } : {}),
       approved: approvalGranted,
       ...(target.groupId && requestBatchKey ? { batchKey: requestBatchKey } : {}),
@@ -271,7 +272,8 @@ export class RuntimeCoordinator implements Coordinator {
     const { address, opener } = req;
     const row = this.runtime.begin({
       id: req.id,
-      origin: opener?.origin ?? runtimeOrigin(req.origin, address),
+      origin: opener?.origin ?? runtimeOrigin(req.origin, address, req.capacity),
+      ...(req.capacity ? { capacity: req.capacity } : {}),
       requester: opener
         ? { ...opener.requester, botId: opener.requester.botId ?? address.botId, threadId: opener.requester.threadId ?? address.threadId, chief: this.host.chiefOf(address) }
         : { kind: "person", threadId: address.threadId, botId: address.botId, chief: this.host.chiefOf(address) },

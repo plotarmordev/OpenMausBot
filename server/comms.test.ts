@@ -537,13 +537,16 @@ describe("routine comms e2e on the job runtime (fake ACP fleet)", () => {
         title: "Product designer",
         description: "Design and review the user experience.",
         section: "Launch",
-        composio: false,
         autoApprove: false,
         approvePeerComms: false,
         approvalMode: "full",
         modelSelection: defaultSelection,
       });
       expect(operator.chiefOfStaff).toBeFalsy();
+      // A bot a Chief creates starts with the Chief's own connected apps, never more.
+      const atlas = (await api("GET", "/api/bots")).body.bots.find((bot: any) => bot.id === chief.id);
+      expect(operator.composio).toEqual(atlas.composio);
+      expect(operator.mcpServers).toEqual(atlas.mcpServers);
       expect(notice.teamSetupRequest.undo.created).toEqual([operator.id]);
       expect(work.some((message: any) => message.text?.includes("Review the new onboarding flow."))).toBe(true);
     },
@@ -578,6 +581,7 @@ describe("routine comms e2e on the job runtime (fake ACP fleet)", () => {
       const sent = chip(askerBot.messages, "Sent to Helper");
       expect(sent).toBeTruthy();
       expect(sent.tool.output).toBe("followup");
+      expect(sent.doneWhen).toBe("the export opens in Numbers");
       expect(sent.threadRef).toMatchObject({ botId: helper.id, threadId: work.threadId });
       const replied = chip(askerBot.messages, "Helper replied");
       expect(replied.from?.botId).toBe(helper.id);
@@ -910,12 +914,12 @@ describe("routine comms e2e on the job runtime (fake ACP fleet)", () => {
         return Boolean(approvalCard);
       }, 20_000, "initial ask_bot approval card never appeared");
 
-      const held: string[] = [];
-      for (let index = 0; index < 3; index++) {
+      const { maxConcurrentPerBot } = (await api("GET", "/api/config")).body.threads;
+      const held = await Promise.all(Array.from({ length: maxConcurrentPerBot }, async (_, index) => {
         const task = index === 0 ? { threadId: helper.threadId } : (await api("POST", `/api/bots/${helper.id}/tasks`, { title: `Held ${index}` })).body.task;
-        held.push(task.threadId);
         expect((await api("POST", `/api/bots/${helper.id}/messages`, { threadId: task.threadId, text: `hold until reload ${index}` })).status).toBe(202);
-      }
+        return task.threadId as string;
+      }));
       await waitUntil(async () => {
         const current = await bot(helper.id);
         return held.every((threadId) => current.tasks.find((task: any) => task.threadId === threadId)?.busy);
