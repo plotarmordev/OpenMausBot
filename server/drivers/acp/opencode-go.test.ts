@@ -784,7 +784,7 @@ describe("OpenCode turns without a sign-in gate", () => {
     vi.spyOn(quietStatus, "sampleProcessTree").mockResolvedValue({ cpuMs: 0, connections: 1 });
     vi.stubEnv("OMB_ACP_QUIET_NOTICE_MS", "300");
     vi.stubEnv("OMB_ACP_QUIET_TICK_MS", "50");
-    // The row format of #3143's opencode log, with a synthetic run and model.
+    // The row format of a real opencode log, with a synthetic run and model.
     const row = (session: string, small: boolean, error: string) =>
       `timestamp=2026-10-01T00:00:03.000Z level=ERROR run=fixture_run message="stream error" providerID=opencode modelID=mimo-v2.6-flash-free session.id=${session} small=${small} agent=build mode=primary error.error="${error}"`;
     const f = await open("opencode-rate-limit", () => ({

@@ -61,7 +61,7 @@ describe("classifyQuiet", () => {
   });
 });
 
-// The row format of an opencode log quoted in #3143, with synthetic identifiers.
+// The row format of a real opencode log, with synthetic identifiers.
 const openCodeRow = (fields: string) =>
   `timestamp=2026-10-01T00:00:03.000Z level=ERROR run=fixture_run message="stream error" providerID=opencode modelID=mimo-v2.6-flash-free ${fields}`;
 
