@@ -884,6 +884,12 @@ the engine's default model, the bot's own model and its other conversations
 stay where they are, and their message is sent again. Turns nobody typed
 (routines, webhooks, a teammate's work) get no card.
 
+An engine that posts the provider's raw error as its whole reply instead of
+failing the turn (omp's ACP mode sends `429 {"type":"error",…} retry-after-ms=…`
+that way) has that turn count as failed, not as a reply: the person reads it
+in plain words, and a 429 that names its wait is a usage limit held until
+then. A reply that only quotes such an error among other words stays a reply.
+
 The offer is on by default. To switch it off, start the server with
 `OMB_QUOTA_SWITCH=0`; any other value, or none, leaves it on. It has no
 setting in `config.json` yet.
