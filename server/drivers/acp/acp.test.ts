@@ -2200,7 +2200,6 @@ describe("ACP turns (fake CLI)", () => {
       expect(errors).toEqual([expect.objectContaining({
         message: 'Grok stopped with an error (HTTP 403; Grok says: "OAuth authentication is currently not allowed for this organization").',
       })]);
-      expect(errors[0]).not.toHaveProperty("limit");
       expect(classifyError({ text: errors[0]!.message }).reason).toBe("auth");
     });
 
@@ -2212,7 +2211,6 @@ describe("ACP turns (fake CLI)", () => {
       expect(replies).toEqual([]);
       expect(errors).toHaveLength(1);
       const error = errors[0]!;
-      expect(error.limit).toBe("engine");
       expect(error.limitResetsAt).toBeGreaterThanOrEqual(before + 115_636_000);
       expect(error.limitResetsAt).toBeLessThanOrEqual(after + 115_636_000);
       expect(error.message).toMatch(/^This Grok account has reached its usage limit \(Grok says: "\[1310\]\[Weekly\/Monthly Limit Exhausted"\), which resets .+\. Until then, switch this bot to another AI\.$/);

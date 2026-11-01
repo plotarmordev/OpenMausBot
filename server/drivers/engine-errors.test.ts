@@ -115,14 +115,13 @@ describe("errorReplyFailure", () => {
     expect(errorReplyFailure("omp", reply, NOW, "UTC")).toEqual({
       message: 'This omp account has reached its usage limit (omp says: "[1308][Usage limit reached for 5 hour"), which resets Oct 27, 7:22 AM (UTC). Until then, switch this bot to another AI.',
       stopReason: "quota",
-      limit: "engine",
       limitResetsAt: NOW + 4_171_000,
     });
   });
 
   it("reads a 429 without a wait by its words, and an OpenAI-style body too", () => {
     const limit = errorReplyFailure("omp", anthropic(429, "rate_limit_error", "You've reached your 5-hour usage limit."), NOW);
-    expect(limit).toMatchObject({ stopReason: "quota", limit: "engine" });
+    expect(limit).toMatchObject({ stopReason: "quota" });
     expect(limit).not.toHaveProperty("limitResetsAt");
     expect(errorReplyFailure("omp", '429 {"error":{"message":"Rate limit reached for requests","type":"requests","code":"rate_limit_exceeded"}}'))
       .toEqual({ message: 'omp hit a rate limit (HTTP 429; omp says: "Rate limit reached for requests"). Wait a minute, then run it again.', stopReason: "rpc_error" });
@@ -135,7 +134,7 @@ describe("errorReplyFailure", () => {
     const rateLimit = { message: `omp hit a rate limit (HTTP 429; omp says: "This request would exceed your organization's rate limit of 30,000 input tokens per minute"). Wait a minute, then run it again.`, stopReason: "rpc_error" };
     expect(errorReplyFailure("omp", `${perMinute} retry-after-ms=20000`, NOW)).toEqual(rateLimit);
     expect(errorReplyFailure("omp", `${perMinute} retry-after-ms=120000`, NOW)).toEqual(rateLimit);
-    expect(errorReplyFailure("omp", `${perMinute} retry-after-ms=120001`, NOW)).toMatchObject({ stopReason: "quota", limit: "engine", limitResetsAt: NOW + 120_001 });
+    expect(errorReplyFailure("omp", `${perMinute} retry-after-ms=120001`, NOW)).toMatchObject({ stopReason: "quota", limitResetsAt: NOW + 120_001 });
   });
 
   it("never reads another status's wait as a usage limit", () => {

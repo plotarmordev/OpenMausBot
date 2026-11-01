@@ -141,7 +141,6 @@ export interface ErrorReplyFailure {
   message: string;
   stopReason: "quota" | "auth_required" | "rpc_error";
   setup?: true;
-  limit?: "engine";
   limitResetsAt?: number;
 }
 
@@ -160,7 +159,7 @@ export function errorReplyFailure(provider: string, text: string, now = Date.now
   const message = engineFailureMessage(provider, body, { kind, status, resetsAt, timeZone })!;
   if (kind === "credits") return { message, stopReason: "auth_required", setup: true };
   if (kind !== "usage_limit") return { message, stopReason: "rpc_error" };
-  return { message, stopReason: "quota", limit: "engine", ...(resetsAt ? { limitResetsAt: resetsAt } : {}) };
+  return { message, stopReason: "quota", ...(resetsAt ? { limitResetsAt: resetsAt } : {}) };
 }
 
 /** Only an out-of-credits failure or a refused tool schema or tool count in plain words; any other text stays as it is. */
