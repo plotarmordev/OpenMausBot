@@ -203,6 +203,13 @@ export function sampleProcessTree(pid: number): Promise<ProcessSample> {
     .catch(() => ({ cpuMs: null, connections: null }));
 }
 
+/** Longer than any retry an engine makes on its own without a provider's retry-after. */
+const USAGE_LIMIT_MIN_WAIT_MS = 2 * 60_000;
+
+/** A 429 whose wait is longer than any engine retries on its own is a usage limit, not a short rate limit. */
+export const usageLimitWait = (status: number | null | undefined, waitMs: number | null | undefined): boolean =>
+  status === 429 && (waitMs ?? 0) > USAGE_LIMIT_MIN_WAIT_MS;
+
 const BUSY_CPU_MS_PER_MIN = 3_000;
 
 export function classifyQuiet(input: {
