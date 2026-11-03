@@ -96,7 +96,7 @@ response recovery, changed-leaf rejection, Ask/automatic/remembered approval
 settings, busy/capacity refusal without enqueueing or steering, concurrent
 guarded admissions, duplicate receipt identity, and the install binding: the
 environment header on every response and another install's id refused without
-storing or reserving anything. `install-attestation-api.test.ts` adds the
+storing or reserving anything. `server/install-attestation-api.test.ts` adds the
 header on WebSocket upgrade refusals, on Node's own 400 and 417, and on a 500
 from a fault with no status,
 which a fixture launched with `OMB_TEST_ROUTE_FAULT=1` throws while

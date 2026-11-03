@@ -155,9 +155,9 @@ provider's availability, model quality, or a general cure for idle timeouts.
   input queued before the turn can suppress recovery.
 - A queued recovery's callbacks stay in memory when its thread's queue is
   cancelled wholesale or by a caller other than the recovery listener.
-- `mixed-capacity-restart.e2e.test.ts` can observe the journal between two
-  dispatches; `message-db.test.ts` runs sixteen processes under a 30-second
-  budget; `automatic-recovery-restart.e2e.test.ts` runs its seventeen modes in
+- `server/mixed-capacity-restart.e2e.test.ts` can observe the journal between two
+  dispatches; `server/message-db.test.ts` runs sixteen processes under a 30-second
+  budget; `server/automatic-recovery-restart.e2e.test.ts` runs its seventeen modes in
   one shard.
 - The queued recovery chip repeats the original line's text and looks like an
   ordinary queued message: the Composer still offers steer (refused) and edit

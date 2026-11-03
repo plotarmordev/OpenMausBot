@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { memberAudience } from "../audience.ts";
 import { ADA, CARL, key, MARCO, PHILIPP, session, teamInbox } from "../testing/team-inbox-fixture.ts";
@@ -169,6 +169,11 @@ describe("@Marco", () => {
 
 describe("Marco's assistant", () => {
   const BUSY = { start: Date.UTC(2026, 9, 29, 14), end: Date.UTC(2026, 9, 29, 15) };
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(Date.UTC(2026, 9, 27, 9));
+  });
+  afterEach(() => { vi.useRealTimers(); });
   const assistant = (reply: string) => {
     const generate = vi.fn(async (_botId: string, _prompt: string) => reply);
     const busy = vi.fn(async () => [BUSY]);
