@@ -409,6 +409,10 @@ pnpm package:win   # Windows installer + zip → release/
 pnpm package:linux # Ubuntu x64 .deb + AppImage → release/
 ```
 
+`pnpm test` is the one test command on Linux, macOS and Windows, and exits non-zero on any failure. On macOS it
+leaves out, with one line saying so, the e2e files that test OMB's own logic the same way on every OS (Linux runs
+them; `OMB_VITEST_E2E=all pnpm test` runs them on a Mac too). Tests that need Linux skip themselves on other systems.
+
 ### Triggers: schedules and webhooks
 
 A trigger is "when something happens, a bot does something". Tell a bot "every weekday at 9, send me a summary

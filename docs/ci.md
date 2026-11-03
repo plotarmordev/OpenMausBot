@@ -102,7 +102,8 @@ node scripts/testing/update-shard-weights.mjs --run <run id> --run <run id> --ru
 
 To run one CI shard locally, use the same OS, `--shard` and `OMB_VITEST_E2E`:
 `OMB_VITEST_E2E=host pnpm exec vitest run --shard=3/8` is Windows shard 3 on a
-Windows machine.
+Windows machine. On macOS an unset `OMB_VITEST_E2E` means `host`, so a plain
+`pnpm test` there runs what the macOS shards run.
 The locale and docs tests are the same command with their files first:
 `pnpm exec vitest run src/ scripts/generate-locale.test.mjs --shard=1/2` is
 locale tests 1/2 (those jobs set `OMB_VITEST_SUBSET`, so the sequencer does not
