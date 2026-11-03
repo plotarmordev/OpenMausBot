@@ -43,11 +43,9 @@ describe("the e2e files every host runs", () => {
     expect(portable.every((file) => E2E.test(file) && !Object.hasOwn(HOST_E2E, file))).toBe(true);
   });
 
-  it("apply when CI asks for them, and on macOS unless asked for every file", () => {
-    expect(hostE2eOnly({ OMB_VITEST_E2E: "host" }, "linux")).toBe(true);
-    expect(hostE2eOnly({ OMB_VITEST_E2E: "all" }, "darwin")).toBe(false);
-    expect(hostE2eOnly({}, "darwin")).toBe(true);
-    expect(hostE2eOnly({}, "linux")).toBe(false);
-    expect(hostE2eOnly({}, "win32")).toBe(false);
+  it("apply only when CI asks for them", () => {
+    expect(hostE2eOnly({ OMB_VITEST_E2E: "host" })).toBe(true);
+    expect(hostE2eOnly({ OMB_VITEST_E2E: "all" })).toBe(false);
+    expect(hostE2eOnly({})).toBe(false);
   });
 });

@@ -25,10 +25,6 @@ const include = [
   "scripts/**/*.test.mjs",
   "scripts/**/*.test.ts",
 ];
-const linuxOnlyE2e = hostE2eOnly() ? portableE2eFiles(root, include) : [];
-if (process.env.VITEST && linuxOnlyE2e.length) {
-  console.log(`Skipping ${linuxOnlyE2e.length} e2e files that test OMB's own logic, the same on every OS: Linux runs them (OMB_VITEST_E2E=all runs them here).`);
-}
 
 export default defineConfig({
   plugins: [react(), tailwindcss()],
@@ -38,8 +34,8 @@ export default defineConfig({
   test: {
     environment: "node",
     include,
-    // OMB_VITEST_E2E=host (CI's Windows and macOS shards, and macOS by default) leaves the e2e files that run on Linux only.
-    exclude: [...configDefaults.exclude, ...linuxOnlyE2e],
+    // OMB_VITEST_E2E=host (CI's Windows and macOS shards) leaves the e2e files that run on Linux only.
+    exclude: [...configDefaults.exclude, ...(hostE2eOnly() ? portableE2eFiles(root, include) : [])],
     setupFiles: ["server/testing/setup.ts"],
     // the suite spawns fake provider CLIs and a real harness server;
     // parallel files introduce load-sensitive flakes for no win

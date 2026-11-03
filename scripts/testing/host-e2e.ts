@@ -27,10 +27,9 @@ export const HOST_E2E: Readonly<Record<string, string>> = {
   "server/voice-notes.e2e.test.ts": "the built-in Mac voices",
 };
 
-/** True where only HOST_E2E of the e2e files run: CI's Windows and macOS shards (OMB_VITEST_E2E=host), and any macOS
- * run that leaves OMB_VITEST_E2E unset. OMB_VITEST_E2E=all runs every e2e file anywhere. */
-export function hostE2eOnly(env: NodeJS.ProcessEnv = process.env, platform: NodeJS.Platform = process.platform): boolean {
-  return (env.OMB_VITEST_E2E || (platform === "darwin" ? "host" : "all")) === "host";
+/** True on the CI shards that run only HOST_E2E of the e2e files. */
+export function hostE2eOnly(env: NodeJS.ProcessEnv = process.env): boolean {
+  return env.OMB_VITEST_E2E === "host";
 }
 
 /** Whether a repo-relative POSIX path is an e2e file that runs on Linux only. */
